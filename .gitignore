@@ -1,8 +1,12 @@
-# Environment variables
+# Environment variables - все файлы с .env в названии
 .env
-.env.local
-.env.*.local
+.env.*
 *.env
+.env.local
+.env*.local
+**/.env
+**/.env.*
+**/*.env
 
 # Python
 __pycache__/
@@ -48,6 +52,11 @@ yarn-error.log*
 *.swo
 *~
 .DS_Store
+
+# Markdown files (могут содержать чувствительные данные)
+*.md
+**/*.md
+!README.md
 
 # Docker
 .dockerignore
