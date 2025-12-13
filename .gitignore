@@ -53,10 +53,9 @@ yarn-error.log*
 *~
 .DS_Store
 
-# Markdown files (могут содержать чувствительные данные)
+# Markdown files (могут содержать чувствительные данные) - оставляем локально, но не пушим в Git
 *.md
 **/*.md
-!README.md
 
 # Docker
 .dockerignore
