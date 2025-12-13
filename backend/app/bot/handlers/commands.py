@@ -1,0 +1,85 @@
+"""
+Обработчики команд бота (/start, /help)
+"""
+from aiogram import Dispatcher, F
+from aiogram.types import Message
+from aiogram.filters import Command
+
+from app.core.database import AsyncSessionLocal
+from app.models.project import Project
+from sqlalchemy import select
+
+
+async def cmd_start(message: Message, project_id: str = None):
+    """Обработка команды /start"""
+    # Получаем bot_token из бота
+    bot_token = None
+    if message.bot and hasattr(message.bot, 'token'):
+        bot_token = message.bot.token
+    
+    async with AsyncSessionLocal() as db:
+        project = None
+        
+        # Если project_id задан, используем его
+        if project_id:
+            result = await db.execute(
+                select(Project).where(Project.id == project_id)
+            )
+            project = result.scalar_one_or_none()
+        
+        # Если не нашли или project_id не задан, ищем все проекты с этим bot_token
+        if not project and bot_token:
+            result = await db.execute(
+                select(Project).where(Project.bot_token == bot_token)
+            )
+            projects = result.scalars().all()
+            
+            if len(projects) == 1:
+                # Только один проект с этим токеном
+                project = projects[0]
+            elif len(projects) > 1:
+                # Несколько проектов с одним токеном - показываем список или просто запрашиваем пароль
+                welcome_text = "Добро пожаловать!\n\n"
+                welcome_text += "Для доступа к документам необходимо авторизоваться.\n"
+                welcome_text += "Пожалуйста, введите пароль доступа вашего проекта:"
+                await message.answer(welcome_text)
+                return
+        
+        if not project:
+            await message.answer("Ошибка: проект не найден")
+            return
+        
+        welcome_text = f"Добро пожаловать в бот проекта <b>{project.name}</b>!\n\n"
+        welcome_text += "Для доступа к документам необходимо авторизоваться.\n"
+        welcome_text += "Пожалуйста, введите пароль доступа:"
+        
+        await message.answer(welcome_text)
+
+
+async def cmd_help(message: Message):
+    """Обработка команды /help"""
+    help_text = """
+<b>Справка по использованию бота</b>
+
+📋 <b>Основные команды:</b>
+/start - Начать работу с ботом
+/help - Показать эту справку
+
+❓ <b>Как задать вопрос:</b>
+Просто напишите ваш вопрос в свободной форме, и бот найдет ответ в документах проекта.
+
+💡 <b>Советы:</b>
+• Задавайте конкретные вопросы
+• Используйте ключевые слова из документов
+• Бот отвечает только на основе загруженных документов
+
+Если у вас возникли вопросы, обратитесь к администратору проекта.
+    """
+    await message.answer(help_text)
+
+
+def register_commands(dp: Dispatcher, project_id: str):
+    """Регистрация команд"""
+    dp.message.register(cmd_start, Command("start"))
+    dp.message.register(cmd_help, Command("help"))
+

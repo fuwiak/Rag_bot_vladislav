@@ -1,0 +1,6 @@
+# Wymuszenie instalacji qdrant-client bez grpcio
+# Użyj: pip install -r requirements.txt --constraint .pip-requirements-no-grpc.txt
+
+# Wykluczamy grpcio, bo używamy tylko HTTP API
+grpcio==999.999.999; platform_system == "Never"
+

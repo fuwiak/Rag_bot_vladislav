@@ -1,0 +1,181 @@
+"""
+Обработчики авторизации пользователей
+"""
+from aiogram import Dispatcher, F
+from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+
+from app.core.database import AsyncSessionLocal
+from app.models.project import Project
+from app.models.user import User
+from app.services.user_service import UserService
+from sqlalchemy import select
+from datetime import datetime
+
+
+# FSM состояния для авторизации
+class AuthStates(StatesGroup):
+    waiting_password = State()
+    waiting_phone = State()
+    authorized = State()
+
+
+# Хранилище состояний (в production использовать Redis)
+storage = MemoryStorage()
+
+
+async def handle_password(message: Message, state: FSMContext, project_id: str = None):
+    """Обработка ввода пароля
+    
+    Если несколько проектов используют один bot_token, ищем проект по паролю среди всех проектов с этим токеном.
+    """
+    async with AsyncSessionLocal() as db:
+        password = message.text
+        
+        # Получаем bot_token из бота
+        bot_token = None
+        if message.bot and hasattr(message.bot, 'token'):
+            bot_token = message.bot.token
+        
+        project = None
+        
+        # Ищем проект: сначала по project_id (если задан), затем по паролю и bot_token
+        if project_id:
+            result = await db.execute(
+                select(Project).where(Project.id == project_id)
+            )
+            project = result.scalar_one_or_none()
+            # Проверяем, что пароль правильный
+            if project and project.access_password != password:
+                project = None
+        
+        # Если не нашли по project_id или project_id не задан, ищем по паролю и bot_token
+        if not project and bot_token:
+            result = await db.execute(
+                select(Project).where(
+                    Project.bot_token == bot_token,
+                    Project.access_password == password
+                )
+            )
+            project = result.scalar_one_or_none()
+        
+        if not project:
+            await message.answer("❌ Неверный пароль. Попробуйте снова или используйте /start")
+            return
+        
+        # Сохраняем найденный project_id в состоянии
+        await state.update_data(project_id=str(project.id))
+        
+        # Пароль правильный, запрашиваем телефон
+            # Пароль верный, запрашиваем телефон
+            await state.set_state(AuthStates.waiting_phone)
+            
+            # Кнопка для отправки контакта
+            keyboard = ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="📱 Поделиться контактом", request_contact=True)]],
+                resize_keyboard=True,
+                one_time_keyboard=True
+            )
+            
+            await message.answer(
+                "Пароль верный! Теперь поделитесь вашим номером телефона:",
+                reply_markup=keyboard
+            )
+        else:
+            await message.answer("❌ Неверный пароль. Попробуйте снова или используйте /start")
+
+
+async def handle_contact(message: Message, state: FSMContext, project_id: str = None):
+    """Обработка получения контакта или ручного ввода телефона"""
+    # Получаем project_id из состояния (был сохранен при вводе пароля)
+    data = await state.get_data()
+    project_id_from_state = data.get("project_id")
+    
+    if not project_id_from_state:
+        # Если project_id не в состоянии, пытаемся использовать переданный
+        if not project_id:
+            await message.answer("❌ Ошибка: проект не определен. Используйте /start")
+            return
+        project_id_from_state = project_id
+    
+    phone = None
+    
+    if message.contact:
+        phone = message.contact.phone_number
+    elif message.text:
+        # Ручной ввод телефона
+        phone = message.text.strip()
+        # Простая валидация
+        if not phone.startswith('+') and not phone.isdigit():
+            await message.answer("❌ Пожалуйста, введите корректный номер телефона (например: +79001234567)")
+            return
+    
+    if not phone:
+        await message.answer("❌ Не удалось получить номер телефона. Попробуйте снова.")
+        return
+    
+    async with AsyncSessionLocal() as db:
+        user_service = UserService(db)
+        
+        # Проверка существования пользователя
+        user = await user_service.get_user_by_phone(project_id_from_state, phone)
+        
+        if not user:
+            # Создание нового пользователя
+            username = message.from_user.username if message.from_user.username else None
+            user = await user_service.create_user(project_id_from_state, phone, username)
+            
+            # Обновление first_login_at
+            user.first_login_at = datetime.utcnow()
+            await db.commit()
+        elif user.status == "blocked":
+            await message.answer("❌ Ваш доступ заблокирован. Обратитесь к администратору.")
+            return
+        else:
+            # Обновление username если изменился
+            if message.from_user.username and user.username != message.from_user.username:
+                user.username = message.from_user.username
+                await db.commit()
+        
+        # Сохранение user_id в состоянии
+        await state.update_data(user_id=str(user.id))
+        await state.set_state(AuthStates.authorized)
+        
+        # Удаление клавиатуры
+        from aiogram.types import ReplyKeyboardRemove
+        await message.answer(
+            f"✅ Авторизация успешна!\n\n"
+            f"Теперь вы можете задавать вопросы о документах проекта.\n"
+            f"Используйте /help для справки.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+
+async def handle_text_before_auth(message: Message, state: FSMContext):
+    """Обработка текста до авторизации (запрос пароля)
+    
+    Этот обработчик срабатывает для всех текстовых сообщений, которые не обрабатываются
+    более специфичными обработчиками (с фильтрами состояний).
+    """
+    # Проверяем состояние - если не авторизован, показываем сообщение
+    # Обработчики с фильтрами состояний (waiting_password, waiting_phone) имеют приоритет
+    current_state = await state.get_state()
+    if current_state != AuthStates.authorized:
+        await message.answer("Для начала работы введите пароль доступа или используйте /start")
+
+
+def register_auth_handlers(dp: Dispatcher, project_id: str):
+    """Регистрация обработчиков авторизации"""
+    # Команда /start уже обрабатывается в commands.py
+    # Обработка пароля
+    dp.message.register(handle_password, AuthStates.waiting_password, F.text)
+    
+    # Обработка контакта или телефона
+    dp.message.register(handle_contact, AuthStates.waiting_phone, F.contact | F.text)
+    
+    # Обработка текста до авторизации (для всех состояний, кроме authorized и waiting_password/waiting_phone)
+    # Регистрируем без фильтра состояния, проверка будет внутри обработчика
+    dp.message.register(handle_text_before_auth, F.text)
+
