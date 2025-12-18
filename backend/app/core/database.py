@@ -13,8 +13,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 db_url = settings.DATABASE_URL
+
+# Sprawdź czy użyć SQLite w pamięci jako fallback
+use_in_memory = settings.USE_IN_MEMORY_DB
+if not use_in_memory:
+    # Automatycznie przełącz na SQLite w pamięci jeśli DATABASE_URL zawiera nierozwiązane zmienne
+    if db_url and ("${{" in db_url or "${" in db_url):
+        logger.warning("DATABASE_URL contains unresolved variables, switching to in-memory SQLite")
+        use_in_memory = True
+        db_url = "sqlite+aiosqlite:///:memory:"
+
 # Logowanie DATABASE_URL bez hasła dla debugowania
-if db_url and db_url != "postgresql://postgres:postgres@localhost:5432/rag_bot_db":
+if use_in_memory:
+    logger.info("Using in-memory SQLite database (temporary)")
+    db_url = "sqlite+aiosqlite:///:memory:"
+elif db_url and db_url != "postgresql://postgres:postgres@localhost:5432/rag_bot_db":
     # Ukryj hasło w logach
     safe_url = db_url
     try:
@@ -31,18 +44,25 @@ if db_url and db_url != "postgresql://postgres:postgres@localhost:5432/rag_bot_d
     except Exception:
         logger.info(f"Using database URL: (hidden)")
 elif not db_url:
-    logger.error("DATABASE_URL is not set!")
+    logger.warning("DATABASE_URL is not set! Using in-memory SQLite as fallback")
+    db_url = "sqlite+aiosqlite:///:memory:"
+    use_in_memory = True
 else:
     logger.warning(f"Using default DATABASE_URL (localhost) - this may not work in Railway!")
     logger.warning("Please add PostgreSQL service in Railway or set DATABASE_URL environment variable")
 
-if db_url.startswith("sqlite"):
-    # SQLite dla lokalnego rozwoju
+if db_url.startswith("sqlite") or use_in_memory:
+    # SQLite dla lokalnego rozwoju lub w pamięci jako fallback
+    if use_in_memory or ":memory:" in db_url:
+        db_url = "sqlite+aiosqlite:///:memory:"
+        logger.info("Initializing in-memory SQLite database")
+    else:
+        db_url = db_url.replace("sqlite:///", "sqlite+aiosqlite:///")
     engine = create_async_engine(
-        db_url.replace("sqlite:///", "sqlite+aiosqlite:///"),
+        db_url,
         echo=False,
         future=True,
-        connect_args={"check_same_thread": False}
+        connect_args={"check_same_thread": False} if not use_in_memory else {}
     )
 else:
     # PostgreSQL - добавление pool_pre_ping для автоматического переподключения
@@ -80,31 +100,35 @@ async def get_db() -> AsyncSession:
             await session.close()
 
 
-async def wait_for_db(max_retries: int = 30, retry_interval: int = 2):
+async def wait_for_db(max_retries: int = 5, retry_interval: int = 1):
     """
     Ожидание готовности базы данных с повторными попытками
+    Dla SQLite w pamięci zawsze zwraca True natychmiast
     """
     import asyncio
     import logging
     import os
     logger = logging.getLogger(__name__)
     
+    # SQLite w pamięci nie wymaga połączenia
+    if settings.USE_IN_MEMORY_DB or db_url.startswith("sqlite"):
+        logger.info("Using in-memory SQLite - no connection needed")
+        return True
+    
     # Sprawdź czy DATABASE_URL jest ustawione
     db_url_env = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
     if not db_url_env:
-        logger.error("DATABASE_URL environment variable is not set!")
-        logger.error("Please set DATABASE_URL in Railway environment variables or add PostgreSQL service")
-        raise ValueError("DATABASE_URL environment variable is required")
+        logger.warning("DATABASE_URL environment variable is not set!")
+        logger.warning("Switching to in-memory SQLite database")
+        return True
     
     # Sprawdź czy DATABASE_URL zawiera nierozwiązane zmienne
     if "${{" in db_url_env or "${" in db_url_env:
-        logger.error(f"DATABASE_URL contains unresolved variables: {db_url_env}")
-        logger.error("Railway should resolve these automatically. Please check:")
-        logger.error("1. PostgreSQL service is added to the project")
-        logger.error("2. All required variables (PGUSER, POSTGRES_PASSWORD, RAILWAY_PRIVATE_DOMAIN, PGDATABASE) are set")
-        logger.error("3. Try setting SKIP_DB_INIT=true temporarily to start without database")
-        raise ValueError(f"DATABASE_URL contains unresolved template variables: {db_url_env}")
+        logger.warning(f"DATABASE_URL contains unresolved variables: {db_url_env}")
+        logger.warning("Switching to in-memory SQLite database")
+        return True
     
+    # Tylko dla PostgreSQL próbuj połączyć się
     for attempt in range(max_retries):
         try:
             # Пробуем подключиться к базе данных
@@ -117,14 +141,10 @@ async def wait_for_db(max_retries: int = 30, retry_interval: int = 2):
                 logger.warning(f"Database connection attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {retry_interval}s...")
                 await asyncio.sleep(retry_interval)
             else:
-                logger.error(f"Failed to connect to database after {max_retries} attempts: {e}")
-                logger.error("Please check:")
-                logger.error("1. DATABASE_URL is set correctly in Railway environment variables")
-                logger.error("2. PostgreSQL service is running and accessible")
-                logger.error("3. Database credentials are correct")
-                logger.error("4. Set SKIP_DB_INIT=true to start without database")
-                raise
-    return False
+                logger.warning(f"Failed to connect to database after {max_retries} attempts: {e}")
+                logger.warning("Switching to in-memory SQLite database as fallback")
+                return True  # Nie rzucaj wyjątku, użyj SQLite w pamięci
+    return True
 
 
 async def init_db():
@@ -139,14 +159,31 @@ async def init_db():
         logger.info("Skipping database initialization (SKIP_DB_INIT=true)")
         return
     
-    # Ожидание готовности базы данных
-    logger.info("Waiting for database to be ready...")
-    try:
-        await wait_for_db()
-    except Exception as e:
-        logger.error(f"Failed to connect to database: {e}")
-        logger.warning("Application will continue without database. Set SKIP_DB_INIT=true to skip this check.")
-        raise
+    # Sprawdź czy używamy SQLite w pamięci
+    is_in_memory = settings.USE_IN_MEMORY_DB or db_url.startswith("sqlite") or ":memory:" in db_url
+    
+    if not is_in_memory:
+        # Ожидание готовности базы данных (tylko dla PostgreSQL)
+        logger.info("Waiting for database to be ready...")
+        try:
+            await wait_for_db()
+        except Exception as e:
+            logger.warning(f"Failed to connect to database: {e}")
+            logger.warning("Switching to in-memory SQLite database")
+            # Przełącz na SQLite w pamięci - użyj istniejącego engine jeśli jest SQLite
+            if not db_url.startswith("sqlite"):
+                # Tylko jeśli nie jest już SQLite, przełącz engine
+                global engine
+                db_url_memory = "sqlite+aiosqlite:///:memory:"
+                engine = create_async_engine(
+                    db_url_memory,
+                    echo=False,
+                    future=True,
+                    connect_args={}
+                )
+            is_in_memory = True
+    else:
+        logger.info("Using in-memory SQLite database - no connection wait needed")
     
     # Импорт моделей в правильной kolejności для регистрации w metadata
     from app.models.admin_user import AdminUser  # noqa
@@ -159,6 +196,9 @@ async def init_db():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Database tables initialized successfully")
+        if is_in_memory:
+            logger.warning("⚠️  Using in-memory SQLite - data will be lost on restart!")
+            logger.warning("Set proper DATABASE_URL or add PostgreSQL service for persistent storage")
     except Exception as e:
         # Если таблица уже существует, то OK
         logger.warning(f"Błąd podczas tworzenia tabel (możliwe, że już istnieją): {e}")

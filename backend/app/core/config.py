@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # Temporary: Skip database initialization (for fast startup)
     SKIP_DB_INIT: bool = False
     
+    # Use in-memory SQLite as fallback if PostgreSQL is not available
+    USE_IN_MEMORY_DB: bool = False
+    
     @field_validator('DATABASE_URL', mode='before')
     @classmethod
     def resolve_database_url(cls, v):
