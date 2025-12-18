@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Копирование файлов зависимостей
-COPY requirements.txt .
+# Копирование файлов зависимостей (build context jest root projektu)
+COPY backend/requirements.txt requirements.txt
 
 # Установка Python зависимостей
 RUN pip install --no-cache-dir --user -r requirements.txt
@@ -30,8 +30,8 @@ RUN apt-get update && apt-get install -y \
 # Копирование установленных пакетов из builder
 COPY --from=builder /root/.local /root/.local
 
-# Копирование кода приложения
-COPY . .
+# Копирование кода приложения (build context jest root projektu)
+COPY backend/ .
 
 # Создание entrypoint скрипта
 RUN echo '#!/bin/bash\n\
