@@ -1,18 +1,18 @@
-# Multi-stage build для оптимизации размера образа
+# Multi-stage build dla Next.js standalone
 
 # Stage 1: Builder
 FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# Копирование файлов зависимостей (build context jest root projektu)
-COPY admin-panel/package*.json ./
+# Копирование файлов зависимостей (build context jest admin-panel/)
+COPY package*.json ./
 
 # Установка зависимостей
 RUN npm ci
 
-# Копирование исходного кода (build context jest root projektu)
-COPY admin-panel/ .
+# Копирование исходного кода (build context jest admin-panel/)
+COPY . .
 
 # Сборка приложения
 RUN npm run build
@@ -29,8 +29,7 @@ RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
 # Копирование собранного приложения z builder
-# Next.js standalone tworzy strukturę w .next/standalone/app
-# Kopiujemy całą strukturę standalone do root
+# Next.js standalone tworzy strukturę w .next/standalone
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
@@ -53,9 +52,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # Railway sets PORT automatically via environment, Next.js will read it
 # server.js should be in root after copying standalone directory
 CMD ["node", "server.js"]
-
-
-
-
-
-
