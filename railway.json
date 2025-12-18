@@ -13,25 +13,6 @@
   }
 }
 
-// Note: This configuration is for the backend service.
-// For admin-panel, create a separate Railway service with:
-// - Dockerfile: admin-panel/Dockerfile
-// - Port: 3000 (or use ADMIN_PANEL_PORT env var)
-// 
-// All credentials must be set in Railway environment variables:
-// - DATABASE_URL (auto-provided if using Railway PostgreSQL)
-// - QDRANT_URL
-// - QDRANT_API_KEY
-// - OPENROUTER_API_KEY
-// - OPENROUTER_MODEL_PRIMARY (optional, defaults to x-ai/grok-4.1-fast)
-// - OPENROUTER_MODEL_FALLBACK (optional, defaults to openai/gpt-oss-120b:free)
-// - ADMIN_SECRET_KEY
-// - ADMIN_SESSION_SECRET
-// - APP_URL (e.g., https://your-admin-panel.railway.app)
-// - BACKEND_URL (e.g., https://your-backend.railway.app)
-// - NEXT_PUBLIC_BACKEND_URL (same as BACKEND_URL, for admin-panel)
-// - CORS_ORIGINS (comma-separated, e.g., "https://your-admin-panel.railway.app,https://your-backend.railway.app")
-
 
 
 
