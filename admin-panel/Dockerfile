@@ -5,14 +5,14 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# Копирование файлов зависимостей
-COPY package*.json ./
+# Копирование файлов зависимостей (build context jest root projektu)
+COPY admin-panel/package*.json ./
 
 # Установка зависимостей
 RUN npm ci
 
-# Копирование исходного кода
-COPY . .
+# Копирование исходного кода (build context jest root projektu)
+COPY admin-panel/ .
 
 # Сборка приложения
 RUN npm run build
