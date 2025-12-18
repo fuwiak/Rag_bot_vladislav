@@ -79,11 +79,12 @@ export default function ModelsPage() {
         }),
       ])
 
+      let loadedModels: Model[] = []
       if (modelsRes.ok) {
         const modelsData = await modelsRes.json()
-        const allModels = modelsData.models || []
-        setModels(allModels)
-        setFilteredModels(allModels)
+        loadedModels = modelsData.models || []
+        setModels(loadedModels)
+        setFilteredModels(loadedModels)
       }
 
       if (projectsRes.ok) {
@@ -116,16 +117,16 @@ export default function ModelsPage() {
             }),
           }).then(res => res.json()).then(data => {
             setGlobalSettings(data)
-            // Инициализируем поисковые запросы
-            const primaryModel = allModels.find(m => m.id === defaultPrimary)
-            const fallbackModel = allModels.find(m => m.id === defaultFallback)
+            // Инициализируем поисковые запросы (используем loadedModels z closure)
+            const primaryModel = loadedModels.find(m => m.id === defaultPrimary)
+            const fallbackModel = loadedModels.find(m => m.id === defaultFallback)
             if (primaryModel) setPrimarySearchQuery(primaryModel.name)
             if (fallbackModel) setFallbackSearchQuery(fallbackModel.name)
           }).catch(err => console.error('Ошибка установки дефолтных моделей:', err))
         } else {
           // Инициализируем поисковые запросы названиями моделей (используем уже загруженные модели)
           if (settingsData.primary_model_id) {
-            const primaryModel = allModels.find(m => m.id === settingsData.primary_model_id)
+            const primaryModel = loadedModels.find(m => m.id === settingsData.primary_model_id)
             if (primaryModel) {
               setPrimarySearchQuery(primaryModel.name)
             } else {
@@ -134,7 +135,7 @@ export default function ModelsPage() {
             }
           }
           if (settingsData.fallback_model_id) {
-            const fallbackModel = allModels.find(m => m.id === settingsData.fallback_model_id)
+            const fallbackModel = loadedModels.find(m => m.id === settingsData.fallback_model_id)
             if (fallbackModel) {
               setFallbackSearchQuery(fallbackModel.name)
             } else {
