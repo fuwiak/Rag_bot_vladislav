@@ -1,7 +1,7 @@
 """
 Схемы для моделей LLM
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict
 from uuid import UUID
 from datetime import datetime
@@ -9,11 +9,11 @@ from datetime import datetime
 
 class LLMModelBase(BaseModel):
     """Базовая схема модели"""
+    model_config = ConfigDict(protected_namespaces=())
+    
     model_id: str = Field(..., min_length=1, max_length=255, alias="model_id")
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
-    
-    model_config = {"protected_namespaces": ()}
 
 
 class LLMModelCreate(LLMModelBase):
@@ -23,13 +23,11 @@ class LLMModelCreate(LLMModelBase):
 
 class LLMModelResponse(LLMModelBase):
     """Схема ответа с моделью"""
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+    
     id: UUID
     is_custom: bool
     created_at: datetime
-    
-    class Config:
-        from_attributes = True
-        protected_namespaces = ()
 
 
 class GlobalModelSettingsUpdate(BaseModel):

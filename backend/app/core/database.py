@@ -9,7 +9,33 @@ from app.core.config import settings
 
 # Создание async engine
 # Jeśli używamy SQLite dla lokalnego rozwoju, użyj sqlite+aiosqlite
+import logging
+logger = logging.getLogger(__name__)
+
 db_url = settings.DATABASE_URL
+# Logowanie DATABASE_URL bez hasła dla debugowania
+if db_url and db_url != "postgresql://postgres:postgres@localhost:5432/rag_bot_db":
+    # Ukryj hasło w logach
+    safe_url = db_url
+    try:
+        if "@" in safe_url:
+            parts = safe_url.split("@")
+            if "://" in parts[0] and ":" in parts[0]:
+                protocol_user = parts[0].split("://")
+                if len(protocol_user) == 2:
+                    user_pass = protocol_user[1]
+                    if ":" in user_pass:
+                        user = user_pass.split(":")[0]
+                        safe_url = protocol_user[0] + "://" + user + ":****@" + "@".join(parts[1:])
+        logger.info(f"Using database URL: {safe_url}")
+    except Exception:
+        logger.info(f"Using database URL: (hidden)")
+elif not db_url:
+    logger.error("DATABASE_URL is not set!")
+else:
+    logger.warning(f"Using default DATABASE_URL (localhost) - this may not work in Railway!")
+    logger.warning("Please add PostgreSQL service in Railway or set DATABASE_URL environment variable")
+
 if db_url.startswith("sqlite"):
     # SQLite dla lokalnego rozwoju
     engine = create_async_engine(
@@ -60,7 +86,15 @@ async def wait_for_db(max_retries: int = 30, retry_interval: int = 2):
     """
     import asyncio
     import logging
+    import os
     logger = logging.getLogger(__name__)
+    
+    # Sprawdź czy DATABASE_URL jest ustawione
+    db_url_env = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
+    if not db_url_env:
+        logger.error("DATABASE_URL environment variable is not set!")
+        logger.error("Please set DATABASE_URL in Railway environment variables or add PostgreSQL service")
+        raise ValueError("DATABASE_URL environment variable is required")
     
     for attempt in range(max_retries):
         try:
@@ -75,6 +109,10 @@ async def wait_for_db(max_retries: int = 30, retry_interval: int = 2):
                 await asyncio.sleep(retry_interval)
             else:
                 logger.error(f"Failed to connect to database after {max_retries} attempts: {e}")
+                logger.error("Please check:")
+                logger.error("1. DATABASE_URL is set correctly in Railway environment variables")
+                logger.error("2. PostgreSQL service is running and accessible")
+                logger.error("3. Database credentials are correct")
                 raise
     return False
 
