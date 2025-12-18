@@ -64,3 +64,5 @@ Next.js standalone server automatycznie:
 ✅ **Telegram Bot:** NIE używa własnego portu - działa przez polling  
 
 **Nie trzeba nic zmieniać** - Railway i aplikacje automatycznie obsługują porty!
+
+

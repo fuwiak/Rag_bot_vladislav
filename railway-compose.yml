@@ -60,13 +60,15 @@ services:
     environment:
       # Next.js public environment variables (accessible in browser)
       NEXT_PUBLIC_BACKEND_URL: ${BACKEND_URL}
-      PORT: ${ADMIN_PANEL_PORT:-8080}
+      # Railway sets PORT automatically - Next.js reads it from process.env.PORT
       NODE_ENV: production
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:${ADMIN_PANEL_PORT:-8080}/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:' + (process.env.PORT || '3000') + '/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
     depends_on:
       - backend
+
+

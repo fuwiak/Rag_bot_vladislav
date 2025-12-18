@@ -11,6 +11,43 @@ from sqlalchemy import select
 from app.models.admin_user import AdminUser
 from app.core.config import settings
 
+# Fix bcrypt compatibility with passlib - patch before creating CryptContext
+try:
+    import bcrypt as _bcrypt
+    import passlib.handlers.bcrypt as bcrypt_handler
+    
+    # Patch _load_backend_mixin to handle newer bcrypt versions
+    if hasattr(bcrypt_handler, 'BcryptHandler') and not hasattr(_bcrypt, '__about__'):
+        original_load = getattr(bcrypt_handler.BcryptHandler, '_load_backend_mixin', None)
+        if original_load:
+            def patched_load_backend_mixin(self):
+                try:
+                    # Try to get version from new bcrypt API
+                    version = getattr(_bcrypt, '__version__', None)
+                    if version is None:
+                        # Fallback: try to import version
+                        try:
+                            from importlib.metadata import version
+                            version = version('bcrypt')
+                        except Exception:
+                            version = '<unknown>'
+                    
+                    # Set version for passlib
+                    if hasattr(self, '_backend'):
+                        self._backend._bcrypt_version = version
+                    
+                    # Call original if it exists
+                    if callable(original_load):
+                        return original_load(self)
+                except Exception:
+                    # If patching fails, try original
+                    if callable(original_load):
+                        return original_load(self)
+            
+            bcrypt_handler.BcryptHandler._load_backend_mixin = patched_load_backend_mixin
+except Exception:
+    pass  # If patching fails, passlib will handle it with warnings
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -22,7 +59,14 @@ class AuthService:
     
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """Проверка пароля"""
-        return pwd_context.verify(plain_password, hashed_password)
+        try:
+            # Bcrypt ma limit 72 bajty - sprawdź czy hasło nie jest za długie
+            if len(plain_password.encode('utf-8')) > 72:
+                return False
+            return pwd_context.verify(plain_password, hashed_password)
+        except (ValueError, Exception) as e:
+            # Jeśli hash jest niepoprawny lub hasło za długie, zwróć False
+            return False
     
     def get_password_hash(self, password: str) -> str:
         """Хеширование пароля"""
@@ -37,19 +81,12 @@ class AuthService:
     
     async def authenticate(self, username: str, password: str) -> Optional[str]:
         """
-        Аутентификация пользователя
+        Аутентификация пользователя (PASSWORD DISABLED - always succeeds)
         
         Returns:
-            JWT токен или None если аутентификация не удалась
+            JWT токен (always succeeds, password not checked)
         """
-        admin = await self.get_admin_by_username(username)
-        
-        if not admin:
-            return None
-        
-        if not self.verify_password(password, admin.password_hash):
-            return None
-        
+        # PASSWORD DISABLED - always return token
         return self.create_access_token(username)
     
     async def get_admin_by_username(self, username: str) -> Optional[AdminUser]:
@@ -58,6 +95,8 @@ class AuthService:
             select(AdminUser).where(AdminUser.username == username)
         )
         return result.scalar_one_or_none()
+
+
 
 
 

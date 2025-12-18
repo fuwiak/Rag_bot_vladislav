@@ -98,3 +98,5 @@ Po deploy frontendu:
 **Zmienne Środowiskowe (oba serwisy):**
 - Backend: Wszystkie zmienne z `RAILWAY_ENV_VARS.md`
 - Frontend: Tylko `NEXT_PUBLIC_BACKEND_URL`
+
+

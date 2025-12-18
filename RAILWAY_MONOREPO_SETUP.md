@@ -146,3 +146,5 @@ COPY admin-panel/ .
 ✅ **Config-as-Code** - każdy service ma swój `railway.json`  
 ✅ **Watch Patterns** - zapobiegają niepotrzebnym rebuildom  
 ✅ **Root Directory** - puste dla obu serwisów (Railway używa root jako build context)
+
+

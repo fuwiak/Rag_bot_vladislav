@@ -54,3 +54,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # Railway sets PORT automatically via environment, Next.js will read it
 # server.js should be in root after copying standalone directory
 CMD ["node", "server.js"]
+
+

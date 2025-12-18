@@ -6,9 +6,9 @@ export async function apiRequest(
 ): Promise<Response> {
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
   
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...options.headers,
+    ...(options.headers as Record<string, string> || {}),
   }
   
   if (token) {
@@ -29,11 +29,3 @@ export async function apiRequest(
   
   return response
 }
-
-
-
-
-
-
-
-

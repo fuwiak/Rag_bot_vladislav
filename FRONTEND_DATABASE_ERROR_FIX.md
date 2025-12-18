@@ -75,3 +75,5 @@ Po poprawieniu konfiguracji:
 2. Sprawdź build logi - czy używa `admin-panel/Dockerfile`?
 3. Sprawdź czy `admin-panel/railway.json` istnieje i jest poprawny
 4. Upewnij się, że w Railway Dashboard → Frontend Service → Settings → Build → Dockerfile Path = `admin-panel/Dockerfile`
+
+

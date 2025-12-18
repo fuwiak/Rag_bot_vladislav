@@ -128,3 +128,5 @@ Railway **może nie wykryć automatycznie** `admin-panel/railway.json` dla front
 ❌ **NIE:** Root Directory = `admin-panel`
 
 **Po ustawieniu, zrebuilduj service i sprawdź logi!**
+
+

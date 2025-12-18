@@ -93,3 +93,5 @@ W build logach frontend service, sprawdź czy:
 2. Sprawdź czy frontend service ma **własny URL** (nie używa backend URL)
 3. Sprawdź logi frontend service - powinny pokazywać Node.js, nie uvicorn
 4. Upewnij się, że używasz **frontend service URL**, nie backend URL
+
+

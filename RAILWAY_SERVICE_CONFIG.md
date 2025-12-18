@@ -114,3 +114,5 @@ COPY admin-panel/ .
 - Railway może wymagać ręcznego ustawienia Dockerfile Path w Dashboard
 - Ustaw `admin-panel/Dockerfile` w Settings → Build → Dockerfile Path
 - Railway powinien użyć tego ustawienia dla tego serwisu
+
+

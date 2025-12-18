@@ -18,37 +18,23 @@ async def get_current_admin(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Получить текущего администратора из JWT токена
+    Получить текущего администратора (PASSWORD DISABLED - always returns mock admin)
     """
-    token = credentials.credentials
+    # PASSWORD DISABLED - always return mock admin
+    from app.models.admin_user import AdminUser
+    from uuid import uuid4
     
-    try:
-        payload = jwt.decode(token, settings.ADMIN_SECRET_KEY, algorithms=["HS256"])
-        username: str = payload.get("sub")
-        
-        if username is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Неверный токен"
-            )
-        
-        # Проверка существования пользователя в БД
-        auth_service = AuthService(db)
-        admin = await auth_service.get_admin_by_username(username)
-        
-        if not admin:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Пользователь не найден"
-            )
-        
-        return admin
-        
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный токен"
-        )
+    # Create mock admin object
+    mock_admin = AdminUser(
+        id=uuid4(),
+        username="admin",
+        password_hash="",
+        created_at=None
+    )
+    
+    return mock_admin
+
+
 
 
 

@@ -19,16 +19,11 @@ async def login(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Авторизация администратора
+    Авторизация администратора (PASSWORD DISABLED - always succeeds)
     """
     auth_service = AuthService(db)
-    token = await auth_service.authenticate(login_data.username, login_data.password)
-    
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный логин или пароль"
-        )
+    # PASSWORD DISABLED - always create token for any username
+    token = auth_service.create_access_token(login_data.username)
     
     return LoginResponse(access_token=token, token_type="bearer")
 
@@ -42,6 +37,8 @@ async def logout(
     Выход из системы (опционально, можно реализовать blacklist токенов)
     """
     return {"message": "Выход выполнен успешно"}
+
+
 
 
 
