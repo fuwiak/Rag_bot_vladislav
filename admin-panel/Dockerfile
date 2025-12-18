@@ -16,6 +16,9 @@ RUN npm ci
 # Build context może być root (Railway) lub admin-panel/ (jeśli Root Directory jest ustawione)
 COPY admin-panel/ .
 
+# Stwórz pusty katalog public jeśli nie istnieje (Next.js może go wymagać)
+RUN mkdir -p public || true
+
 # Сборка приложения
 RUN npm run build
 
@@ -33,8 +36,16 @@ RUN adduser --system --uid 1001 nextjs
 # Копирование собранного приложения z builder
 # Next.js standalone tworzy strukturę w .next/standalone
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+
+# Kopiujemy public i .next/static (Next.js standalone nie kopiuje ich automatycznie)
+# public istnieje (stworzony w builder stage), .next/static jest tworzony podczas build
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# .next/static może nie istnieć - użyj warunkowego kopiowania
+RUN --mount=type=bind,from=builder,source=/app/.next/static,target=/mnt/static \
+    if [ -d /mnt/static ] && [ -n "$(ls -A /mnt/static 2>/dev/null)" ]; then \
+      mkdir -p .next/static && \
+      cp -r /mnt/static/* ./.next/static/; \
+    fi || true
 
 USER nextjs
 
@@ -54,5 +65,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 # Railway sets PORT automatically via environment, Next.js will read it
 # server.js should be in root after copying standalone directory
 CMD ["node", "server.js"]
-
-
