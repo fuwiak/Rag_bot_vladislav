@@ -30,7 +30,7 @@ RUN adduser --system --uid 1001 nextjs
 
 # Копирование собранного приложения z builder
 # Next.js standalone tworzy strukturę w .next/standalone/app
-# Kopiujemy całą strukturę standalone do root (server.js jest w standalone)
+# Kopiujemy całą strukturę standalone do root
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
@@ -42,7 +42,7 @@ EXPOSE 8080
 
 # Next.js standalone server reads PORT from environment automatically
 ENV HOSTNAME="0.0.0.0"
-ENV PORT=8080
+# PORT will be set by Railway automatically - don't set default here
 
 # Health check endpoint (uses PORT from environment)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
@@ -50,8 +50,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 
 # Next.js standalone server automatically uses PORT from environment variable
 # Railway sets PORT automatically via environment, Next.js will read it
-# server.js is in the standalone directory (copied to root)
-# Next.js standalone creates server.js in .next/standalone/app, but we copy it to root
+# server.js should be in root after copying standalone directory
 CMD ["node", "server.js"]
 
 
