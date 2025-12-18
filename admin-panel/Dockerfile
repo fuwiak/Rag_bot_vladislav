@@ -28,24 +28,30 @@ ENV NODE_ENV production
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Копирование собранного приложения из builder
-COPY --from=builder /app/public ./public
+# Копирование собранного приложения z builder
+# Next.js standalone tworzy strukturę w .next/standalone/app
+# Kopiujemy całą strukturę standalone do root (server.js jest w standalone)
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs
 
-EXPOSE 3000
+# Railway will set PORT automatically (usually 8080 or dynamic)
+EXPOSE 8080
 
-# PORT will be provided by Railway via environment variable
-ENV PORT=${PORT:-3000}
+# Next.js standalone server reads PORT from environment automatically
 ENV HOSTNAME="0.0.0.0"
+ENV PORT=8080
 
-# Health check (uses PORT from environment, defaults to 3000)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD sh -c "node -e \"require('http').get('http://localhost:' + (process.env.PORT || '3000') + '/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})\"" || exit 1
+# Health check endpoint (uses PORT from environment)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || '8080') + '/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})" || exit 1
 
-# Next.js standalone server automatically uses PORT from environment
+# Next.js standalone server automatically uses PORT from environment variable
+# Railway sets PORT automatically via environment, Next.js will read it
+# server.js is in the standalone directory (copied to root)
+# Next.js standalone creates server.js in .next/standalone/app, but we copy it to root
 CMD ["node", "server.js"]
 
 

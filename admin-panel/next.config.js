@@ -8,6 +8,8 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || 'http://localhost:8000',
   },
+  // Ensure proper routing in production
+  trailingSlash: false,
 }
 
 module.exports = nextConfig
