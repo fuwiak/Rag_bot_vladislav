@@ -22,6 +22,7 @@ class Project(Base):
     access_password = Column(String(255), nullable=False)
     prompt_template = Column(Text, nullable=False)
     max_response_length = Column(Integer, default=1000, nullable=False)
+    llm_model = Column(String(255), nullable=True)  # Модель LLM для проекта (если None, используется глобальная)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     

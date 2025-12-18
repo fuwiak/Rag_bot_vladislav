@@ -60,6 +60,9 @@ export default function ProjectDetailPage() {
   const [newUserPhone, setNewUserPhone] = useState('')
   const [newUserUsername, setNewUserUsername] = useState('')
   const [addingUser, setAddingUser] = useState(false)
+  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadFiles, setUploadFiles] = useState<File[]>([])
 
   useEffect(() => {
     const token = localStorage.getItem('token')
@@ -67,26 +70,33 @@ export default function ProjectDetailPage() {
       router.push('/login')
       return
     }
-    fetchProjectData()
+    // Lazy loading: загружаем только основные данные проекта при монтировании
+    fetchProjectBasicData()
   }, [projectId, router])
 
-  const fetchProjectData = async () => {
+  // Загружаем документы и пользователей только при переключении на соответствующие вкладки
+  useEffect(() => {
+    if (activeTab === 'documents' && documents.length === 0 && !loading) {
+      fetchDocuments()
+    }
+  }, [activeTab])
+
+  useEffect(() => {
+    if (activeTab === 'users' && users.length === 0 && !loading) {
+      fetchUsers()
+    }
+  }, [activeTab])
+
+  // Загружаем только основные данные проекта
+  const fetchProjectBasicData = async () => {
+    setLoading(true)
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
       const token = localStorage.getItem('token')
 
-      // Загружаем данные проекта, документов и пользователей параллельно
-      const [projectRes, documentsRes, usersRes] = await Promise.all([
-        fetch(`${backendUrl}/api/projects/${projectId}`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-        }),
-        fetch(`${backendUrl}/api/documents/${projectId}`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-        }),
-        fetch(`${backendUrl}/api/users/project/${projectId}`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-        }),
-      ])
+      const projectRes = await fetch(`${backendUrl}/api/projects/${projectId}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      })
 
       if (projectRes.ok) {
         const projectData = await projectRes.json()
@@ -106,22 +116,59 @@ export default function ProjectDetailPage() {
       } else if (projectRes.status === 404) {
         setError('Проект не найден')
       }
-
-      if (documentsRes.ok) {
-        const documentsData = await documentsRes.json()
-        setDocuments(documentsData)
-      }
-
-      if (usersRes.ok) {
-        const usersData = await usersRes.json()
-        setUsers(usersData)
-      }
     } catch (err) {
       setError('Ошибка загрузки данных')
       console.error(err)
     } finally {
       setLoading(false)
     }
+  }
+
+  // Lazy loading документов
+  const fetchDocuments = async () => {
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+      const token = localStorage.getItem('token')
+
+      const documentsRes = await fetch(`${backendUrl}/api/documents/${projectId}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      })
+
+      if (documentsRes.ok) {
+        const documentsData = await documentsRes.json()
+        setDocuments(documentsData)
+      }
+    } catch (err) {
+      console.error('Ошибка загрузки документов:', err)
+    }
+  }
+
+  // Lazy loading пользователей
+  const fetchUsers = async () => {
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+      const token = localStorage.getItem('token')
+
+      const usersRes = await fetch(`${backendUrl}/api/users/project/${projectId}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      })
+
+      if (usersRes.ok) {
+        const usersData = await usersRes.json()
+        setUsers(usersData)
+      }
+    } catch (err) {
+      console.error('Ошибка загрузки пользователей:', err)
+    }
+  }
+
+  // Полная загрузка всех данных (используется при необходимости)
+  const fetchProjectData = async () => {
+    await Promise.all([
+      fetchProjectBasicData(),
+      fetchDocuments(),
+      fetchUsers()
+    ])
   }
 
   const handleDelete = async () => {
@@ -217,7 +264,7 @@ export default function ProjectDetailPage() {
 
   if (error || !project) {
     return (
-      <div className="min-h-screen bg-fb-gray py-8">
+      <div className="min-h-screen bg-fb-gray py-4">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <Link href="/dashboard" className="inline-flex items-center text-fb-blue hover:text-fb-blue-dark mb-4 font-medium">
             <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -225,7 +272,7 @@ export default function ProjectDetailPage() {
             </svg>
             Назад к проектам
           </Link>
-          <div className="bg-white rounded-lg shadow-sm p-8 text-center">
+          <div className="bg-white rounded-lg shadow-sm p-6 text-center">
             <p className="text-red-600 text-lg">{error || 'Проект не найден'}</p>
           </div>
         </div>
@@ -270,9 +317,9 @@ export default function ProjectDetailPage() {
       </nav>
 
       <div className="ml-64">
-        <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+        <main className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="mb-6">
+        <div className="mb-4">
           <Link href="/dashboard" className="inline-flex items-center text-fb-blue hover:text-fb-blue-dark mb-4 font-medium">
             <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -281,7 +328,7 @@ export default function ProjectDetailPage() {
           </Link>
           <div className="flex justify-between items-start">
             <div>
-              <h1 className="text-4xl font-bold text-fb-text mb-2">
+              <h1 className="text-3xl font-bold text-fb-text mb-2">
                 {isEditing ? editData.name : project.name}
               </h1>
               {(isEditing ? editData.description : project.description) && (
@@ -335,7 +382,7 @@ export default function ProjectDetailPage() {
         </div>
 
         {/* Tabs */}
-        <div className="bg-white rounded-lg shadow-sm mb-6">
+        <div className="bg-white rounded-lg shadow-sm mb-4">
           <div className="border-b border-fb-gray-dark">
             <nav className="flex -mb-px">
               <button
@@ -373,9 +420,9 @@ export default function ProjectDetailPage() {
         </div>
 
         {/* Content */}
-        <div className="bg-white rounded-lg shadow-sm p-8">
+          <div className="bg-white rounded-lg shadow-sm p-6">
           {activeTab === 'info' && (
-            <div className="space-y-6">
+            <div className="space-y-4">
               {error && (
                 <div className="bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded">
                   <p className="font-medium">{error}</p>
@@ -438,7 +485,7 @@ export default function ProjectDetailPage() {
                   </div>
                 </>
               ) : (
-                <form onSubmit={handleSave} className="space-y-6">
+                <form onSubmit={handleSave} className="space-y-4">
                   <div>
                     <h2 className="text-2xl font-bold text-fb-text mb-4">Редактирование проекта</h2>
                     
@@ -454,7 +501,7 @@ export default function ProjectDetailPage() {
                       </p>
                     </div>
 
-                    <div className="space-y-6">
+                    <div className="space-y-4">
                       <div>
                         <label className="block text-sm font-semibold text-fb-text mb-2">
                           Название проекта *
@@ -545,9 +592,12 @@ export default function ProjectDetailPage() {
 
           {activeTab === 'documents' && (
             <div>
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-fb-text">Документы</h2>
-                <button className="px-4 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold text-fb-text">Документы</h2>
+                <button 
+                  onClick={() => setShowUploadModal(true)}
+                  className="px-4 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors"
+                >
                   Загрузить документы
                 </button>
               </div>
@@ -573,7 +623,30 @@ export default function ProjectDetailPage() {
                           </p>
                         </div>
                       </div>
-                      <button className="text-red-600 hover:text-red-700 px-4 py-2 rounded-lg hover:bg-red-50 transition-colors">
+                      <button 
+                        onClick={async () => {
+                          if (!confirm(`Вы уверены, что хотите удалить документ "${doc.filename}"?`)) {
+                            return
+                          }
+                          try {
+                            const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+                            const token = localStorage.getItem('token')
+                            const response = await fetch(`${backendUrl}/api/documents/${doc.id}`, {
+                              method: 'DELETE',
+                              headers: { 'Authorization': `Bearer ${token}` },
+                            })
+                            if (response.ok || response.status === 204) {
+                              fetchDocuments()
+                            } else {
+                              const errorData = await response.json().catch(() => ({ detail: 'Ошибка удаления документа' }))
+                              alert(errorData.detail || 'Ошибка удаления документа')
+                            }
+                          } catch (err) {
+                            alert('Ошибка подключения к серверу')
+                          }
+                        }}
+                        className="text-red-600 hover:text-red-700 px-4 py-2 rounded-lg hover:bg-red-50 transition-colors"
+                      >
                         Удалить
                       </button>
                     </div>
@@ -585,8 +658,8 @@ export default function ProjectDetailPage() {
 
           {activeTab === 'users' && (
             <div>
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-fb-text">Пользователи</h2>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold text-fb-text">Пользователи</h2>
                 <button
                   onClick={() => setShowAddUserModal(true)}
                   className="px-4 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors flex items-center space-x-2"
@@ -641,7 +714,7 @@ export default function ProjectDetailPage() {
                                 body: JSON.stringify({ status: newStatus }),
                               })
                               if (response.ok) {
-                                fetchProjectData()
+                                fetchUsers()
                               } else {
                                 alert('Ошибка обновления статуса пользователя')
                               }
@@ -668,7 +741,7 @@ export default function ProjectDetailPage() {
                                   headers: { 'Authorization': `Bearer ${token}` },
                                 })
                                 if (response.ok) {
-                                  fetchProjectData()
+                                  fetchUsers()
                                 } else {
                                   alert('Ошибка удаления пользователя')
                                 }
@@ -693,10 +766,105 @@ export default function ProjectDetailPage() {
       </div>
 
       {/* Modal добавления пользователя */}
+      {/* Modal для загрузки документов */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-bold text-fb-text mb-4">Загрузить документы</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-fb-text mb-2">
+                  Выберите файлы (TXT, DOCX, PDF)
+                </label>
+                <input
+                  type="file"
+                  multiple
+                  accept=".txt,.docx,.pdf"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || [])
+                    setUploadFiles(files)
+                  }}
+                  className="block w-full text-sm text-fb-text-secondary
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-lg file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-fb-blue file:text-white
+                    hover:file:bg-fb-blue-dark
+                    file:cursor-pointer"
+                />
+                <p className="text-xs text-fb-text-secondary mt-2">
+                  Можно загрузить несколько файлов одновременно
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-4 pt-4 border-t border-fb-gray-dark">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowUploadModal(false)
+                  setUploadFiles([])
+                }}
+                disabled={uploading}
+                className="px-4 py-2 border border-fb-gray-dark rounded-lg text-fb-text font-semibold hover:bg-fb-gray-dark transition-colors disabled:opacity-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (uploadFiles.length === 0) {
+                    alert('Выберите хотя бы один файл')
+                    return
+                  }
+                  
+                  setUploading(true)
+                  try {
+                    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+                    const token = localStorage.getItem('token')
+                    
+                    const formData = new FormData()
+                    uploadFiles.forEach(file => {
+                      formData.append('files', file)
+                    })
+                    
+                    const response = await fetch(`${backendUrl}/api/documents/${projectId}/upload`, {
+                      method: 'POST',
+                      headers: {
+                        'Authorization': `Bearer ${token}`,
+                      },
+                      body: formData,
+                    })
+                    
+                    if (response.ok) {
+                      setShowUploadModal(false)
+                      setUploadFiles([])
+                      fetchDocuments()
+                    } else {
+                      const errorData = await response.json().catch(() => ({ detail: 'Ошибка загрузки документов' }))
+                      alert(errorData.detail || 'Ошибка загрузки документов')
+                    }
+                  } catch (err) {
+                    alert('Ошибка подключения к серверу')
+                  } finally {
+                    setUploading(false)
+                  }
+                }}
+                disabled={uploading || uploadFiles.length === 0}
+                className="px-4 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {uploading ? 'Загрузка...' : 'Загрузить'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAddUserModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full mx-4">
-            <h2 className="text-2xl font-bold text-fb-text mb-6">Добавить пользователя</h2>
+          <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full mx-4">
+            <h2 className="text-xl font-bold text-fb-text mb-4">Добавить пользователя</h2>
             
             {error && (
               <div className="bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded mb-4">
@@ -728,7 +896,7 @@ export default function ProjectDetailPage() {
                   setShowAddUserModal(false)
                   setNewUserPhone('')
                   setNewUserUsername('')
-                  fetchProjectData()
+                  fetchUsers()
                 } else {
                   const errorData = await response.json()
                   setError(errorData.detail || 'Ошибка создания пользователя')
@@ -768,7 +936,7 @@ export default function ProjectDetailPage() {
                 </div>
               </div>
 
-              <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-fb-gray-dark">
+              <div className="flex justify-end space-x-3 mt-4 pt-4 border-t border-fb-gray-dark">
                 <button
                   type="button"
                   onClick={() => {

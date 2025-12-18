@@ -14,3 +14,8 @@ def register_handlers(dp: Dispatcher, project_id: str):
     register_auth_handlers(dp, project_id)
     register_question_handlers(dp, project_id)
 
+
+
+
+
+

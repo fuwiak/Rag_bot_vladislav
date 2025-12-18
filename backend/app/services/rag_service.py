@@ -23,7 +23,7 @@ class RAGService:
         self.db = db
         self.vector_store = VectorStore()
         self.embedding_service = EmbeddingService()
-        self.llm_client = OpenRouterClient()
+        self.llm_client = None  # Будет создан с учетом модели проекта
         self.prompt_builder = PromptBuilder()
         self.response_formatter = ResponseFormatter()
     
@@ -85,19 +85,158 @@ class RAGService:
             )
             
             # Генерация ответа через LLM
+            # Получаем глобальные настройки моделей
+            from app.models.llm_model import GlobalModelSettings
+            from sqlalchemy import select
+            settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+            global_settings = settings_result.scalar_one_or_none()
+            
+            # Определяем primary и fallback модели
+            primary_model = None
+            fallback_model = None
+            
+            if project.llm_model:
+                # Если у проекта есть своя модель, используем её как primary
+                primary_model = project.llm_model
+                # Fallback берем из глобальных настроек
+                if global_settings and global_settings.fallback_model_id:
+                    fallback_model = global_settings.fallback_model_id
+            else:
+                # Используем глобальные настройки
+                if global_settings:
+                    primary_model = global_settings.primary_model_id
+                    fallback_model = global_settings.fallback_model_id
+                
+                # Если глобальных настроек нет или модели не установлены, используем дефолтные из .env
+                from app.core.config import settings as app_settings
+                if not primary_model:
+                    primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                if not fallback_model:
+                    fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+            
+            # Создаем клиент с моделями
+            llm_client = OpenRouterClient(
+                model_primary=primary_model,
+                model_fallback=fallback_model
+            )
             max_tokens = project.max_response_length // 4  # Приблизительная оценка токенов
-            raw_answer = await self.llm_client.chat_completion(
+            raw_answer = await llm_client.chat_completion(
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.7
             )
             
-            # Форматирование ответа
+            # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
             answer = self.response_formatter.format_response(
                 response=raw_answer,
                 max_length=project.max_response_length,
                 chunks=similar_chunks
             )
+        
+        # Сохранение сообщений в историю
+        await self._save_message(user_id, question, "user")
+        await self._save_message(user_id, answer, "assistant")
+        
+        return answer
+    
+    async def generate_answer_fast(
+        self,
+        user_id: UUID,
+        question: str,
+        top_k: int = 3
+    ) -> str:
+        """
+        Быстрая генерация ответа с ограниченным размером (для случаев превышения таймаута)
+        
+        Args:
+            user_id: ID пользователя
+            question: Вопрос пользователя
+            top_k: Количество релевантных чанков (уменьшено для скорости)
+        
+        Returns:
+            Короткий ответ на вопрос
+        """
+        # Получение пользователя и проекта
+        user = await self._get_user(user_id)
+        if not user:
+            raise ValueError("Пользователь не найден")
+        
+        project = await self._get_project(user.project_id)
+        if not project:
+            raise ValueError("Проект не найден")
+        
+        # Создание эмбеддинга вопроса
+        question_embedding = await self.embedding_service.create_embedding(question)
+        
+        # Поиск релевантных чанков (меньше чанков для скорости)
+        collection_name = f"project_{project.id}"
+        similar_chunks = await self.vector_store.search_similar(
+            collection_name=collection_name,
+            query_vector=question_embedding,
+            limit=top_k,
+            score_threshold=0.5
+        )
+        
+        # Если релевантных чанков нет
+        if not similar_chunks or len(similar_chunks) == 0:
+            return "В загруженных документах нет информации по этому вопросу."
+        
+        # Извлечение текстов чанков
+        chunk_texts = [chunk["payload"]["chunk_text"] for chunk in similar_chunks[:2]]  # Только 2 чанка
+        
+        # Построение упрощенного промпта
+        messages = [
+            {
+                "role": "system",
+                "content": f"{project.prompt_template}\n\nОтвечай кратко, не более 500 символов."
+            },
+            {
+                "role": "user",
+                "content": f"Вопрос: {question}\n\nКонтекст:\n" + "\n\n".join(chunk_texts)
+            }
+        ]
+        
+        # Быстрая генерация с ограниченным размером
+        from app.models.llm_model import GlobalModelSettings
+        from sqlalchemy import select
+        
+        settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+        global_settings = settings_result.scalar_one_or_none()
+        
+        primary_model = None
+        fallback_model = None
+        
+        if project.llm_model:
+            primary_model = project.llm_model
+        elif global_settings:
+            primary_model = global_settings.primary_model_id
+            fallback_model = global_settings.fallback_model_id
+        
+        from app.core.config import settings as app_settings
+        if not primary_model:
+            primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+        if not fallback_model:
+            fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+        
+        from app.llm.openrouter_client import OpenRouterClient
+        llm_client = OpenRouterClient(
+            model_primary=primary_model,
+            model_fallback=fallback_model
+        )
+        
+        # Ограничиваем max_tokens для быстрого ответа
+        raw_answer = await llm_client.chat_completion(
+            messages=messages,
+            max_tokens=200,  # Очень ограниченный размер
+            temperature=0.7
+        )
+        
+        # Форматирование ответа с ограничением длины
+        answer = self.response_formatter.format_response(
+            response=raw_answer,
+            max_length=min(project.max_response_length, 500),  # Максимум 500 символов
+            chunks=similar_chunks
+        )
         
         # Сохранение сообщений в историю
         await self._save_message(user_id, question, "user")
@@ -144,4 +283,5 @@ class RAGService:
         )
         self.db.add(message)
         await self.db.commit()
+
 

@@ -92,3 +92,8 @@ async def delete_project(
             detail="Проект не найден"
         )
 
+
+
+
+
+

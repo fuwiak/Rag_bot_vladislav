@@ -4,7 +4,8 @@
 import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
-from typing import List
+from pydantic import field_validator
+from typing import List, Union
 
 
 class Settings(BaseSettings):
@@ -37,20 +38,33 @@ class Settings(BaseSettings):
     APP_URL: str = "http://localhost:3000"
     BACKEND_URL: str = "http://localhost:8000"
     
-    # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001"]
+    # CORS - can be set as comma-separated string in environment variables
+    CORS_ORIGINS: Union[str, List[str]] = "http://localhost:3000,http://localhost:3001"
+    
+    @field_validator('CORS_ORIGINS', mode='before')
+    @classmethod
+    def parse_cors_origins(cls, v):
+        """Parse CORS_ORIGINS from comma-separated string or list"""
+        if isinstance(v, str):
+            # Split by comma and strip whitespace
+            return [origin.strip() for origin in v.split(',') if origin.strip()]
+        return v
     
     class Config:
-        # Szukaj .env w katalogu backend lub w katalogu głównym projektu
+        # Use environment variables only (no .env file required)
+        # Railway and Docker will provide all variables via environment
+        # For local development, .env file is optional and will be loaded if exists
         env_file = (
             Path(__file__).parent.parent.parent / ".env"
             if (Path(__file__).parent.parent.parent / ".env").exists()
             else Path(__file__).parent.parent.parent.parent / ".env"
             if (Path(__file__).parent.parent.parent.parent / ".env").exists()
-            else ".env"
+            else None
         )
         env_file_encoding = "utf-8"
         case_sensitive = True
+        # Allow reading from environment variables even if env_file is None
+        env_ignore_empty = True
 
 
 settings = Settings()

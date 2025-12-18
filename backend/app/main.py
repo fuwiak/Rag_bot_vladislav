@@ -1,6 +1,7 @@
 """
 Главный файл FastAPI приложения
 """
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -10,6 +11,12 @@ from app.core.database import init_db
 from app.api import router as api_router
 from app.api.middleware import RateLimitMiddleware
 from app.bot.bot_factory import BotFactory
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 
 @asynccontextmanager

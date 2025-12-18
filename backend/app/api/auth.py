@@ -43,3 +43,8 @@ async def logout(
     """
     return {"message": "Выход выполнен успешно"}
 
+
+
+
+
+

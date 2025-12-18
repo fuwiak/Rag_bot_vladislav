@@ -34,10 +34,20 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     processing_msg = await message.answer("⏳ Обрабатываю ваш вопрос...")
     
     try:
-        # Генерация ответа через RAG сервис
+        # Генерация ответа через RAG сервис с ограничением времени (5-7 секунд согласно ТЗ п. 6.3)
+        import asyncio
         async with AsyncSessionLocal() as db:
             rag_service = RAGService(db)
-            answer = await rag_service.generate_answer(user_id, question)
+            
+            # Создаем задачу с таймаутом
+            try:
+                answer = await asyncio.wait_for(
+                    rag_service.generate_answer(user_id, question),
+                    timeout=7.0  # Максимум 7 секунд
+                )
+            except asyncio.TimeoutError:
+                # Если превышено время, генерируем короткий ответ
+                answer = await rag_service.generate_answer_fast(user_id, question)
         
         # Удаление сообщения об обработке
         await processing_msg.delete()
@@ -54,11 +64,42 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     
     except Exception as e:
         await processing_msg.delete()
-        await message.answer(
-            f"❌ Произошла ошибка при обработке вашего вопроса.\n"
-            f"Попробуйте позже или обратитесь к администратору.\n\n"
-            f"Ошибка: {str(e)}"
-        )
+        
+        # Улучшенная обработка ошибок согласно ТЗ (п. 5.2.8)
+        error_message = str(e).lower()
+        error_str = str(e)
+        
+        if 'timeout' in error_message or 'timed out' in error_message:
+            await message.answer(
+                "⏱️ Сервис обработки временно недоступен (превышено время ожидания).\n"
+                "Попробуйте позже."
+            )
+        elif 'rate limit' in error_message or '429' in error_message or 'quota' in error_message or 'limit' in error_message:
+            await message.answer(
+                "🚫 Превышен лимит запросов.\n"
+                "Пожалуйста, подождите немного и попробуйте снова."
+            )
+        elif 'connection' in error_message or 'network' in error_message or 'unreachable' in error_message:
+            await message.answer(
+                "🌐 Ошибка подключения к сервису.\n"
+                "Проверьте подключение к интернету и попробуйте позже."
+            )
+        elif 'unauthorized' in error_message or '401' in error_message or '403' in error_message:
+            await message.answer(
+                "🔐 Ошибка авторизации сервиса.\n"
+                "Обратитесь к администратору."
+            )
+        elif 'не сработали' in error_str or 'fallback' in error_message:
+            await message.answer(
+                "❌ Сервис обработки недоступен.\n"
+                "Попробуйте позже или обратитесь к администратору."
+            )
+        else:
+            # Общая ошибка
+            await message.answer(
+                "❌ Произошла ошибка при обработке вашего вопроса.\n"
+                "Попробуйте позже или обратитесь к администратору."
+            )
 
 
 def register_question_handlers(dp: Dispatcher, project_id: str):

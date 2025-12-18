@@ -69,22 +69,19 @@ async def handle_password(message: Message, state: FSMContext, project_id: str =
         await state.update_data(project_id=str(project.id))
         
         # Пароль правильный, запрашиваем телефон
-            # Пароль верный, запрашиваем телефон
-            await state.set_state(AuthStates.waiting_phone)
-            
-            # Кнопка для отправки контакта
-            keyboard = ReplyKeyboardMarkup(
-                keyboard=[[KeyboardButton(text="📱 Поделиться контактом", request_contact=True)]],
-                resize_keyboard=True,
-                one_time_keyboard=True
-            )
-            
-            await message.answer(
-                "Пароль верный! Теперь поделитесь вашим номером телефона:",
-                reply_markup=keyboard
-            )
-        else:
-            await message.answer("❌ Неверный пароль. Попробуйте снова или используйте /start")
+        await state.set_state(AuthStates.waiting_phone)
+        
+        # Кнопка для отправки контакта
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="📱 Поделиться контактом", request_contact=True)]],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+        
+        await message.answer(
+            "Пароль верный! Теперь поделитесь вашим номером телефона:",
+            reply_markup=keyboard
+        )
 
 
 async def handle_contact(message: Message, state: FSMContext, project_id: str = None):

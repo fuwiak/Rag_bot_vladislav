@@ -7,7 +7,7 @@ from typing import List
 from uuid import UUID
 
 from app.core.database import get_db
-from app.schemas.user import UserResponse, UserStatusUpdate, UserCreate
+from app.schemas.user import UserResponse, UserStatusUpdate, UserCreate, UserUpdate
 from app.services.user_service import UserService
 from app.api.dependencies import get_current_admin
 
@@ -77,6 +77,45 @@ async def update_user_status(
     """Обновить статус пользователя (активен/заблокирован)"""
     service = UserService(db)
     user = await service.update_user_status(user_id, status_data.status)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден"
+        )
+    
+    return user
+
+
+@router.patch("/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: UUID,
+    user_data: UserUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(get_current_admin)
+):
+    """Обновить пользователя"""
+    service = UserService(db)
+    
+    # Проверка существования пользователя
+    existing_user = await service.get_user_by_id(user_id)
+    if not existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден"
+        )
+    
+    # Если изменяется телефон, проверяем на дубликат в проекте
+    if user_data.phone and user_data.phone != existing_user.phone:
+        project_id = user_data.project_id or existing_user.project_id
+        duplicate = await service.get_user_by_phone(project_id, user_data.phone)
+        if duplicate and duplicate.id != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Пользователь с таким номером телефона уже существует в этом проекте"
+            )
+    
+    user = await service.update_user(user_id, user_data)
     
     if not user:
         raise HTTPException(

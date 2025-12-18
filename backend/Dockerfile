@@ -45,13 +45,20 @@ exec "$@"' > /entrypoint.sh && \
 # Добавление локальных пакетов в PATH
 ENV PATH=/root/.local/bin:$PATH
 
-# Порт приложения
+# Порт приложения (Railway will provide PORT via environment variable)
 EXPOSE 8000
 
-# Health check
+# Health check (uses PORT from environment, defaults to 8000)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8000/health', timeout=5)" || exit 1
+    CMD sh -c "python -c \"import httpx, os; httpx.get('http://localhost:' + os.environ.get('PORT', '8000') + '/health', timeout=5)\"" || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use PORT from environment variable (Railway provides this)
+# Default to 8000 if PORT is not set
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+
+
+
+
+
 

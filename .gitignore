@@ -1,6 +1,7 @@
 # Environment variables - все файлы с .env в названии
 .env
 .env.*
+.env.bak
 *.env
 .env.local
 .env*.local

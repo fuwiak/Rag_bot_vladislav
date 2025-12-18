@@ -23,3 +23,8 @@ async def test_ready_check(test_client: AsyncClient):
 
 # Дополнительные тесты API можно добавить здесь
 
+
+
+
+
+

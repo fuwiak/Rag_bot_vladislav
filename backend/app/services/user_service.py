@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.user import User
-from app.schemas.user import UserStatusUpdate
+from app.schemas.user import UserStatusUpdate, UserUpdate
 
 
 class UserService:
@@ -53,6 +53,28 @@ class UserService:
         await self.db.refresh(user)
         return user
     
+    async def update_user(self, user_id: UUID, user_data: UserUpdate) -> Optional[User]:
+        """Обновить пользователя"""
+        user = await self.get_user_by_id(user_id)
+        
+        if not user:
+            return None
+        
+        # Обновляем поля, если они указаны
+        if user_data.phone is not None:
+            user.phone = user_data.phone
+        if user_data.username is not None:
+            user.username = user_data.username
+        if user_data.project_id is not None:
+            user.project_id = user_data.project_id
+        if user_data.status is not None:
+            user.status = user_data.status
+        
+        await self.db.commit()
+        await self.db.refresh(user)
+        
+        return user
+    
     async def update_user_status(self, user_id: UUID, status: str) -> Optional[User]:
         """Обновить статус пользователя"""
         user = await self.get_user_by_id(user_id)
@@ -77,4 +99,6 @@ class UserService:
         await self.db.commit()
         
         return True
+
+
 

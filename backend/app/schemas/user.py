@@ -31,3 +31,11 @@ class UserStatusUpdate(BaseModel):
     """Схема для обновления статуса пользователя"""
     status: str = Field(..., pattern="^(active|blocked)$")
 
+
+class UserUpdate(BaseModel):
+    """Схема для обновления пользователя"""
+    phone: Optional[str] = Field(None, min_length=1, max_length=20)
+    username: Optional[str] = Field(None, max_length=255)
+    project_id: Optional[UUID] = None
+    status: Optional[str] = Field(None, pattern="^(active|blocked)$")
+

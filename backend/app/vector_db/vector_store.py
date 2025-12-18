@@ -92,3 +92,8 @@ class VectorStore:
             points_selector=[point_id]
         )
 
+
+
+
+
+

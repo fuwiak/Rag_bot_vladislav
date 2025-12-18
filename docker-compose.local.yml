@@ -29,6 +29,8 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-ragbot}:${POSTGRES_PASSWORD:-ragbot}@postgres:5432/${POSTGRES_DB:-rag_bot_db}
+      # Optional: Load from .env file if it exists (for local development only)
+      # All production credentials should come from Railway environment variables
     env_file:
       - .env
     depends_on:
@@ -47,7 +49,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      BACKEND_URL: http://backend:8000
+      NEXT_PUBLIC_BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
+      # Optional: Load from .env file if it exists (for local development only)
+      # All production credentials should come from Railway environment variables
     env_file:
       - .env
     depends_on:
@@ -55,4 +59,9 @@ services:
 
 volumes:
   postgres_data:
+
+
+
+
+
 

@@ -11,3 +11,8 @@ pip install -r requirements.txt
 
 echo "Instalacja zakończona!"
 
+
+
+
+
+

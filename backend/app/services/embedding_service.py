@@ -68,3 +68,8 @@ class EmbeddingService:
             data = response.json()
             return [item["embedding"] for item in data["data"]]
 
+
+
+
+
+

@@ -66,7 +66,7 @@ export default function NewProjectPage() {
     <div className="min-h-screen bg-fb-gray">
       <Sidebar />
       <div className="ml-64">
-        <div className="min-h-screen bg-fb-gray py-8">
+        <div className="min-h-screen bg-fb-gray py-4">
           <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
             <Link href="/dashboard" className="inline-flex items-center text-fb-blue hover:text-fb-blue-dark mb-4 font-medium">
               <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -74,25 +74,25 @@ export default function NewProjectPage() {
               </svg>
               Назад к проектам
             </Link>
-            <div className="bg-white shadow-sm rounded-lg p-8">
-          <div className="flex items-center space-x-3 mb-6">
-            <div className="w-12 h-12 bg-fb-blue rounded-lg flex items-center justify-center">
-              <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="bg-white shadow-sm rounded-lg p-6">
+          <div className="flex items-center space-x-3 mb-4">
+            <div className="w-10 h-10 bg-fb-blue rounded-lg flex items-center justify-center">
+              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
             </div>
-            <h1 className="text-3xl font-bold text-fb-text">Создать новый проект</h1>
+            <h1 className="text-2xl font-bold text-fb-text">Создать новый проект</h1>
           </div>
           
           {error && (
-            <div className="bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded mb-6">
+            <div className="bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-2 rounded mb-4 text-sm">
               <p className="font-medium">{error}</p>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-semibold text-fb-text mb-2">Название проекта</label>
+              <label className="block text-sm font-semibold text-fb-text mb-1.5">Название проекта</label>
               <input
                 type="text"
                 required
@@ -104,7 +104,7 @@ export default function NewProjectPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-fb-text mb-2">Описание</label>
+              <label className="block text-sm font-semibold text-fb-text mb-1.5">Описание</label>
               <textarea
                 value={formData.description}
                 onChange={(e) => setFormData({...formData, description: e.target.value})}
@@ -115,7 +115,7 @@ export default function NewProjectPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-fb-text mb-2">Пароль доступа</label>
+              <label className="block text-sm font-semibold text-fb-text mb-1.5">Пароль доступа</label>
               <input
                 type="password"
                 required
@@ -127,7 +127,7 @@ export default function NewProjectPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-fb-text mb-2">Токен Telegram бота</label>
+              <label className="block text-sm font-semibold text-fb-text mb-1.5">Токен Telegram бота</label>
               <input
                 type="text"
                 value={formData.bot_token}
@@ -138,7 +138,7 @@ export default function NewProjectPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-fb-text mb-2">Шаблон промпта</label>
+              <label className="block text-sm font-semibold text-fb-text mb-1.5">Шаблон промпта</label>
               <textarea
                 required
                 value={formData.prompt_template}
@@ -149,7 +149,7 @@ export default function NewProjectPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-fb-text mb-2">Максимальная длина ответа</label>
+              <label className="block text-sm font-semibold text-fb-text mb-1.5">Максимальная длина ответа</label>
               <input
                 type="number"
                 required

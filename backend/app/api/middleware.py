@@ -1,12 +1,12 @@
 """
 Middleware для API (rate limiting и т.д.)
 """
-from fastapi import Request, HTTPException, status
+from fastapi import Request
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
 import time
 from collections import defaultdict
-from typing import Dict, Tuple
+from typing import Dict
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -20,6 +20,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Пропускаем health checks
         if request.url.path in ["/health", "/ready"]:
+            return await call_next(request)
+        
+        # Пропускаем OPTIONS запросы (CORS preflight)
+        if request.method == "OPTIONS":
             return await call_next(request)
         
         # Получаем идентификатор клиента
@@ -36,9 +40,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         
         # Проверка лимита
         if len(self.requests[client_id]) >= self.requests_per_minute:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Превышен лимит запросов. Попробуйте позже."
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Превышен лимит запросов. Попробуйте позже."}
             )
         
         # Добавление текущего запроса
@@ -47,4 +51,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Продолжение обработки
         response = await call_next(request)
         return response
+
+
 

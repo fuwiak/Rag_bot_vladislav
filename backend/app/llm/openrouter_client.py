@@ -13,10 +13,11 @@ logger = logging.getLogger(__name__)
 class OpenRouterClient:
     """Клиент для OpenRouter API с fallback логикой"""
     
-    def __init__(self):
+    def __init__(self, model_primary: str = None, model_fallback: str = None):
         self.api_key = settings.OPENROUTER_API_KEY
-        self.model_primary = settings.OPENROUTER_MODEL_PRIMARY
-        self.model_fallback = settings.OPENROUTER_MODEL_FALLBACK
+        # Если модель указана при инициализации, используем её, иначе глобальные настройки
+        self.model_primary = model_primary or settings.OPENROUTER_MODEL_PRIMARY
+        self.model_fallback = model_fallback or settings.OPENROUTER_MODEL_FALLBACK
         self.timeout_primary = settings.OPENROUTER_TIMEOUT_PRIMARY
         self.timeout_fallback = settings.OPENROUTER_TIMEOUT_FALLBACK
         self.app_url = settings.APP_URL
@@ -107,4 +108,5 @@ class OpenRouterClient:
                 raise Exception("Пустой ответ от API")
             
             return data["choices"][0]["message"]["content"]
+
 

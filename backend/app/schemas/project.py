@@ -15,6 +15,7 @@ class ProjectBase(BaseModel):
     access_password: str = Field(..., min_length=4)
     prompt_template: str = Field(..., min_length=10)
     max_response_length: int = Field(default=1000, ge=100, le=10000)
+    llm_model: Optional[str] = None
 
 
 class ProjectCreate(ProjectBase):
@@ -30,6 +31,7 @@ class ProjectUpdate(BaseModel):
     access_password: Optional[str] = Field(None, min_length=4)
     prompt_template: Optional[str] = Field(None, min_length=10)
     max_response_length: Optional[int] = Field(None, ge=100, le=10000)
+    llm_model: Optional[str] = None
 
 
 class ProjectResponse(ProjectBase):
@@ -40,4 +42,5 @@ class ProjectResponse(ProjectBase):
     
     class Config:
         from_attributes = True
+
 

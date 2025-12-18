@@ -23,3 +23,8 @@ class Message(Base):
     # Связи
     user = relationship("User", back_populates="messages")
 
+
+
+
+
+

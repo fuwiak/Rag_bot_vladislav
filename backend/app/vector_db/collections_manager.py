@@ -55,3 +55,8 @@ class CollectionsManager:
         existing_names = [col.name for col in collections]
         return collection_name in existing_names
 
+
+
+
+
+

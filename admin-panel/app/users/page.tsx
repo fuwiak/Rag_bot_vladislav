@@ -32,6 +32,12 @@ export default function UsersPage() {
   const [newUserUsername, setNewUserUsername] = useState('')
   const [newUserProjectId, setNewUserProjectId] = useState('')
   const [addingUser, setAddingUser] = useState(false)
+  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [editUserPhone, setEditUserPhone] = useState('')
+  const [editUserUsername, setEditUserUsername] = useState('')
+  const [editUserProjectId, setEditUserProjectId] = useState('')
+  const [editUserStatus, setEditUserStatus] = useState('active')
+  const [updatingUser, setUpdatingUser] = useState(false)
 
   useEffect(() => {
     const token = localStorage.getItem('token')
@@ -143,6 +149,59 @@ export default function UsersPage() {
     }
   }
 
+  const handleEditUser = (user: User) => {
+    setEditingUser(user)
+    setEditUserPhone(user.phone)
+    setEditUserUsername(user.username || '')
+    setEditUserProjectId(user.project_id)
+    setEditUserStatus(user.status)
+    setError('')
+  }
+
+  const handleUpdateUser = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingUser) return
+
+    setUpdatingUser(true)
+    setError('')
+
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+      const token = localStorage.getItem('token')
+      
+      const updateData: any = {}
+      if (editUserPhone !== editingUser.phone) updateData.phone = editUserPhone
+      if (editUserUsername !== (editingUser.username || '')) updateData.username = editUserUsername || null
+      if (editUserProjectId !== editingUser.project_id) updateData.project_id = editUserProjectId
+      if (editUserStatus !== editingUser.status) updateData.status = editUserStatus
+
+      const response = await fetch(`${backendUrl}/api/users/${editingUser.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updateData),
+      })
+
+      if (response.ok) {
+        setEditingUser(null)
+        setEditUserPhone('')
+        setEditUserUsername('')
+        setEditUserProjectId('')
+        setEditUserStatus('active')
+        fetchData()
+      } else {
+        const errorData = await response.json()
+        setError(errorData.detail || 'Ошибка обновления пользователя')
+      }
+    } catch (err) {
+      setError('Ошибка подключения к серверу')
+    } finally {
+      setUpdatingUser(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-fb-gray">
@@ -185,11 +244,11 @@ export default function UsersPage() {
       </nav>
 
       <div className="ml-64">
-        <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
-          <div className="mb-6 flex justify-between items-center">
+        <main className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8">
+          <div className="mb-4 flex justify-between items-center">
             <div>
-              <h2 className="text-3xl font-bold text-fb-text">Все пользователи</h2>
-              <p className="text-fb-text-secondary mt-2">Управление всеми пользователями системы</p>
+              <h2 className="text-2xl font-bold text-fb-text">Все пользователи</h2>
+              <p className="text-fb-text-secondary mt-1 text-sm">Управление всеми пользователями системы</p>
             </div>
             <button
               onClick={() => setShowAddUserModal(true)}
@@ -203,13 +262,13 @@ export default function UsersPage() {
           </div>
 
           {error && (
-            <div className="bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded mb-6">
+            <div className="bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded mb-4">
               <p className="font-medium">{error}</p>
             </div>
           )}
 
           {users.length === 0 ? (
-            <div className="bg-white rounded-lg shadow-sm p-12 text-center">
+            <div className="bg-white rounded-lg shadow-sm p-6 text-center">
               <svg className="mx-auto h-12 w-12 text-fb-text-secondary mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
               </svg>
@@ -243,7 +302,7 @@ export default function UsersPage() {
                       <tr key={user.id} className="hover:bg-fb-gray transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center">
-                            <div className="w-10 h-10 bg-fb-blue rounded-full flex items-center justify-center text-white font-semibold mr-3">
+                            <div className="w-8 h-8 bg-fb-blue rounded-full flex items-center justify-center text-white font-semibold text-sm mr-2">
                               {user.phone.charAt(0).toUpperCase()}
                             </div>
                             <div>
@@ -277,7 +336,13 @@ export default function UsersPage() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-fb-text-secondary">
                           {new Date(user.created_at).toLocaleDateString('ru-RU')}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm space-x-3">
+                          <button
+                            onClick={() => handleEditUser(user)}
+                            className="text-fb-blue hover:text-fb-blue-dark font-medium"
+                          >
+                            Редактировать
+                          </button>
                           <button
                             onClick={() => handleDelete(user.id)}
                             className="text-red-600 hover:text-red-700 font-medium"
@@ -298,11 +363,11 @@ export default function UsersPage() {
       {/* Modal добавления пользователя */}
       {showAddUserModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full mx-4">
-            <h2 className="text-2xl font-bold text-fb-text mb-6">Добавить пользователя</h2>
+          <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full mx-4">
+            <h2 className="text-xl font-bold text-fb-text mb-4">Добавить пользователя</h2>
             
             {error && (
-              <div className="bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded mb-4">
+              <div className="bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-2 rounded mb-3 text-sm">
                 <p className="font-medium">{error}</p>
               </div>
             )}
@@ -351,7 +416,7 @@ export default function UsersPage() {
             }}>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-semibold text-fb-text mb-2">
+                  <label className="block text-sm font-semibold text-fb-text mb-1.5">
                     Проект *
                   </label>
                   <select
@@ -370,7 +435,7 @@ export default function UsersPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-semibold text-fb-text mb-2">
+                  <label className="block text-sm font-semibold text-fb-text mb-1.5">
                     Номер телефона *
                   </label>
                   <input
@@ -384,7 +449,7 @@ export default function UsersPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-semibold text-fb-text mb-2">
+                  <label className="block text-sm font-semibold text-fb-text mb-1.5">
                     Username (опционально)
                   </label>
                   <input
@@ -397,7 +462,7 @@ export default function UsersPage() {
                 </div>
               </div>
 
-              <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-fb-gray-dark">
+              <div className="flex justify-end space-x-3 mt-4 pt-4 border-t border-fb-gray-dark">
                 <button
                   type="button"
                   onClick={() => {
@@ -418,6 +483,111 @@ export default function UsersPage() {
                   className="px-4 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {addingUser ? 'Добавление...' : 'Добавить'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal редактирования пользователя */}
+      {editingUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full mx-4">
+            <h2 className="text-2xl font-bold text-fb-text mb-6">Редактировать пользователя</h2>
+            
+            {error && (
+              <div className="bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded mb-4">
+                <p className="font-medium">{error}</p>
+              </div>
+            )}
+
+            <form onSubmit={handleUpdateUser}>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-fb-text mb-1.5">
+                    Проект *
+                  </label>
+                  <select
+                    required
+                    value={editUserProjectId}
+                    onChange={(e) => setEditUserProjectId(e.target.value)}
+                    className="block w-full border border-fb-gray-dark rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fb-blue focus:border-transparent text-fb-text"
+                  >
+                    <option value="">Выберите проект</option>
+                    {projectsList.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-fb-text mb-1.5">
+                    Номер телефона *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editUserPhone}
+                    onChange={(e) => setEditUserPhone(e.target.value)}
+                    className="block w-full border border-fb-gray-dark rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fb-blue focus:border-transparent text-fb-text"
+                    placeholder="+1234567890"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-fb-text mb-1.5">
+                    Username (опционально)
+                  </label>
+                  <input
+                    type="text"
+                    value={editUserUsername}
+                    onChange={(e) => setEditUserUsername(e.target.value)}
+                    className="block w-full border border-fb-gray-dark rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fb-blue focus:border-transparent text-fb-text"
+                    placeholder="username"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-fb-text mb-1.5">
+                    Статус *
+                  </label>
+                  <select
+                    required
+                    value={editUserStatus}
+                    onChange={(e) => setEditUserStatus(e.target.value)}
+                    className="block w-full border border-fb-gray-dark rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fb-blue focus:border-transparent text-fb-text"
+                  >
+                    <option value="active">Активен</option>
+                    <option value="blocked">Заблокирован</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3 mt-4 pt-4 border-t border-fb-gray-dark">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingUser(null)
+                    setEditUserPhone('')
+                    setEditUserUsername('')
+                    setEditUserProjectId('')
+                    setEditUserStatus('active')
+                    setError('')
+                  }}
+                  disabled={updatingUser}
+                  className="px-4 py-2 border border-fb-gray-dark rounded-lg text-fb-text font-semibold hover:bg-fb-gray-dark transition-colors disabled:opacity-50"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="submit"
+                  disabled={updatingUser}
+                  className="px-4 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {updatingUser ? 'Сохранение...' : 'Сохранить'}
                 </button>
               </div>
             </form>

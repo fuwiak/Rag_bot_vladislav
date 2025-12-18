@@ -1,23 +1,137 @@
 """
 Роутер для управления документами
 """
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from uuid import UUID
+import logging
 
-from app.core.database import get_db
+from app.core.database import get_db, AsyncSessionLocal
 from app.schemas.document import DocumentResponse
 from app.services.document_service import DocumentService
 from app.api.dependencies import get_current_admin
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+async def process_document_async(document_id: UUID, project_id: UUID, file_content: bytes, filename: str, file_type: str):
+    """Асинхронная обработка документа (парсинг, эмбеддинги, сохранение в Qdrant)"""
+    import asyncio
+    try:
+        async with AsyncSessionLocal() as db:
+            # Парсинг и разбивка на чанки
+            from app.documents.parser import DocumentParser
+            from app.documents.chunker import DocumentChunker
+            from app.models.document import Document
+            from sqlalchemy import select
+            
+            parser = DocumentParser()
+            chunker = DocumentChunker()
+            
+            # Парсинг документа (неблокирующий, выполняется в thread pool для PDF/DOCX)
+            text = await parser.parse(file_content, file_type)
+            
+            # Получаем документ и обновляем его content
+            result = await db.execute(select(Document).where(Document.id == document_id))
+            document = result.scalar_one_or_none()
+            
+            if not document:
+                logger.error(f"Документ {document_id} не найден для обработки")
+                return
+            
+            # Обновляем content в документе
+            document.content = text
+            await db.commit()
+            await db.refresh(document)
+            
+            # Разбивка на чанки (быстрая операция строк, не блокирует)
+            chunks = chunker.chunk_text(text)
+            
+            if not chunks:
+                logger.warning(f"Документ {document_id} не содержит текста")
+                return
+            
+            # Создание эмбеддингов батчами для ускорения
+            from app.services.embedding_service import EmbeddingService
+            from app.vector_db.vector_store import VectorStore
+            from app.models.document import DocumentChunk
+            
+            embedding_service = EmbeddingService()
+            vector_store = VectorStore()
+            
+            # Обрабатываем чанки батчами по 10
+            batch_size = 10
+            for batch_start in range(0, len(chunks), batch_size):
+                batch_end = min(batch_start + batch_size, len(chunks))
+                batch_chunks = chunks[batch_start:batch_end]
+                
+                # Создаем эмбеддинги батчем
+                try:
+                    embeddings = await embedding_service.create_embeddings_batch(batch_chunks)
+                except Exception as e:
+                    logger.error(f"Ошибка создания эмбеддингов для батча {batch_start}-{batch_end}: {e}")
+                    # Fallback: создаем эмбеддинги по одному
+                    embeddings = []
+                    for chunk in batch_chunks:
+                        try:
+                            emb = await embedding_service.create_embedding(chunk)
+                            embeddings.append(emb)
+                        except Exception as e2:
+                            logger.error(f"Ошибка создания эмбеддинга для чанка: {e2}")
+                            # Пропускаем этот чанк
+                            embeddings.append(None)
+                
+                # Сохраняем каждый чанк
+                for i, (chunk_text, embedding) in enumerate(zip(batch_chunks, embeddings)):
+                    if embedding is None:
+                        continue
+                    
+                    chunk_index = batch_start + i
+                    
+                    # Сохранение чанка в БД
+                    chunk = DocumentChunk(
+                        document_id=document.id,
+                        chunk_text=chunk_text,
+                        chunk_index=chunk_index
+                    )
+                    db.add(chunk)
+                    await db.flush()
+                    
+                    # Сохранение вектора в Qdrant
+                    try:
+                        point_id = await vector_store.store_vector(
+                            collection_name=f"project_{project_id}",
+                            vector=embedding,
+                            payload={
+                                "document_id": str(document.id),
+                                "chunk_id": str(chunk.id),
+                                "chunk_index": chunk_index,
+                                "chunk_text": chunk_text
+                            }
+                        )
+                        chunk.qdrant_point_id = point_id
+                    except Exception as e:
+                        logger.error(f"Ошибка сохранения вектора в Qdrant: {e}")
+                
+                await db.commit()
+                logger.info(f"Обработано {batch_end} из {len(chunks)} чанков документа {document_id}")
+                
+                # Yield control для неблокирующей обработки
+                await asyncio.sleep(0)
+            
+            logger.info(f"Документ {document_id} ({filename}) успешно обработан: {len(chunks)} чанков")
+    except Exception as e:
+        logger.error(f"Ошибка при обработке документа {document_id}: {e}", exc_info=True)
 
 
 @router.post("/{project_id}/upload", response_model=List[DocumentResponse], status_code=status.HTTP_201_CREATED)
 async def upload_documents(
     project_id: UUID,
     files: List[UploadFile] = File(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(get_current_admin)
 ):
@@ -33,9 +147,35 @@ async def upload_documents(
                 detail=f"Неподдерживаемый формат файла: {file.filename}"
             )
         
-        document = await service.upload_document(project_id, file)
+        # Читаем содержимое файла
+        file_content = await file.read()
+        file_type = file.filename.split('.')[-1].lower()
+        
+        # Создаем документ в БД сразу (временно с placeholder content)
+        from app.models.document import Document
+        document = Document(
+            project_id=project_id,
+            filename=file.filename,
+            content="Обработка...",  # Временный placeholder
+            file_type=file_type
+        )
+        db.add(document)
+        await db.commit()
+        await db.refresh(document)
+        
         documents.append(document)
+        
+        # Запускаем обработку через BackgroundTasks (выполнится после отправки ответа)
+        background_tasks.add_task(
+            process_document_async,
+            document.id, 
+            project_id, 
+            file_content, 
+            file.filename,
+            file_type
+        )
     
+    # Возвращаем документы сразу (обработка будет происходить в фоне)
     return documents
 
 
@@ -66,4 +206,5 @@ async def delete_document(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Документ не найден"
         )
+
 

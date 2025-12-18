@@ -97,9 +97,9 @@ export default function DashboardPage() {
       </nav>
 
       <div className="ml-64">
-        <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
-        <div className="mb-6 flex justify-between items-center">
-          <h2 className="text-3xl font-bold text-fb-text">Проекты</h2>
+        <main className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8">
+        <div className="mb-4 flex justify-between items-center">
+          <h2 className="text-2xl font-bold text-fb-text">Проекты</h2>
           <Link
             href="/projects/new"
             className="bg-fb-blue hover:bg-fb-blue-dark text-white px-6 py-3 rounded-lg font-semibold shadow-md transition-colors duration-200"
@@ -109,13 +109,13 @@ export default function DashboardPage() {
         </div>
 
         {projects.length === 0 ? (
-          <div className="bg-white rounded-lg shadow-sm p-12 text-center">
+          <div className="bg-white rounded-lg shadow-sm p-6 text-center">
             <div className="max-w-md mx-auto">
               <svg className="mx-auto h-12 w-12 text-fb-text-secondary mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               <h3 className="text-xl font-semibold text-fb-text mb-2">Нет проектов</h3>
-              <p className="text-fb-text-secondary mb-6">Создайте первый проект для начала работы</p>
+              <p className="text-fb-text-secondary mb-4">Создайте первый проект для начала работы</p>
               <Link
                 href="/projects/new"
                 className="inline-block bg-fb-blue hover:bg-fb-blue-dark text-white px-6 py-3 rounded-lg font-semibold transition-colors duration-200"
@@ -132,7 +132,7 @@ export default function DashboardPage() {
                 href={`/projects/${project.id}`}
                 className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 border border-fb-gray-dark hover:border-fb-blue overflow-hidden"
               >
-                <div className="p-6">
+                <div className="p-4">
                   <div className="flex items-start justify-between mb-3">
                     <h3 className="text-lg font-semibold text-fb-text">{project.name}</h3>
                     <svg className="h-5 w-5 text-fb-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor">

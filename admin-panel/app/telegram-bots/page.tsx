@@ -201,22 +201,22 @@ export default function TelegramBotsPage() {
       </nav>
 
       <div className="ml-64">
-        <main className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
-          <div className="mb-6">
-            <h2 className="text-3xl font-bold text-fb-text">Управление Telegram ботами</h2>
-            <p className="text-fb-text-secondary mt-2">
+        <main className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8">
+          <div className="mb-4">
+            <h2 className="text-2xl font-bold text-fb-text">Управление Telegram ботами</h2>
+            <p className="text-fb-text-secondary mt-1 text-sm">
               Добавляйте и настраивайте Telegram ботов для каждого проекта
             </p>
           </div>
 
           {error && (
-            <div className="bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-3 rounded mb-6">
+            <div className="bg-red-50 border-l-4 border-red-500 text-red-700 px-4 py-2 rounded mb-4 text-sm">
               <p className="font-medium">{error}</p>
             </div>
           )}
 
           {botsInfo.length === 0 ? (
-            <div className="bg-white rounded-lg shadow-sm p-12 text-center">
+            <div className="bg-white rounded-lg shadow-sm p-6 text-center">
               <svg className="mx-auto h-12 w-12 text-fb-text-secondary mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
               </svg>
@@ -445,9 +445,9 @@ export default function TelegramBotsPage() {
       {/* Modal для добавления токена бота */}
       {showTokenModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-lg p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-fb-text">Добавить токен бота</h2>
+          <div className="bg-white rounded-lg shadow-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-fb-text">Добавить токен бота</h2>
               <a
                 href="https://t.me/BotFather"
                 target="_blank"
@@ -467,7 +467,7 @@ export default function TelegramBotsPage() {
               </div>
             )}
 
-            <div className="space-y-6">
+            <div className="space-y-4">
               {/* Инструкции */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <h3 className="font-semibold text-blue-900 mb-2">Краткая инструкция:</h3>
