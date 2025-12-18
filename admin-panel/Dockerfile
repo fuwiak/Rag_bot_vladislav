@@ -37,16 +37,17 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs
 
-# Railway will set PORT automatically (usually 8080 or dynamic)
-EXPOSE 8080
+# Railway will set PORT automatically (usually 3000 or dynamic)
+# Next.js standalone reads PORT from environment variable automatically
+EXPOSE 3000
 
 # Next.js standalone server reads PORT from environment automatically
 ENV HOSTNAME="0.0.0.0"
-# PORT will be set by Railway automatically - don't set default here
+# PORT will be set by Railway automatically - Next.js will read it from process.env.PORT
 
-# Health check endpoint (uses PORT from environment)
+# Health check endpoint (uses PORT from environment, Railway sets it automatically)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || '8080') + '/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})" || exit 1
+    CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || '3000') + '/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})" || exit 1
 
 # Next.js standalone server automatically uses PORT from environment variable
 # Railway sets PORT automatically via environment, Next.js will read it
