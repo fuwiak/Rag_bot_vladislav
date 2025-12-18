@@ -17,3 +17,4 @@ echo "Instalacja zakończona!"
 
 
 
+
