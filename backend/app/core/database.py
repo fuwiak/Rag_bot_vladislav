@@ -96,6 +96,15 @@ async def wait_for_db(max_retries: int = 30, retry_interval: int = 2):
         logger.error("Please set DATABASE_URL in Railway environment variables or add PostgreSQL service")
         raise ValueError("DATABASE_URL environment variable is required")
     
+    # Sprawdź czy DATABASE_URL zawiera nierozwiązane zmienne
+    if "${{" in db_url_env or "${" in db_url_env:
+        logger.error(f"DATABASE_URL contains unresolved variables: {db_url_env}")
+        logger.error("Railway should resolve these automatically. Please check:")
+        logger.error("1. PostgreSQL service is added to the project")
+        logger.error("2. All required variables (PGUSER, POSTGRES_PASSWORD, RAILWAY_PRIVATE_DOMAIN, PGDATABASE) are set")
+        logger.error("3. Try setting SKIP_DB_INIT=true temporarily to start without database")
+        raise ValueError(f"DATABASE_URL contains unresolved template variables: {db_url_env}")
+    
     for attempt in range(max_retries):
         try:
             # Пробуем подключиться к базе данных
@@ -113,6 +122,7 @@ async def wait_for_db(max_retries: int = 30, retry_interval: int = 2):
                 logger.error("1. DATABASE_URL is set correctly in Railway environment variables")
                 logger.error("2. PostgreSQL service is running and accessible")
                 logger.error("3. Database credentials are correct")
+                logger.error("4. Set SKIP_DB_INIT=true to start without database")
                 raise
     return False
 
@@ -124,9 +134,19 @@ async def init_db():
     import logging
     logger = logging.getLogger(__name__)
     
+    # Sprawdź czy SKIP_DB_INIT jest ustawione
+    if settings.SKIP_DB_INIT:
+        logger.info("Skipping database initialization (SKIP_DB_INIT=true)")
+        return
+    
     # Ожидание готовности базы данных
     logger.info("Waiting for database to be ready...")
-    await wait_for_db()
+    try:
+        await wait_for_db()
+    except Exception as e:
+        logger.error(f"Failed to connect to database: {e}")
+        logger.warning("Application will continue without database. Set SKIP_DB_INIT=true to skip this check.")
+        raise
     
     # Импорт моделей в правильной kolejności для регистрации w metadata
     from app.models.admin_user import AdminUser  # noqa
