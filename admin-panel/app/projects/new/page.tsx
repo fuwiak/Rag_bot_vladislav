@@ -138,13 +138,29 @@ export default function NewProjectPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-fb-text mb-1.5">Шаблон промпта</label>
+              <label className="block text-sm font-semibold text-fb-text mb-1.5">
+                Шаблон промпта *
+                <span className="ml-2 text-xs text-fb-text-secondary font-normal">
+                  (Как бот должен отвечать на вопросы)
+                </span>
+              </label>
+              <div className="mb-2 p-3 bg-fb-gray rounded-lg text-xs text-fb-text-secondary">
+                <p className="font-semibold mb-1">Доступные плейсхолдеры:</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li><code className="bg-white px-1 rounded">{"{chunks}"}</code> - контекст из документов</li>
+                  <li><code className="bg-white px-1 rounded">{"{question}"}</code> - вопрос пользователя</li>
+                  <li><code className="bg-white px-1 rounded">{"{max_length}"}</code> - максимальная длина ответа</li>
+                </ul>
+                <p className="mt-2 font-semibold">Важно:</p>
+                <p>Бот отвечает ТОЛЬКО на основе предоставленных документов. Если информации нет, он должен честно сообщить об этом.</p>
+              </div>
               <textarea
                 required
                 value={formData.prompt_template}
                 onChange={(e) => setFormData({...formData, prompt_template: e.target.value})}
                 rows={15}
                 className="block w-full border border-fb-gray-dark rounded-lg px-4 py-3 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-fb-blue focus:border-transparent text-fb-text"
+                placeholder="Введите шаблон промпта..."
               />
             </div>
 

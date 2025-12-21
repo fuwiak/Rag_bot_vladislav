@@ -95,3 +95,4 @@ W build logach frontend service, sprawdź czy:
 4. Upewnij się, że używasz **frontend service URL**, nie backend URL
 
 
+

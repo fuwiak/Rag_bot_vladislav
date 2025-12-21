@@ -148,3 +148,4 @@ COPY admin-panel/ .
 ✅ **Root Directory** - puste dla obu serwisów (Railway używa root jako build context)
 
 
+

@@ -77,3 +77,4 @@ Po poprawieniu konfiguracji:
 4. Upewnij się, że w Railway Dashboard → Frontend Service → Settings → Build → Dockerfile Path = `admin-panel/Dockerfile`
 
 
+

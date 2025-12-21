@@ -100,3 +100,4 @@ Po deploy frontendu:
 - Frontend: Tylko `NEXT_PUBLIC_BACKEND_URL`
 
 
+

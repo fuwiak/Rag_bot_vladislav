@@ -130,3 +130,4 @@ Railway **może nie wykryć automatycznie** `admin-panel/railway.json` dla front
 **Po ustawieniu, zrebuilduj service i sprawdź logi!**
 
 
+

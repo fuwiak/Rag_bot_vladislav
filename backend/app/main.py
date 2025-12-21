@@ -10,7 +10,6 @@ from app.core.config import settings
 from app.core.database import init_db
 from app.api import router as api_router
 from app.api.middleware import RateLimitMiddleware
-from app.bot.bot_factory import BotFactory
 
 # Настройка логирования
 logging.basicConfig(
@@ -35,24 +34,11 @@ async def lifespan(app: FastAPI):
         logger = logging.getLogger(__name__)
         logger.info("Skipping database initialization (SKIP_DB_INIT=true)")
     
-    # Запуск всех Telegram ботов (opcjonalnie, jeśli baza nie jest dostępna)
-    try:
-        bot_factory = BotFactory()
-        await bot_factory.start_all_bots()
-        app.state.bot_factory = bot_factory
-    except Exception as e:
-        logger = logging.getLogger(__name__)
-        logger.warning(f"Failed to start bots: {e}")
-        app.state.bot_factory = None
+    # Боты теперь управляются отдельным сервисом telegram-bots
+    logger = logging.getLogger(__name__)
+    logger.info("Bots are managed by separate telegram-bots service")
     
     yield
-    
-    # Остановка при выключении
-    if hasattr(app.state, 'bot_factory') and app.state.bot_factory:
-        try:
-            await app.state.bot_factory.stop_all_bots()
-        except Exception:
-            pass
 
 
 app = FastAPI(

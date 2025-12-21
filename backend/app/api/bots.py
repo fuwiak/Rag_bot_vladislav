@@ -13,7 +13,6 @@ from app.core.database import get_db
 from app.schemas.project import ProjectResponse
 from app.services.project_service import ProjectService
 from app.api.dependencies import get_current_admin
-from app.bot.bot_factory import BotFactory
 from app.models.user import User
 from aiogram import Bot
 
@@ -42,16 +41,9 @@ async def get_all_bots_info(
     service = ProjectService(db)
     projects = await service.get_all_projects()
     
-    # Получаем BotFactory из app state
-    bot_factory = getattr(request.app.state, 'bot_factory', None)
-    active_bots = set()
-    if bot_factory:
-        # active_bots теперь содержит bot_token, нужно проверить project_id в token_to_projects
-        active_tokens = set(bot_factory.bots.keys())
-        for token in active_tokens:
-            if token in bot_factory.token_to_projects:
-                for project_id in bot_factory.token_to_projects[token]:
-                    active_bots.add(project_id)
+    # Боты управляются отдельным сервисом telegram-bots
+    # Считаем бота активным, если у проекта есть bot_token
+    # (бот-сервис автоматически запустит его)
     
     bots_info = []
     
@@ -64,12 +56,16 @@ async def get_all_bots_info(
         users_counts[project.id] = result.scalar() or 0
     
     for project in projects:
+        # Бот считается активным, если есть токен
+        # Бот-сервис автоматически подхватит изменения
+        is_active = project.bot_token is not None
+        
         bot_info = BotInfoResponse(
             project_id=project.id,
             project_name=project.name,
             bot_token=project.bot_token,
             users_count=users_counts.get(project.id, 0),
-            is_active=project.bot_token is not None and str(project.id) in active_bots
+            is_active=is_active
         )
         
         # Получаем информацию о боте через Telegram API
@@ -160,7 +156,11 @@ async def start_bot(
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(get_current_admin)
 ):
-    """Запустить бота для проекта"""
+    """Запустить бота для проекта
+    
+    Бот-сервис автоматически подхватит изменения в БД и запустит бота.
+    Этот endpoint просто проверяет, что у проекта есть токен.
+    """
     service = ProjectService(db)
     project = await service.get_project_by_id(project_id)
     
@@ -176,22 +176,11 @@ async def start_bot(
             detail="Токен бота не настроен для этого проекта"
         )
     
-    # Получаем BotFactory из app state
-    bot_factory = getattr(request.app.state, 'bot_factory', None)
-    if not bot_factory:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Сервис ботов недоступен"
-        )
-    
-    try:
-        await bot_factory.create_bot(str(project_id), project.bot_token)
-        return {"message": "Бот успешно запущен"}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ошибка запуска бота: {str(e)}"
-        )
+    # Бот-сервис автоматически подхватит изменения при следующей проверке БД
+    # Просто возвращаем успех - бот будет запущен бот-сервисом
+    return {
+        "message": "Бот будет запущен бот-сервисом автоматически. Обычно это происходит в течение 20 секунд."
+    }
 
 
 @router.post("/{project_id}/stop")
@@ -201,21 +190,26 @@ async def stop_bot(
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(get_current_admin)
 ):
-    """Остановить бота для проекта"""
-    # Получаем BotFactory из app state
-    bot_factory = getattr(request.app.state, 'bot_factory', None)
-    if not bot_factory:
+    """Остановить бота для проекта
+    
+    Удаляет токен бота из проекта. Бот-сервис автоматически подхватит изменения
+    и остановит бота при следующей проверке БД.
+    """
+    service = ProjectService(db)
+    project = await service.get_project_by_id(project_id)
+    
+    if not project:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Сервис ботов недоступен"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Проект не найден"
         )
     
-    try:
-        await bot_factory.stop_bot(str(project_id))
-        return {"message": "Бот успешно остановлен"}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ошибка остановки бота: {str(e)}"
-        )
+    # Удаляем токен бота - бот-сервис остановит бота при следующей проверке
+    from app.schemas.project import ProjectUpdate
+    project_update = ProjectUpdate(bot_token=None)
+    await service.update_project(project_id, project_update)
+    
+    return {
+        "message": "Токен бота удален. Бот будет остановлен бот-сервисом автоматически. Обычно это происходит в течение 20 секунд."
+    }
 

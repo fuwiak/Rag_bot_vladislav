@@ -25,3 +25,4 @@ if hasattr(bcrypt_module, '_load_backend_mixin'):
     bcrypt_module._load_backend_mixin = patched_load_backend_mixin
 
 print("✅ bcrypt compatibility patch applied")
+

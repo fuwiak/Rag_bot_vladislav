@@ -1,7 +1,7 @@
 """
 Форматирование ответов от LLM
 """
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 
 class ResponseFormatter:
@@ -14,7 +14,7 @@ class ResponseFormatter:
         chunks: List[Dict[str, any]] = None
     ) -> str:
         """
-        Форматировать ответ с учетом ограничений
+        Форматировать ответ с учетом ограничений и добавлением цитат
         
         Args:
             response: Ответ от LLM
@@ -24,17 +24,58 @@ class ResponseFormatter:
         Returns:
             Отформатированный ответ
         """
-        # Обрезка по длине если необходимо
-        if len(response) > max_length:
-            response = response[:max_length].rsplit('.', 1)[0] + "..."
+        # Обрезка по длине если необходимо (оставляем место для цитат)
+        max_response_length = max_length - 200  # Резерв для цитат
+        if len(response) > max_response_length:
+            response = response[:max_response_length].rsplit('.', 1)[0] + "..."
         
         # Добавление цитат если есть релевантные чанки
         if chunks and len(chunks) > 0:
-            # Можно добавить ссылки на источники
-            # response += "\n\nИсточники: [1, 2, 3]"
-            pass
+            sources = self._extract_sources(chunks)
+            if sources:
+                response += "\n\n📚 Источники:\n" + sources
+        
+        # Финальная проверка длины
+        if len(response) > max_length:
+            response = response[:max_length].rsplit('.', 1)[0] + "..."
         
         return response.strip()
+    
+    def _extract_sources(self, chunks: List[Dict[str, any]]) -> str:
+        """
+        Извлечь источники из чанков
+        
+        Args:
+            chunks: Список релевантных чанков
+        
+        Returns:
+            Форматированная строка с источниками
+        """
+        sources = []
+        seen_docs = set()
+        
+        for i, chunk in enumerate(chunks[:3], 1):  # Берем максимум 3 источника
+            payload = chunk.get("payload", {})
+            document_id = payload.get("document_id")
+            chunk_index = payload.get("chunk_index", 0)
+            chunk_text = payload.get("chunk_text", "")
+            
+            # Получаем название документа если есть
+            doc_name = f"Документ {document_id[:8]}" if document_id else f"Чанк {i}"
+            
+            # Создаем короткую цитату (первые 100 символов)
+            quote = chunk_text[:100].strip()
+            if len(chunk_text) > 100:
+                quote += "..."
+            
+            # Избегаем дубликатов
+            source_key = f"{document_id}_{chunk_index}"
+            if source_key not in seen_docs:
+                seen_docs.add(source_key)
+                sources.append(f"{i}. {doc_name}, чанк {chunk_index + 1}: \"{quote}\"")
+        
+        return "\n".join(sources) if sources else ""
+
 
 
 

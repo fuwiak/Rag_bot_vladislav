@@ -66,3 +66,4 @@ Next.js standalone server automatycznie:
 **Nie trzeba nic zmieniać** - Railway i aplikacje automatycznie obsługują porty!
 
 
+

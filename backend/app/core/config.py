@@ -39,10 +39,10 @@ class Settings(BaseSettings):
     """Настройки приложения"""
     
     # Database
-    # Railway automatically provides DATABASE_URL when PostgreSQL service is added
-    # Railway may use template format: postgresql://${{PGUSER}}:${{POSTGRES_PASSWORD}}@${{RAILWAY_PRIVATE_DOMAIN}}:5432/${{PGDATABASE}}
-    # For local development, defaults to localhost
-    DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/rag_bot_db"
+    # По умолчанию используется SQLite для легкого развертывания
+    # Для Railway: sqlite+aiosqlite:////data/rag_bot.db (где /data - mounted volume)
+    # Для локальной разработки: sqlite+aiosqlite:///./rag_bot.db
+    DATABASE_URL: str = "sqlite+aiosqlite:///./rag_bot.db"
     
     # Temporary: Skip database initialization (for fast startup)
     SKIP_DB_INIT: bool = False
@@ -66,7 +66,7 @@ class Settings(BaseSettings):
         return v
     
     # Qdrant Cloud
-    QDRANT_URL: str = "https://239a4026-d673-4b8b-bfab-a99c7044e6b1.us-east4-0.gcp.cloud.qdrant.io"
+    QDRANT_URL: str = "https://your-cluster-id.us-east4-0.gcp.cloud.qdrant.io"
     QDRANT_API_KEY: str = "your_qdrant_api_key_here"
     
     # OpenRouter

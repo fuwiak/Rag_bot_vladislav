@@ -57,7 +57,17 @@ if db_url.startswith("sqlite") or use_in_memory:
         db_url = "sqlite+aiosqlite:///:memory:"
         logger.info("Initializing in-memory SQLite database")
     else:
-        db_url = db_url.replace("sqlite:///", "sqlite+aiosqlite:///")
+        # Обработка разных форматов SQLite URL
+        # sqlite:/// -> sqlite+aiosqlite:///
+        # sqlite+aiosqlite://// -> оставляем как есть (абсолютный путь с двойным слешем)
+        if db_url.startswith("sqlite:///"):
+            db_url = db_url.replace("sqlite:///", "sqlite+aiosqlite:///")
+        elif db_url.startswith("sqlite+aiosqlite:///"):
+            # Уже правильный формат, оставляем как есть
+            pass
+        else:
+            # Если формат не распознан, пытаемся исправить
+            db_url = db_url.replace("sqlite:///", "sqlite+aiosqlite:///")
     engine = create_async_engine(
         db_url,
         echo=False,
