@@ -28,6 +28,26 @@ async def lifespan(app: FastAPI):
     if not settings.SKIP_DB_INIT:
         try:
             await init_db()
+            # Автоматически создаем администратора если его нет (только для Railway)
+            try:
+                from app.core.database import AsyncSessionLocal
+                from app.models.admin_user import AdminUser
+                from app.services.auth_service import AuthService
+                from sqlalchemy import select
+                
+                async with AsyncSessionLocal() as db:
+                    result = await db.execute(select(AdminUser))
+                    existing = result.scalars().first()
+                    if not existing:
+                        auth_service = AuthService(db)
+                        admin = AdminUser(
+                            username="admin",
+                            password_hash=auth_service.get_password_hash("admin")
+                        )
+                        db.add(admin)
+                        await db.commit()
+            except Exception:
+                pass  # Игнорируем ошибки создания администратора
         except Exception:
             pass  # Игнорируем ошибки инициализации
     
