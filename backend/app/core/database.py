@@ -194,11 +194,19 @@ async def init_db():
     from app.models.user import User  # noqa
     from app.models.document import Document, DocumentChunk  # noqa
     from app.models.message import Message  # noqa
+    from app.models.llm_model import LLMModel, GlobalModelSettings  # noqa
     
+    # Принудительно создаем таблицы - игнорируем все ошибки
     try:
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info(f"Database initialized successfully: {db_url}")
+            # Используем checkfirst=False чтобы принудительно создать
+            await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=False))
+        logger.warning(f"Database tables created: {db_url}")
     except Exception as e:
-        # Если таблица уже существует, то OK - просто игнорируем
-        logger.warning(f"Database initialization warning (tables may already exist): {e}")
+        # Пробуем еще раз с checkfirst=True
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.warning(f"Database tables created (retry): {db_url}")
+        except Exception as e2:
+            logger.warning(f"Database initialization error (ignoring): {e2}")

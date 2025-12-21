@@ -24,20 +24,29 @@ logging.getLogger("pydantic").setLevel(logging.ERROR)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Инициализация при запуске
     if not settings.SKIP_DB_INIT:
+        # Сначала создаем таблицы
         try:
             await init_db()
-            # Автоматически создаем администратора если его нет
-            try:
-                from app.core.database import AsyncSessionLocal
-                from app.models.admin_user import AdminUser
-                from app.services.auth_service import AuthService
-                from sqlalchemy import select
-                import logging
-                logger = logging.getLogger(__name__)
-                
-                async with AsyncSessionLocal() as db:
+            # Ждем немного чтобы таблицы точно создались
+            import asyncio
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.warning(f"Database initialization failed: {e}")
+        
+        # Потом создаем администратора - игнорируем все ошибки
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.models.admin_user import AdminUser
+            from app.services.auth_service import AuthService
+            from sqlalchemy import select
+            
+            async with AsyncSessionLocal() as db:
+                try:
                     result = await db.execute(select(AdminUser))
                     existing = result.scalars().first()
                     if not existing:
@@ -48,17 +57,26 @@ async def lifespan(app: FastAPI):
                         )
                         db.add(admin)
                         await db.commit()
-                        logger.warning("Admin user 'admin' created automatically with password 'admin'")
-                    else:
-                        logger.info(f"Admin user exists: {existing.username}")
-            except Exception as e:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(f"Failed to create admin user: {e}")
+                        logger.warning("Admin user 'admin' created")
+                except Exception as e:
+                    # Если ошибка - пробуем еще раз
+                    try:
+                        await db.rollback()
+                        result = await db.execute(select(AdminUser))
+                        existing = result.scalars().first()
+                        if not existing:
+                            auth_service = AuthService(db)
+                            admin = AdminUser(
+                                username="admin",
+                                password_hash=auth_service.get_password_hash("admin")
+                            )
+                            db.add(admin)
+                            await db.commit()
+                            logger.warning("Admin user 'admin' created (retry)")
+                    except:
+                        pass
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Database initialization failed: {e}")
+            logger.warning(f"Admin creation skipped: {e}")
     
     yield
 
