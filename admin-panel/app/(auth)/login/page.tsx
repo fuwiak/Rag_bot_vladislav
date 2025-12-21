@@ -31,63 +31,139 @@ export default function LoginPage() {
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 
                           (typeof window !== 'undefined' ? window.location.origin.replace(/:\d+$/, ':8000') : 'http://localhost:8000')
         
-        console.log('🔐 Environment check:')
-        console.log('  - NEXT_PUBLIC_BACKEND_URL:', process.env.NEXT_PUBLIC_BACKEND_URL)
+        console.log('='.repeat(60))
+        console.log('🔐 AUTO-LOGIN DEBUG INFO')
+        console.log('='.repeat(60))
+        console.log('📍 Environment:')
+        console.log('  - NEXT_PUBLIC_BACKEND_URL:', process.env.NEXT_PUBLIC_BACKEND_URL || 'NOT SET')
+        console.log('  - NODE_ENV:', process.env.NODE_ENV || 'NOT SET')
+        console.log('  - Window location:', typeof window !== 'undefined' ? window.location.href : 'N/A')
         console.log('  - Computed backendUrl:', backendUrl)
         console.log('  - Full login URL:', `${backendUrl}/api/auth/login`)
+        console.log('')
         
-        // Проверяем доступность backend
+        // Тест 1: Проверка доступности backend
+        console.log('🧪 TEST 1: Health check')
         try {
-          const healthCheck = await fetch(`${backendUrl}/health`, { 
+          const healthUrl = `${backendUrl}/health`
+          console.log('  - URL:', healthUrl)
+          const healthCheck = await fetch(healthUrl, { 
             method: 'GET',
-            signal: AbortSignal.timeout(5000) // 5 секунд таймаут
+            signal: AbortSignal.timeout(5000)
           })
-          console.log('🏥 Health check status:', healthCheck.status)
+          console.log('  - Status:', healthCheck.status)
+          const healthData = await healthCheck.text()
+          console.log('  - Response:', healthData)
+          console.log('  ✅ Health check: OK')
         } catch (healthErr) {
-          console.warn('⚠️ Health check failed (continuing anyway):', healthErr)
+          console.error('  ❌ Health check: FAILED')
+          console.error('  - Error:', healthErr)
+          console.error('  - Error type:', healthErr instanceof Error ? healthErr.constructor.name : typeof healthErr)
+          console.error('  - Error message:', healthErr instanceof Error ? healthErr.message : String(healthErr))
         }
+        console.log('')
         
-        const response = await fetch(`${backendUrl}/api/auth/login`, {
+        // Тест 2: Проверка CORS
+        console.log('🧪 TEST 2: CORS check')
+        try {
+          const corsUrl = `${backendUrl}/api/test-cors`
+          console.log('  - URL:', corsUrl)
+          const corsCheck = await fetch(corsUrl, {
+            method: 'GET',
+            signal: AbortSignal.timeout(5000)
+          })
+          console.log('  - Status:', corsCheck.status)
+          console.log('  ✅ CORS check: OK')
+        } catch (corsErr) {
+          console.error('  ❌ CORS check: FAILED')
+          console.error('  - Error:', corsErr)
+          if (corsErr instanceof TypeError && corsErr.message.includes('CORS')) {
+            console.error('  ⚠️ CORS policy blocked the request!')
+          }
+        }
+        console.log('')
+        
+        // Тест 3: Логин
+        console.log('🧪 TEST 3: Login attempt')
+        const loginUrl = `${backendUrl}/api/auth/login`
+        console.log('  - URL:', loginUrl)
+        console.log('  - Method: POST')
+        console.log('  - Body:', JSON.stringify({ username: 'admin', password: 'any' }))
+        
+        const response = await fetch(loginUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ username: 'admin', password: 'any' }),
-          signal: AbortSignal.timeout(10000) // 10 секунд таймаут
+          signal: AbortSignal.timeout(10000)
         })
 
-        console.log('📡 Auto-login response status:', response.status)
-        console.log('📡 Auto-login response headers:', Object.fromEntries(response.headers.entries()))
-
+        console.log('  - Response status:', response.status)
+        console.log('  - Response statusText:', response.statusText)
+        console.log('  - Response headers:', Object.fromEntries(response.headers.entries()))
+        
+        const responseText = await response.text()
+        console.log('  - Response body (raw):', responseText)
+        
         if (response.ok) {
-          const data = await response.json()
-          console.log('✅ Auto-login success, token received:', data.access_token ? 'YES' : 'NO')
-          
-          if (data.access_token) {
-            localStorage.setItem('token', data.access_token)
-            console.log('💾 Token saved to localStorage')
-            window.location.href = '/dashboard' // Используем window.location вместо router для надежности
-          } else {
-            console.error('❌ No token in response:', data)
-            setError('Токен не получен от сервера')
+          try {
+            const data = JSON.parse(responseText)
+            console.log('  - Response body (parsed):', data)
+            console.log('  ✅ Login: SUCCESS')
+            console.log('  - Token received:', data.access_token ? 'YES' : 'NO')
+            
+            if (data.access_token) {
+              localStorage.setItem('token', data.access_token)
+              console.log('  💾 Token saved to localStorage')
+              console.log('='.repeat(60))
+              window.location.href = '/dashboard'
+            } else {
+              console.error('  ❌ Login: NO TOKEN IN RESPONSE')
+              console.log('='.repeat(60))
+              setError('Токен не получен от сервера')
+              setLoading(false)
+            }
+          } catch (parseErr) {
+            console.error('  ❌ Login: JSON PARSE ERROR')
+            console.error('  - Error:', parseErr)
+            console.log('='.repeat(60))
+            setError(`Ошибка парсинга ответа: ${responseText.substring(0, 100)}`)
             setLoading(false)
           }
         } else {
-          const errorText = await response.text()
-          console.error('❌ Auto-login failed:', response.status, errorText)
-          setError(`Ошибка автоматического входа: ${response.status} - ${errorText}`)
+          console.error('  ❌ Login: FAILED')
+          console.error('  - Status:', response.status)
+          console.error('  - Response:', responseText)
+          console.log('='.repeat(60))
+          setError(`Ошибка автоматического входа: ${response.status} - ${responseText.substring(0, 200)}`)
           setLoading(false)
         }
       } catch (err) {
-        console.error('❌ Auto-login error:', err)
+        console.error('='.repeat(60))
+        console.error('❌ AUTO-LOGIN ERROR')
+        console.error('='.repeat(60))
+        console.error('Error type:', err instanceof Error ? err.constructor.name : typeof err)
+        console.error('Error name:', err instanceof Error ? err.name : 'N/A')
+        console.error('Error message:', err instanceof Error ? err.message : String(err))
+        console.error('Error stack:', err instanceof Error ? err.stack : 'N/A')
+        console.error('Full error object:', err)
+        console.error('='.repeat(60))
+        
         const errorMessage = err instanceof Error ? err.message : 'Неизвестная ошибка'
         
         // Более детальная информация об ошибке
         let detailedError = errorMessage
-        if (err instanceof TypeError && err.message.includes('fetch')) {
-          detailedError = `Не удалось подключиться к backend. Проверьте NEXT_PUBLIC_BACKEND_URL в Railway. Текущий URL: ${process.env.NEXT_PUBLIC_BACKEND_URL || 'не установлен'}`
+        if (err instanceof TypeError) {
+          if (err.message.includes('fetch')) {
+            detailedError = `Не удалось подключиться к backend. Проверьте NEXT_PUBLIC_BACKEND_URL в Railway. Текущий URL: ${process.env.NEXT_PUBLIC_BACKEND_URL || 'не установлен'}`
+          } else if (err.message.includes('Failed to fetch')) {
+            detailedError = `Сеть недоступна или CORS блокирует запрос. Backend URL: ${process.env.NEXT_PUBLIC_BACKEND_URL || 'не установлен'}`
+          }
         } else if (err instanceof Error && err.name === 'AbortError') {
-          detailedError = 'Таймаут подключения к серверу. Backend может быть недоступен.'
+          detailedError = 'Таймаут подключения к серверу. Backend может быть недоступен или медленно отвечает.'
+        } else if (err instanceof DOMException && err.name === 'AbortError') {
+          detailedError = 'Запрос был отменен (таймаут). Проверьте доступность backend.'
         }
         
         setError(`Ошибка подключения: ${detailedError}`)
