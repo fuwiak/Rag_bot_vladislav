@@ -296,14 +296,19 @@ export default function ProjectDetailPage() {
               >
                 Все проекты
               </Link>
-              <button
-        <div className="mb-4">
-          <Link href="/dashboard" className="inline-flex items-center text-fb-blue hover:text-fb-blue-dark mb-4 font-medium">
-            <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-            Назад к проектам
-          </Link>
+            </div>
+          </div>
+        </nav>
+
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 ml-64 py-8">
+          <div className="mb-4">
+            <Link href="/dashboard" className="inline-flex items-center text-fb-blue hover:text-fb-blue-dark mb-4 font-medium">
+              <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              Назад к проектам
+            </Link>
+          </div>
           <div className="flex justify-between items-start">
             <div>
               <h1 className="text-3xl font-bold text-fb-text mb-2">
@@ -398,7 +403,7 @@ export default function ProjectDetailPage() {
         </div>
 
         {/* Content */}
-          <div className="bg-white rounded-lg shadow-sm p-6">
+        <div className="bg-white rounded-lg shadow-sm p-6">
           {activeTab === 'info' && (
             <div className="space-y-4">
               {error && (
@@ -754,7 +759,6 @@ export default function ProjectDetailPage() {
             </div>
           )}
         </div>
-      </main>
       </div>
 
       {/* Modal добавления пользователя */}
