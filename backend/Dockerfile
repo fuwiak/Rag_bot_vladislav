@@ -12,9 +12,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Копирование файлов зависимостей
-# Если Root Directory установлен в Railway, build context уже в backend/
-# Если нет, build context в root и нужно указать backend/
-COPY requirements.txt* ./
+# Build context всегда root проекта, поэтому указываем полный путь
+COPY backend/requirements.txt requirements.txt
 
 # Установка Python зависимостей
 RUN pip install --no-cache-dir --user -r requirements.txt
@@ -33,9 +32,8 @@ RUN apt-get update && apt-get install -y \
 COPY --from=builder /root/.local /root/.local
 
 # Копирование кода приложения
-# Если Root Directory установлен, копируем текущую директорию
-# Если нет, копируем из backend/
-COPY . .
+# Build context - root проекта, копируем из backend/
+COPY backend/ .
 
 # Создание entrypoint скрипта
 RUN echo '#!/bin/bash\n\
