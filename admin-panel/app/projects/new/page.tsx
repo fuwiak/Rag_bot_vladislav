@@ -39,11 +39,11 @@ export default function NewProjectPage() {
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
+      
       const response = await fetch(`${backendUrl}/api/projects`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(formData),

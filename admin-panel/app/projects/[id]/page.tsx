@@ -65,9 +65,9 @@ export default function ProjectDetailPage() {
   const [uploadFiles, setUploadFiles] = useState<File[]>([])
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
+    
     if (!token) {
-      router.push('/login')
+      
       return
     }
     // Lazy loading: загружаем только основные данные проекта при монтировании
@@ -92,10 +92,10 @@ export default function ProjectDetailPage() {
     setLoading(true)
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
+      
 
       const projectRes = await fetch(`${backendUrl}/api/projects/${projectId}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
       })
 
       if (projectRes.ok) {
@@ -111,7 +111,7 @@ export default function ProjectDetailPage() {
           bot_token: projectData.bot_token || '',
         })
       } else if (projectRes.status === 401) {
-        router.push('/login')
+        
         return
       } else if (projectRes.status === 404) {
         setError('Проект не найден')
@@ -128,10 +128,10 @@ export default function ProjectDetailPage() {
   const fetchDocuments = async () => {
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
+      
 
       const documentsRes = await fetch(`${backendUrl}/api/documents/${projectId}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
       })
 
       if (documentsRes.ok) {
@@ -147,10 +147,10 @@ export default function ProjectDetailPage() {
   const fetchUsers = async () => {
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
+      
 
       const usersRes = await fetch(`${backendUrl}/api/users/project/${projectId}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
       })
 
       if (usersRes.ok) {
@@ -178,11 +178,11 @@ export default function ProjectDetailPage() {
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
+      
 
       const response = await fetch(`${backendUrl}/api/projects/${projectId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
       })
 
       if (response.ok) {
@@ -223,12 +223,12 @@ export default function ProjectDetailPage() {
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
+      
 
       const response = await fetch(`${backendUrl}/api/projects/${projectId}`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(editData),
@@ -249,10 +249,6 @@ export default function ProjectDetailPage() {
     }
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('token')
-    router.push('/login')
-  }
 
   if (loading) {
     return (
@@ -306,19 +302,6 @@ export default function ProjectDetailPage() {
                 Все проекты
               </Link>
               <button
-                onClick={handleLogout}
-                className="text-fb-text-secondary hover:text-fb-text px-4 py-2 text-sm font-medium rounded-lg hover:bg-fb-gray-dark transition-colors"
-              >
-                Выйти
-              </button>
-            </div>
-          </div>
-        </div>
-      </nav>
-
-      <div className="ml-64">
-        <main className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8">
-        {/* Header */}
         <div className="mb-4">
           <Link href="/dashboard" className="inline-flex items-center text-fb-blue hover:text-fb-blue-dark mb-4 font-medium">
             <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -644,10 +627,10 @@ export default function ProjectDetailPage() {
                           }
                           try {
                             const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-                            const token = localStorage.getItem('token')
+                            
                             const response = await fetch(`${backendUrl}/api/documents/${doc.id}`, {
                               method: 'DELETE',
-                              headers: { 'Authorization': `Bearer ${token}` },
+                              headers: { 'Content-Type': 'application/json' },
                             })
                             if (response.ok || response.status === 204) {
                               fetchDocuments()
@@ -718,11 +701,11 @@ export default function ProjectDetailPage() {
                             const newStatus = user.status === 'active' ? 'blocked' : 'active'
                             try {
                               const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-                              const token = localStorage.getItem('token')
+                              
                               const response = await fetch(`${backendUrl}/api/users/${user.id}/status`, {
                                 method: 'PATCH',
                                 headers: {
-                                  'Authorization': `Bearer ${token}`,
+                                  'Content-Type': 'application/json',
                                   'Content-Type': 'application/json',
                                 },
                                 body: JSON.stringify({ status: newStatus }),
@@ -749,10 +732,10 @@ export default function ProjectDetailPage() {
                             if (confirm(`Удалить пользователя ${user.username || user.phone}?`)) {
                               try {
                                 const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-                                const token = localStorage.getItem('token')
+                                
                                 const response = await fetch(`${backendUrl}/api/users/${user.id}`, {
                                   method: 'DELETE',
-                                  headers: { 'Authorization': `Bearer ${token}` },
+                                  headers: { 'Content-Type': 'application/json' },
                                 })
                                 if (response.ok) {
                                   fetchUsers()
@@ -836,7 +819,7 @@ export default function ProjectDetailPage() {
                   setUploading(true)
                   try {
                     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-                    const token = localStorage.getItem('token')
+                    
                     
                     const formData = new FormData()
                     uploadFiles.forEach(file => {
@@ -846,7 +829,7 @@ export default function ProjectDetailPage() {
                     const response = await fetch(`${backendUrl}/api/documents/${projectId}/upload`, {
                       method: 'POST',
                       headers: {
-                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
                       },
                       body: formData,
                     })
@@ -893,11 +876,11 @@ export default function ProjectDetailPage() {
 
               try {
                 const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-                const token = localStorage.getItem('token')
+                
                 const response = await fetch(`${backendUrl}/api/users/project/${projectId}`, {
                   method: 'POST',
                   headers: {
-                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
                     'Content-Type': 'application/json',
                   },
                   body: JSON.stringify({

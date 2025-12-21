@@ -40,9 +40,9 @@ export default function UsersPage() {
   const [updatingUser, setUpdatingUser] = useState(false)
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
+    
     if (!token) {
-      router.push('/login')
+      
       return
     }
     fetchData()
@@ -102,10 +102,10 @@ export default function UsersPage() {
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
+      
       const response = await fetch(`${backendUrl}/api/users/${userId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
       })
       if (response.ok) {
         fetchData()
@@ -121,11 +121,11 @@ export default function UsersPage() {
     const newStatus = currentStatus === 'active' ? 'blocked' : 'active'
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
+      
       const response = await fetch(`${backendUrl}/api/users/${userId}/status`, {
         method: 'PATCH',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ status: newStatus }),
@@ -158,7 +158,7 @@ export default function UsersPage() {
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
+      
       
       const updateData: any = {}
       if (editUserPhone !== editingUser.phone) updateData.phone = editUserPhone
@@ -169,7 +169,7 @@ export default function UsersPage() {
       const response = await fetch(`${backendUrl}/api/users/${editingUser.id}`, {
         method: 'PATCH',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(updateData),
@@ -376,11 +376,11 @@ export default function UsersPage() {
 
               try {
                 const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-                const token = localStorage.getItem('token')
+                
                 const response = await fetch(`${backendUrl}/api/users/project/${newUserProjectId}`, {
                   method: 'POST',
                   headers: {
-                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
                     'Content-Type': 'application/json',
                   },
                   body: JSON.stringify({

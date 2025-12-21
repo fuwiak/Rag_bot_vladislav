@@ -289,10 +289,6 @@ export default function ModelsPage() {
     }
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('token')
-    router.push('/login')
-  }
 
   const handleSendTestMessage = async () => {
     if (!testModelId || !currentMessage.trim()) {
