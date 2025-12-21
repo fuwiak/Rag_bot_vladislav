@@ -157,7 +157,6 @@ export default function ModelsPage() {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'Content-Type': 'application/json',
         },
       })
 
@@ -228,7 +227,6 @@ export default function ModelsPage() {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'Content-Type': 'application/json',
         },
         body: JSON.stringify(updateData),
       })
@@ -260,7 +258,6 @@ export default function ModelsPage() {
       const response = await fetch(`${backendUrl}/api/models/custom`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -309,7 +306,6 @@ export default function ModelsPage() {
       const response = await fetch(`${backendUrl}/api/models/test`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
