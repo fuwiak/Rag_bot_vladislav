@@ -1,133 +1,67 @@
-# FIX: Railway Frontend Service - Dockerfile Path
+# Исправление ошибки Frontend на Railway
 
-## Problem
-Railway ciągle używa `backend/Dockerfile` dla frontend service zamiast `admin-panel/Dockerfile`.
+## Проблема
 
-## ✅ Rozwiązanie - KROK PO KROKU (OBOWIĄZKOWE!)
-
-### Konfiguracja w Railway Dashboard
-
-**WAŻNE:** Railway może ignorować `admin-panel/railway.json`, więc musisz ustawić to **ręcznie w Dashboard**.
-
-1. **Otwórz Railway Dashboard**
-   - https://railway.app
-   - Wybierz swój projekt
-   - Kliknij na **Frontend Service** (admin-panel)
-
-2. **Przejdź do Settings → Build**
-
-3. **USTAW TAK:**
-   - **Root Directory:** Zostaw **PUSTE** (root projektu) ✅
-     - **NIE** ustawiaj `admin-panel` tutaj!
-     - Build context musi być root, bo Dockerfile używa `COPY admin-panel/...`
-   
-   - **Dockerfile Path:** Ustaw na `admin-panel/Dockerfile` ✅
-     - **NIE** `backend/Dockerfile`!
-     - **NIE** `Dockerfile`!
-     - **TAK:** `admin-panel/Dockerfile` (pełna ścieżka od root)
-
-4. **Zapisz zmiany** (Save)
-
-5. **Zrebuilduj service:**
-   - Kliknij "Redeploy" lub "Deploy" w najnowszym deployment
-
-### Dlaczego Root Directory = puste?
-
-Dockerfile używa:
-```dockerfile
-COPY admin-panel/package*.json ./
-COPY admin-panel/ .
+Ошибка при деплое frontend:
+```
+dockerfile invalid: flag '--mount=type=bind,from=builder,source=/app/.next/static,target=/mnt/static' is missing a type=cache argument (other mount types are not supported)
 ```
 
-To oznacza, że **build context musi być root projektu**, nie `admin-panel/`. Dlatego:
-- ✅ Root Directory = **puste** (root)
-- ✅ Dockerfile Path = `admin-panel/Dockerfile` (pełna ścieżka)
+## Решение
 
-## Weryfikacja
+Dockerfile для frontend был исправлен - убран `--mount=type=bind`, который Railway не поддерживает.
 
-Po ustawieniu, sprawdź build logi frontend service:
+## Что было исправлено
 
-✅ **Powinno pokazywać:**
-```
-COPY admin-panel/package*.json ./
-COPY admin-panel/ .
-npm ci
-npm run build
-```
+1. **admin-panel/Dockerfile:**
+   - Убран `--mount=type=bind` 
+   - Использован безопасный способ копирования `.next/static`
+   - Теперь копируется через временную директорию и shell команды
 
-❌ **NIE powinno pokazywać:**
-```
-COPY backend/requirements.txt
-uvicorn
-database connection
-```
+2. **telegram-bots/Dockerfile:**
+   - Обновлен для работы без Root Directory
+   - Build context должен быть root проекта
 
-## Jeśli nadal nie działa
+## Как развернуть Frontend на Railway
 
-1. **Sprawdź czy masz 2 osobne serwisy:**
-   - Backend service
-   - Frontend service (admin-panel)
+### Вариант 1: С Root Directory (рекомендуется)
 
-2. **Sprawdź czy frontend service używa `admin-panel/railway.json`:**
-   - Railway może ignorować `admin-panel/railway.json` jeśli Root Directory jest ustawione
-   - W takim przypadku ustaw Dockerfile Path ręcznie w Dashboard
+1. Создайте новый сервис в Railway
+2. Подключите GitHub репозиторий
+3. **Settings → Build:**
+   - **Root Directory:** `admin-panel`
+   - **Dockerfile Path:** `admin-panel/Dockerfile` (автоматически)
+4. **Settings → Variables:**
+   ```
+   NEXT_PUBLIC_BACKEND_URL=https://your-backend.railway.app
+   PORT=3000
+   NODE_ENV=production
+   ```
+5. Дождитесь деплоя
 
-3. **Usuń cache Railway:**
-   - Settings → Advanced → Clear Build Cache
-   - Zrebuilduj service
+### Вариант 2: Без Root Directory
 
-4. **Sprawdź czy `admin-panel/Dockerfile` istnieje w repo:**
-   - Powinien być w katalogu `admin-panel/`
-   - Nazwa: `Dockerfile` (z dużą literą D)
+1. Создайте новый сервис
+2. **Settings → Build:**
+   - **Root Directory:** оставьте пустым
+   - **Dockerfile Path:** `admin-panel/Dockerfile`
+3. Остальное как в варианте 1
 
-## Konfiguracja w plikach (już ustawiona)
+## Проверка
 
-### `admin-panel/railway.json` (już poprawnie skonfigurowany)
-```json
-{
-  "$schema": "https://railway.app/railway.schema.json",
-  "build": {
-    "builder": "DOCKERFILE",
-    "dockerfilePath": "admin-panel/Dockerfile",  // ✅ Poprawnie
-    "watchPatterns": ["admin-panel/**"]
-  }
-}
-```
+После деплоя:
+1. Откройте URL frontend сервиса
+2. Должна открыться страница входа в админ-панель
+3. Если видите ошибку подключения к backend - проверьте `NEXT_PUBLIC_BACKEND_URL`
 
-### `railway.json` (root - dla backend)
-```json
-{
-  "$schema": "https://railway.app/railway.schema.json",
-  "build": {
-    "builder": "DOCKERFILE",
-    "dockerfilePath": "backend/Dockerfile",  // ✅ Backend
-    "watchPatterns": ["backend/**"]
-  }
-}
-```
+## Если все еще есть ошибки
 
-## ⚠️ WAŻNE - Railway może ignorować railway.json!
+1. Проверьте логи в Railway Dashboard
+2. Убедитесь, что backend запущен и доступен
+3. Проверьте переменные окружения
+4. Убедитесь, что `NEXT_PUBLIC_BACKEND_URL` указывает на правильный URL backend
 
-Railway **może nie wykryć automatycznie** `admin-panel/railway.json` dla frontend service. 
+---
 
-**Dlatego MUSISZ ustawić ręcznie w Dashboard:**
-
-1. Frontend Service → Settings → Build
-2. **Root Directory:** PUSTE ✅
-3. **Dockerfile Path:** `admin-panel/Dockerfile` ✅
-4. Zapisz i zrebuilduj
-
-## Najważniejsze - PODSUMOWANIE
-
-**W Railway Dashboard → Frontend Service → Settings → Build:**
-
-✅ **Root Directory:** PUSTE (root projektu)  
-✅ **Dockerfile Path:** `admin-panel/Dockerfile`  
-❌ **NIE:** `backend/Dockerfile`  
-❌ **NIE:** `Dockerfile`  
-❌ **NIE:** Root Directory = `admin-panel`
-
-**Po ustawieniu, zrebuilduj service i sprawdź logi!**
-
-
+**Изменения уже отправлены в GitHub и готовы к использованию!**
 
