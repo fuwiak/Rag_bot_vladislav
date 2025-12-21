@@ -140,6 +140,11 @@ export default function UsersPage() {
     }
   }
 
+  const handleLogout = () => {
+    localStorage.removeItem('token')
+    router.push('/login')
+  }
+
   const handleEditUser = (user: User) => {
     setEditingUser(user)
     setEditUserPhone(user.phone)
