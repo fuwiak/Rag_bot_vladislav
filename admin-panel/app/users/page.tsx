@@ -126,7 +126,6 @@ export default function UsersPage() {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          'Content-Type': 'application/json',
         },
         body: JSON.stringify({ status: newStatus }),
       })
@@ -174,7 +173,6 @@ export default function UsersPage() {
       const response = await fetch(`${backendUrl}/api/users/${editingUser.id}`, {
         method: 'PATCH',
         headers: {
-          'Content-Type': 'application/json',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(updateData),
@@ -385,7 +383,6 @@ export default function UsersPage() {
                 const response = await fetch(`${backendUrl}/api/users/project/${newUserProjectId}`, {
                   method: 'POST',
                   headers: {
-                    'Content-Type': 'application/json',
                     'Content-Type': 'application/json',
                   },
                   body: JSON.stringify({
