@@ -39,6 +39,43 @@ async def logout(
     return {"message": "Выход выполнен успешно"}
 
 
+@router.post("/create-admin")
+async def create_admin_endpoint(
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Создать первого администратора (только если администраторов нет)
+    ВАЖНО: Удалите этот endpoint после создания администратора!
+    """
+    from app.models.admin_user import AdminUser
+    from sqlalchemy import select
+    
+    # Проверяем, есть ли уже администраторы
+    result = await db.execute(select(AdminUser))
+    existing = result.scalars().first()
+    
+    if existing:
+        return {
+            "message": "Администратор уже существует",
+            "username": existing.username
+        }
+    
+    # Создаем администратора
+    auth_service = AuthService(db)
+    admin = AdminUser(
+        username="admin",
+        password_hash=auth_service.get_password_hash("admin")
+    )
+    db.add(admin)
+    await db.commit()
+    
+    return {
+        "message": "Администратор создан успешно",
+        "username": "admin",
+        "password": "admin"
+    }
+
+
 
 
 
