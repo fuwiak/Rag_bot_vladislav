@@ -2,9 +2,9 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "DOCKERFILE",
-    "dockerfilePath": "backend/Dockerfile",
+    "dockerfilePath": "Dockerfile",
     "watchPatterns": [
-      "backend/**"
+      "**"
     ]
   },
   "deploy": {
@@ -14,6 +14,7 @@
     "restartPolicyMaxRetries": 10
   }
 }
+
 
 
 
