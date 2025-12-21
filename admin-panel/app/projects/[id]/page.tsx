@@ -297,7 +297,7 @@ export default function ProjectDetailPage() {
         </div>
       </nav>
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 ml-64 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 ml-64 py-8">
           <div className="mb-4">
             <Link href="/dashboard" className="inline-flex items-center text-fb-blue hover:text-fb-blue-dark mb-4 font-medium">
               <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -359,10 +359,9 @@ export default function ProjectDetailPage() {
               )}
             </div>
           </div>
-        </div>
 
-        {/* Tabs */}
-        <div className="bg-white rounded-lg shadow-sm mb-4">
+          {/* Tabs */}
+          <div className="bg-white rounded-lg shadow-sm mb-4">
           <div className="border-b border-fb-gray-dark">
             <nav className="flex -mb-px">
               <button
@@ -397,10 +396,10 @@ export default function ProjectDetailPage() {
               </button>
             </nav>
           </div>
-        </div>
+          </div>
 
-        {/* Content */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
+          {/* Content */}
+          <div className="bg-white rounded-lg shadow-sm p-6">
           {activeTab === 'info' && (
             <div className="space-y-4">
               {error && (
@@ -755,7 +754,7 @@ export default function ProjectDetailPage() {
               )}
             </div>
           )}
-        </div>
+          </div>
       </div>
 
       {/* Modal для загрузки документов */}
