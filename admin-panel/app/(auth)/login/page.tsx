@@ -27,8 +27,25 @@ export default function LoginPage() {
       setAutoLoginAttempted(true)
       
       try {
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-        console.log('🔐 Auto-login attempt to:', `${backendUrl}/api/auth/login`)
+        // Получаем URL из переменной окружения или используем дефолтный
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 
+                          (typeof window !== 'undefined' ? window.location.origin.replace(/:\d+$/, ':8000') : 'http://localhost:8000')
+        
+        console.log('🔐 Environment check:')
+        console.log('  - NEXT_PUBLIC_BACKEND_URL:', process.env.NEXT_PUBLIC_BACKEND_URL)
+        console.log('  - Computed backendUrl:', backendUrl)
+        console.log('  - Full login URL:', `${backendUrl}/api/auth/login`)
+        
+        // Проверяем доступность backend
+        try {
+          const healthCheck = await fetch(`${backendUrl}/health`, { 
+            method: 'GET',
+            signal: AbortSignal.timeout(5000) // 5 секунд таймаут
+          })
+          console.log('🏥 Health check status:', healthCheck.status)
+        } catch (healthErr) {
+          console.warn('⚠️ Health check failed (continuing anyway):', healthErr)
+        }
         
         const response = await fetch(`${backendUrl}/api/auth/login`, {
           method: 'POST',
@@ -36,6 +53,7 @@ export default function LoginPage() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ username: 'admin', password: 'any' }),
+          signal: AbortSignal.timeout(10000) // 10 секунд таймаут
         })
 
         console.log('📡 Auto-login response status:', response.status)
@@ -63,7 +81,16 @@ export default function LoginPage() {
       } catch (err) {
         console.error('❌ Auto-login error:', err)
         const errorMessage = err instanceof Error ? err.message : 'Неизвестная ошибка'
-        setError(`Ошибка подключения: ${errorMessage}`)
+        
+        // Более детальная информация об ошибке
+        let detailedError = errorMessage
+        if (err instanceof TypeError && err.message.includes('fetch')) {
+          detailedError = `Не удалось подключиться к backend. Проверьте NEXT_PUBLIC_BACKEND_URL в Railway. Текущий URL: ${process.env.NEXT_PUBLIC_BACKEND_URL || 'не установлен'}`
+        } else if (err instanceof Error && err.name === 'AbortError') {
+          detailedError = 'Таймаут подключения к серверу. Backend может быть недоступен.'
+        }
+        
+        setError(`Ошибка подключения: ${detailedError}`)
         setLoading(false)
       }
     }
