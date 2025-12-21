@@ -6,17 +6,15 @@ FROM node:18-alpine AS builder
 WORKDIR /app
 
 # Копирование файлов зависимостей
-# Если Root Directory установлен в Railway, build context уже в admin-panel/
-# Если нет, build context в root и нужно указать admin-panel/
-COPY package.json package-lock.json* ./
+# Build context всегда root проекта, поэтому указываем полный путь
+COPY admin-panel/package.json admin-panel/package-lock.json* ./
 
 # Установка зависимостей
 RUN npm ci
 
 # Копирование исходного кода
-# Если Root Directory установлен, копируем текущую директорию
-# Если нет, копируем из admin-panel/
-COPY . .
+# Build context - root проекта, копируем из admin-panel/
+COPY admin-panel/ .
 
 # Stwórz pusty katalog public jeśli nie istnieje (Next.js może go wymagać)
 RUN mkdir -p public || true
