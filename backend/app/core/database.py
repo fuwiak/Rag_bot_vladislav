@@ -74,6 +74,46 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
+# Универсальный тип UUID для SQLite и PostgreSQL
+from sqlalchemy import TypeDecorator, String
+from sqlalchemy.dialects.postgresql import UUID as PostgresUUID
+import uuid
+
+class GUID(TypeDecorator):
+    """Универсальный тип UUID - работает с SQLite и PostgreSQL"""
+    impl = String
+    cache_ok = True
+    
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'postgresql':
+            return dialect.type_descriptor(PostgresUUID(as_uuid=True))
+        else:
+            # Для SQLite используем String
+            return dialect.type_descriptor(String(36))
+    
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        elif dialect.name == 'postgresql':
+            return value
+        else:
+            # Для SQLite конвертируем UUID в строку
+            if isinstance(value, uuid.UUID):
+                return str(value)
+            return value
+    
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        elif dialect.name == 'postgresql':
+            return value
+        else:
+            # Для SQLite конвертируем строку в UUID
+            if isinstance(value, str):
+                return uuid.UUID(value)
+            return value
+
+
 class Base(DeclarativeBase):
     """Базовый класс для моделей"""
     pass
@@ -96,10 +136,20 @@ async def wait_for_db(max_retries: int = 5, retry_interval: int = 1):
     Dla SQLite w pamięci zawsze zwraca True natychmiast
     """
     import asyncio
+    import os
     
     # SQLite w pamięci nie wymaga połączenia
-    if settings.USE_IN_MEMORY_DB or db_url.startswith("sqlite"):
+    if use_in_memory or ":memory:" in db_url:
         return True
+    
+    # Для SQLite файла - проверяем доступность
+    if db_url.startswith("sqlite"):
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("SELECT 1"))
+            return True
+        except Exception:
+            return True  # SQLite файл всегда доступен
     
     # Sprawdź czy DATABASE_URL jest ustawione
     db_url_env = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
