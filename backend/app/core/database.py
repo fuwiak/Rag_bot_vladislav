@@ -16,22 +16,20 @@ db_url = settings.DATABASE_URL
 
 # Sprawdź czy użyć SQLite w pamięci jako fallback
 use_in_memory = settings.USE_IN_MEMORY_DB
-if not use_in_memory:
-    # Automatycznie przełącz na SQLite w pamięci jeśli DATABASE_URL zawiera nierozwiązane zmienne
-    if db_url and ("${{" in db_url or "${" in db_url):
-        logger.warning("DATABASE_URL contains unresolved variables, switching to in-memory SQLite")
-        use_in_memory = True
-        db_url = "sqlite+aiosqlite:///:memory:"
 
-# Упрощенная обработка URL
+# Упрощенная обработка URL - НЕ переключаемся на in-memory если DATABASE_URL установлен
 if use_in_memory:
     db_url = "sqlite+aiosqlite:///:memory:"
-elif not db_url or db_url == "sqlite+aiosqlite:///./rag_bot.db":
-    # Если DATABASE_URL не установлен или используется дефолтный локальный
-    if not db_url or db_url == "sqlite+aiosqlite:///./rag_bot.db":
-        # Используем in-memory только если действительно не установлен
-        db_url = "sqlite+aiosqlite:///:memory:"
-        use_in_memory = True
+elif not db_url:
+    # Только если DATABASE_URL вообще не установлен
+    db_url = "sqlite+aiosqlite:///:memory:"
+    use_in_memory = True
+    logger.warning("DATABASE_URL not set, using in-memory SQLite")
+elif db_url and ("${{" in db_url or "${" in db_url):
+    # Если DATABASE_URL содержит неразрешенные переменные - используем in-memory
+    db_url = "sqlite+aiosqlite:///:memory:"
+    use_in_memory = True
+    logger.warning("DATABASE_URL contains unresolved variables, switching to in-memory SQLite")
 
 if db_url.startswith("sqlite") or use_in_memory:
     # SQLite dla lokalnego rozwoju lub w pamięci jako fallback
@@ -133,24 +131,12 @@ async def init_db():
     if settings.SKIP_DB_INIT:
         return
     
-    # Sprawdź czy używamy SQLite w pamięci
-    is_in_memory = settings.USE_IN_MEMORY_DB or db_url.startswith("sqlite") or ":memory:" in db_url
-    
-    if not is_in_memory:
+    # Для SQLite файла или PostgreSQL - ждем готовности
+    if not use_in_memory and ":memory:" not in db_url:
         try:
             await wait_for_db()
-        except Exception:
-            # При ошибке переключаемся на SQLite
-            if not db_url.startswith("sqlite"):
-                global engine
-                db_url_memory = "sqlite+aiosqlite:///:memory:"
-                engine = create_async_engine(
-                    db_url_memory,
-                    echo=False,
-                    future=True,
-                    connect_args={}
-                )
-            is_in_memory = True
+        except Exception as e:
+            logger.warning(f"Database wait failed: {e}, continuing anyway")
     
     # Импорт моделей в правильной kolejności для регистрации w metadata
     from app.models.admin_user import AdminUser  # noqa
@@ -162,6 +148,7 @@ async def init_db():
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-    except Exception:
+        logger.info(f"Database initialized successfully: {db_url}")
+    except Exception as e:
         # Если таблица уже существует, то OK - просто игнорируем
-        pass
+        logger.warning(f"Database initialization warning (tables may already exist): {e}")

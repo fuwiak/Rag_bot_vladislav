@@ -19,12 +19,19 @@ async def login(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Авторизация администратора (PASSWORD DISABLED - always succeeds)
+    Авторизация администратора
     """
     auth_service = AuthService(db)
-    # PASSWORD DISABLED - always create token for any username
-    token = auth_service.create_access_token(login_data.username)
-    
+    admin_user = await auth_service.get_admin_by_username(login_data.username)
+
+    if not admin_user or not auth_service.verify_password(login_data.password, admin_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверное имя пользователя или пароль",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = auth_service.create_access_token(admin_user.username)
     return LoginResponse(access_token=token, token_type="bearer")
 
 
