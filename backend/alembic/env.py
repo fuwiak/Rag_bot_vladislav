@@ -17,7 +17,14 @@ from app.core.config import settings
 config = context.config
 
 # Переопределяем sqlalchemy.url из настроек
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"))
+db_url = settings.DATABASE_URL
+if db_url.startswith("postgresql://"):
+    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://")
+elif db_url.startswith("sqlite"):
+    # SQLite использует aiosqlite
+    if "aiosqlite" not in db_url:
+        db_url = db_url.replace("sqlite://", "sqlite+aiosqlite://")
+config.set_main_option("sqlalchemy.url", db_url)
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:

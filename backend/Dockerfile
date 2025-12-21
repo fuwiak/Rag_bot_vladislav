@@ -38,9 +38,7 @@ COPY backend/ .
 # Создание entrypoint скрипта
 RUN echo '#!/bin/bash\n\
 set -e\n\
-echo "Running database migrations..."\n\
-alembic upgrade head || echo "Migrations failed or already applied"\n\
-echo "Starting application..."\n\
+alembic upgrade head 2>/dev/null || true\n\
 exec "$@"' > /entrypoint.sh && \
     chmod +x /entrypoint.sh
 

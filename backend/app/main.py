@@ -11,11 +11,14 @@ from app.core.database import init_db
 from app.api import router as api_router
 from app.api.middleware import RateLimitMiddleware
 
-# Настройка логирования
+# Настройка логирования - только важные сообщения
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.WARNING,
+    format='%(levelname)s: %(message)s'
 )
+# Отключаем лишние логи
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("pydantic").setLevel(logging.ERROR)
 
 
 @asynccontextmanager
@@ -25,18 +28,8 @@ async def lifespan(app: FastAPI):
     if not settings.SKIP_DB_INIT:
         try:
             await init_db()
-        except Exception as e:
-            logger = logging.getLogger(__name__)
-            logger.error(f"Database initialization failed: {e}")
-            logger.warning("Application will continue without database. Some features may not work.")
-            logger.warning("Set SKIP_DB_INIT=true to skip database initialization on startup")
-    else:
-        logger = logging.getLogger(__name__)
-        logger.info("Skipping database initialization (SKIP_DB_INIT=true)")
-    
-    # Боты теперь управляются отдельным сервисом telegram-bots
-    logger = logging.getLogger(__name__)
-    logger.info("Bots are managed by separate telegram-bots service")
+        except Exception:
+            pass  # Игнорируем ошибки инициализации
     
     yield
 

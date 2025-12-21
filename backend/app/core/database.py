@@ -23,28 +23,10 @@ if not use_in_memory:
         use_in_memory = True
         db_url = "sqlite+aiosqlite:///:memory:"
 
-# Logowanie DATABASE_URL bez hasła dla debugowania
+# Упрощенная обработка URL
 if use_in_memory:
-    logger.info("Using in-memory SQLite database (temporary)")
     db_url = "sqlite+aiosqlite:///:memory:"
-elif db_url and db_url != "postgresql://postgres:postgres@localhost:5432/rag_bot_db":
-    # Ukryj hasło w logach
-    safe_url = db_url
-    try:
-        if "@" in safe_url:
-            parts = safe_url.split("@")
-            if "://" in parts[0] and ":" in parts[0]:
-                protocol_user = parts[0].split("://")
-                if len(protocol_user) == 2:
-                    user_pass = protocol_user[1]
-                    if ":" in user_pass:
-                        user = user_pass.split(":")[0]
-                        safe_url = protocol_user[0] + "://" + user + ":****@" + "@".join(parts[1:])
-        logger.info(f"Using database URL: {safe_url}")
-    except Exception:
-        logger.info(f"Using database URL: (hidden)")
 elif not db_url:
-    logger.warning("DATABASE_URL is not set! Using in-memory SQLite as fallback")
     db_url = "sqlite+aiosqlite:///:memory:"
     use_in_memory = True
 else:
@@ -116,9 +98,6 @@ async def wait_for_db(max_retries: int = 5, retry_interval: int = 1):
     Dla SQLite w pamięci zawsze zwraca True natychmiast
     """
     import asyncio
-    import logging
-    import os
-    logger = logging.getLogger(__name__)
     
     # SQLite w pamięci nie wymaga połączenia
     if settings.USE_IN_MEMORY_DB or db_url.startswith("sqlite"):
@@ -173,16 +152,11 @@ async def init_db():
     is_in_memory = settings.USE_IN_MEMORY_DB or db_url.startswith("sqlite") or ":memory:" in db_url
     
     if not is_in_memory:
-        # Ожидание готовности базы данных (tylko dla PostgreSQL)
-        logger.info("Waiting for database to be ready...")
         try:
             await wait_for_db()
-        except Exception as e:
-            logger.warning(f"Failed to connect to database: {e}")
-            logger.warning("Switching to in-memory SQLite database")
-            # Przełącz na SQLite w pamięci - użyj istniejącego engine jeśli jest SQLite
+        except Exception:
+            # При ошибке переключаемся на SQLite
             if not db_url.startswith("sqlite"):
-                # Tylko jeśli nie jest już SQLite, przełącz engine
                 global engine
                 db_url_memory = "sqlite+aiosqlite:///:memory:"
                 engine = create_async_engine(
@@ -192,8 +166,6 @@ async def init_db():
                     connect_args={}
                 )
             is_in_memory = True
-    else:
-        logger.info("Using in-memory SQLite database - no connection wait needed")
     
     # Импорт моделей в правильной kolejności для регистрации w metadata
     from app.models.admin_user import AdminUser  # noqa
@@ -205,10 +177,6 @@ async def init_db():
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        logger.info("Database tables initialized successfully")
-        if is_in_memory:
-            logger.warning("⚠️  Using in-memory SQLite - data will be lost on restart!")
-            logger.warning("Set proper DATABASE_URL or add PostgreSQL service for persistent storage")
-    except Exception as e:
-        # Если таблица уже существует, то OK
-        logger.warning(f"Błąd podczas tworzenia tabel (możliwe, że już istnieją): {e}")
+    except Exception:
+        # Если таблица уже существует, то OK - просто игнорируем
+        pass
