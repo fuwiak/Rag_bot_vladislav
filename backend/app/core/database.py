@@ -26,12 +26,12 @@ if not use_in_memory:
 # Упрощенная обработка URL
 if use_in_memory:
     db_url = "sqlite+aiosqlite:///:memory:"
-elif not db_url:
-    db_url = "sqlite+aiosqlite:///:memory:"
-    use_in_memory = True
-else:
-    logger.warning(f"Using default DATABASE_URL (localhost) - this may not work in Railway!")
-    logger.warning("Please add PostgreSQL service in Railway or set DATABASE_URL environment variable")
+elif not db_url or db_url == "sqlite+aiosqlite:///./rag_bot.db":
+    # Если DATABASE_URL не установлен или используется дефолтный локальный
+    if not db_url or db_url == "sqlite+aiosqlite:///./rag_bot.db":
+        # Используем in-memory только если действительно не установлен
+        db_url = "sqlite+aiosqlite:///:memory:"
+        use_in_memory = True
 
 if db_url.startswith("sqlite") or use_in_memory:
     # SQLite dla lokalnego rozwoju lub w pamięci jako fallback
