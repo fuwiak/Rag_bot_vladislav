@@ -371,12 +371,6 @@ export default function ModelsPage() {
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center h-16">
               <h1 className="text-2xl font-bold text-fb-text">Управление моделями LLM</h1>
-              <button
-                onClick={handleLogout}
-                className="px-4 py-2 text-fb-text-secondary hover:text-fb-text transition-colors"
-              >
-                Выйти
-              </button>
             </div>
           </div>
         </nav>
