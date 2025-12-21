@@ -101,7 +101,6 @@ async def wait_for_db(max_retries: int = 5, retry_interval: int = 1):
     
     # SQLite w pamięci nie wymaga połączenia
     if settings.USE_IN_MEMORY_DB or db_url.startswith("sqlite"):
-        logger.info("Using in-memory SQLite - no connection needed")
         return True
     
     # Sprawdź czy DATABASE_URL jest ustawione
