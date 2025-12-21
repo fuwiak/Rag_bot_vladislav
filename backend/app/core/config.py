@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     # Use in-memory SQLite as fallback if PostgreSQL is not available
     USE_IN_MEMORY_DB: bool = False
     
+    # Disable password check (for Railway/debugging)
+    DISABLE_PASSWORD_CHECK: bool = False
+    
     @field_validator('DATABASE_URL', mode='before')
     @classmethod
     def resolve_database_url(cls, v):

@@ -21,7 +21,16 @@ async def login(
     """
     Авторизация администратора
     """
+    from app.core.config import settings
+    
     auth_service = AuthService(db)
+    
+    # Если проверка пароля отключена - создаем токен для любого username
+    if settings.DISABLE_PASSWORD_CHECK:
+        token = auth_service.create_access_token(login_data.username)
+        return LoginResponse(access_token=token, token_type="bearer")
+    
+    # Обычная проверка пароля
     admin_user = await auth_service.get_admin_by_username(login_data.username)
 
     if not admin_user or not auth_service.verify_password(login_data.password, admin_user.password_hash):
