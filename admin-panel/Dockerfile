@@ -39,15 +39,18 @@ RUN adduser --system --uid 1001 nextjs
 # Next.js standalone tworzy strukturę w .next/standalone
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 
-# Kopiujemy public i .next/static (Next.js standalone nie kopiuje ich automatycznie)
-# public istnieje (stworzony w builder stage), .next/static jest tworzony podczas build
+# Копируем public и .next/static (Next.js standalone не копирует их автоматически)
+# Railway не поддерживает --mount=type=bind, используем обычный COPY
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-# .next/static może nie istnieć - użyj warunkowego kopiowania
-RUN --mount=type=bind,from=builder,source=/app/.next/static,target=/mnt/static \
-    if [ -d /mnt/static ] && [ -n "$(ls -A /mnt/static 2>/dev/null)" ]; then \
-      mkdir -p .next/static && \
-      cp -r /mnt/static/* ./.next/static/; \
-    fi || true
+# Копируем .next/static если существует
+# Используем shell для безопасного копирования (Railway не поддерживает условный COPY)
+# Сначала копируем всю директорию .next, затем удаляем ненужное
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next-temp
+RUN mkdir -p .next/static && \
+    if [ -d ./.next-temp/static ] && [ -n "$(ls -A ./.next-temp/static 2>/dev/null)" ]; then \
+      cp -r ./.next-temp/static/* ./.next/static/; \
+    fi && \
+    rm -rf ./.next-temp
 
 USER nextjs
 

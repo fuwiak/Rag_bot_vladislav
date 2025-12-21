@@ -11,7 +11,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Копирование файлов зависимостей
-COPY telegram-bots/requirements.txt requirements.txt
+# Если Root Directory установлен в Railway, build context уже в telegram-bots/
+# Если нет, build context в root и нужно указать telegram-bots/
+COPY requirements.txt* ./
 
 # Установка Python зависимостей
 RUN pip install --no-cache-dir --user -r requirements.txt
@@ -25,6 +27,8 @@ WORKDIR /app
 COPY --from=builder /root/.local /root/.local
 
 # Копирование кода приложения
+# ВАЖНО: Для Railway НЕ устанавливайте Root Directory для этого сервиса!
+# Build context должен быть root проекта, чтобы можно было копировать backend/
 # Копируем структуру backend для импорта модулей
 COPY backend/app/ ./backend/app/
 COPY backend/alembic.ini ./backend/
