@@ -7,15 +7,28 @@ export default function LoginPage() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true) // Начинаем с loading=true
+  const [autoLoginAttempted, setAutoLoginAttempted] = useState(false)
   const router = useRouter()
 
   // Автоматический вход при загрузке страницы
   useEffect(() => {
+    // Проверяем, нет ли уже токена
+    const token = localStorage.getItem('token')
+    if (token) {
+      console.log('Token already exists, redirecting to dashboard')
+      router.push('/dashboard')
+      return
+    }
+
+    // Автоматический вход
     const autoLogin = async () => {
+      if (autoLoginAttempted) return
+      setAutoLoginAttempted(true)
+      
       try {
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-        console.log('Auto-login attempt to:', `${backendUrl}/api/auth/login`)
+        console.log('🔐 Auto-login attempt to:', `${backendUrl}/api/auth/login`)
         
         const response = await fetch(`${backendUrl}/api/auth/login`, {
           method: 'POST',
@@ -25,34 +38,43 @@ export default function LoginPage() {
           body: JSON.stringify({ username: 'admin', password: 'any' }),
         })
 
-        console.log('Auto-login response status:', response.status)
+        console.log('📡 Auto-login response status:', response.status)
+        console.log('📡 Auto-login response headers:', Object.fromEntries(response.headers.entries()))
 
         if (response.ok) {
           const data = await response.json()
-          console.log('Auto-login success, token received')
-          localStorage.setItem('token', data.access_token)
-          router.push('/dashboard')
+          console.log('✅ Auto-login success, token received:', data.access_token ? 'YES' : 'NO')
+          
+          if (data.access_token) {
+            localStorage.setItem('token', data.access_token)
+            console.log('💾 Token saved to localStorage')
+            window.location.href = '/dashboard' // Используем window.location вместо router для надежности
+          } else {
+            console.error('❌ No token in response:', data)
+            setError('Токен не получен от сервера')
+            setLoading(false)
+          }
         } else {
           const errorText = await response.text()
-          console.error('Auto-login failed:', response.status, errorText)
-          // Показываем ошибку пользователю
-          setError(`Ошибка автоматического входа: ${response.status}`)
+          console.error('❌ Auto-login failed:', response.status, errorText)
+          setError(`Ошибка автоматического входа: ${response.status} - ${errorText}`)
+          setLoading(false)
         }
       } catch (err) {
-        console.error('Auto-login error:', err)
-        setError(`Ошибка подключения: ${err instanceof Error ? err.message : 'Неизвестная ошибка'}`)
+        console.error('❌ Auto-login error:', err)
+        const errorMessage = err instanceof Error ? err.message : 'Неизвестная ошибка'
+        setError(`Ошибка подключения: ${errorMessage}`)
+        setLoading(false)
       }
     }
 
-    // Проверяем, нет ли уже токена
-    const token = localStorage.getItem('token')
-    if (!token) {
+    // Запускаем автоматический вход с небольшой задержкой
+    const timer = setTimeout(() => {
       autoLogin()
-    } else {
-      console.log('Token already exists, redirecting to dashboard')
-      router.push('/dashboard')
-    }
-  }, [router])
+    }, 100)
+
+    return () => clearTimeout(timer)
+  }, [router, autoLoginAttempted])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -82,6 +104,18 @@ export default function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (loading && !error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-fb-gray">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-fb-blue mb-4"></div>
+          <p className="text-fb-text-secondary text-lg">Автоматический вход...</p>
+          <p className="text-fb-text-secondary text-sm mt-2">Откройте консоль браузера (F12) для деталей</p>
+        </div>
+      </div>
+    )
   }
 
   return (
