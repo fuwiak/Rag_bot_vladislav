@@ -8,11 +8,14 @@ from datetime import datetime
 from sqlalchemy import DateTime
 
 from app.core.database import Base
+from pydantic import ConfigDict
 
 
 class LLMModel(Base):
     """Кастомная модель LLM"""
     __tablename__ = "llm_models"
+    
+    model_config = ConfigDict(protected_namespaces=())
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     model_id = Column(String(255), nullable=False, unique=True)  # ID модели из OpenRouter или кастомный
