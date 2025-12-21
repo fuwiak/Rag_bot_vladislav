@@ -120,6 +120,30 @@ async def readiness_check():
 @app.get("/api/test-cors")
 async def test_cors():
     """Тестовый endpoint для проверки CORS"""
+    from datetime import datetime
+    return {
+        "status": "ok",
+        "message": "CORS работает правильно",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.get("/api/test-connection")
+async def test_connection():
+    """Тестовый endpoint для проверки подключения"""
+    from datetime import datetime
+    return {
+        "status": "ok",
+        "message": "Backend доступен",
+        "backend_url": str(settings.BACKEND_URL),
+        "cors_origins": settings.CORS_ORIGINS,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.get("/api/test-cors")
+async def test_cors():
+    """Тестовый endpoint для проверки CORS"""
     return {
         "status": "ok",
         "message": "CORS работает правильно",
