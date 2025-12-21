@@ -21,9 +21,14 @@ async def login(
     """
     Авторизация администратора - БЕЗ ПРОВЕРКИ ПАРОЛЯ
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     auth_service = AuthService(db)
     # Создаем токен для любого username - БЕЗ ПРОВЕРКИ
-    token = auth_service.create_access_token(login_data.username)
+    username = login_data.username or 'admin'
+    logger.warning(f"Login without password check for username: {username}")
+    token = auth_service.create_access_token(username)
     return LoginResponse(access_token=token, token_type="bearer")
 
 

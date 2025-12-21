@@ -15,21 +15,32 @@ export default function LoginPage() {
     const autoLogin = async () => {
       try {
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+        console.log('Auto-login attempt to:', `${backendUrl}/api/auth/login`)
+        
         const response = await fetch(`${backendUrl}/api/auth/login`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ username: 'admin', password: 'admin' }),
+          body: JSON.stringify({ username: 'admin', password: 'any' }),
         })
+
+        console.log('Auto-login response status:', response.status)
 
         if (response.ok) {
           const data = await response.json()
+          console.log('Auto-login success, token received')
           localStorage.setItem('token', data.access_token)
           router.push('/dashboard')
+        } else {
+          const errorText = await response.text()
+          console.error('Auto-login failed:', response.status, errorText)
+          // Показываем ошибку пользователю
+          setError(`Ошибка автоматического входа: ${response.status}`)
         }
       } catch (err) {
-        // Игнорируем ошибки при автоматическом входе
+        console.error('Auto-login error:', err)
+        setError(`Ошибка подключения: ${err instanceof Error ? err.message : 'Неизвестная ошибка'}`)
       }
     }
 
@@ -38,6 +49,7 @@ export default function LoginPage() {
     if (!token) {
       autoLogin()
     } else {
+      console.log('Token already exists, redirecting to dashboard')
       router.push('/dashboard')
     }
   }, [router])
