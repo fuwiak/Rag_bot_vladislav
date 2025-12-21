@@ -777,13 +777,7 @@ export default function ProjectDetailPage() {
                     const files = Array.from(e.target.files || [])
                     setUploadFiles(files)
                   }}
-                  className="block w-full text-sm text-fb-text-secondary
-                    file:mr-4 file:py-2 file:px-4
-                    file:rounded-lg file:border-0
-                    file:text-sm file:font-semibold
-                    file:bg-fb-blue file:text-white
-                    hover:file:bg-fb-blue-dark
-                    file:cursor-pointer"
+                  className="block w-full text-sm text-fb-text-secondary file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-fb-blue file:text-white hover:file:bg-fb-blue-dark file:cursor-pointer"
                 />
                 <p className="text-xs text-fb-text-secondary mt-2">
                   Можно загрузить несколько файлов одновременно
