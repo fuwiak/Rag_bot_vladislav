@@ -2,7 +2,6 @@
 Модели Document и DocumentChunk - документы и их чанки
 """
 from sqlalchemy import Column, String, Text, Integer, ForeignKey, JSON
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 import uuid
 from datetime import datetime
@@ -36,7 +35,7 @@ class DocumentChunk(Base):
     chunk_text = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False)
     qdrant_point_id = Column(GUID, nullable=True)  # ID точки в Qdrant
-    chunk_metadata = Column(JSONB, nullable=True)  # Переименовано из metadata, чтобы избежать конфликта с SQLAlchemy
+    chunk_metadata = Column(JSON, nullable=True)  # JSON вместо JSONB для совместимости с SQLite
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     # Связи

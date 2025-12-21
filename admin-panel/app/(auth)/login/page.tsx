@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 
 export default function LoginPage() {
@@ -9,6 +9,38 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
+
+  // Автоматический вход при загрузке страницы
+  useEffect(() => {
+    const autoLogin = async () => {
+      try {
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+        const response = await fetch(`${backendUrl}/api/auth/login`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ username: 'admin', password: 'admin' }),
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          localStorage.setItem('token', data.access_token)
+          router.push('/dashboard')
+        }
+      } catch (err) {
+        // Игнорируем ошибки при автоматическом входе
+      }
+    }
+
+    // Проверяем, нет ли уже токена
+    const token = localStorage.getItem('token')
+    if (!token) {
+      autoLogin()
+    } else {
+      router.push('/dashboard')
+    }
+  }, [router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -22,7 +54,7 @@ export default function LoginPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username: username || 'admin', password: password || 'admin' }),
       })
 
       if (response.ok) {
