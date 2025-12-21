@@ -65,11 +65,6 @@ export default function ProjectDetailPage() {
   const [uploadFiles, setUploadFiles] = useState<File[]>([])
 
   useEffect(() => {
-    
-    if (!token) {
-      
-      return
-    }
     // Lazy loading: загружаем только основные данные проекта при монтировании
     fetchProjectBasicData()
   }, [projectId, router])
