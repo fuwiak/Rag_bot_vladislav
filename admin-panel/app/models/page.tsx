@@ -52,30 +52,23 @@ export default function ModelsPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) {
-      router.push('/login')
-      return
-    }
-
     fetchData()
   }, [router])
 
   const fetchData = async () => {
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
 
       // Загружаем модели, проекты и глобальные настройки параллельно
       const [modelsRes, projectsRes, settingsRes] = await Promise.all([
         fetch(`${backendUrl}/api/models/available`, {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { 'Content-Type': 'application/json' },
         }),
         fetch(`${backendUrl}/api/projects`, {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { 'Content-Type': 'application/json' },
         }),
         fetch(`${backendUrl}/api/models/global-settings`, {
-          headers: { 'Authorization': `Bearer ${token}` },
+          headers: { 'Content-Type': 'application/json' },
         }),
       ])
 
@@ -103,12 +96,11 @@ export default function ModelsPage() {
         if (!settingsData.primary_model_id && !settingsData.fallback_model_id) {
           // Если настроек нет, устанавливаем дефолтные
           const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-          const token = localStorage.getItem('token')
           
           fetch(`${backendUrl}/api/models/global-settings`, {
             method: 'PATCH',
             headers: {
-              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
@@ -161,12 +153,11 @@ export default function ModelsPage() {
     setAssigning(true)
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
 
       const response = await fetch(`${backendUrl}/api/models/project/${selectedProject}?model_id=${encodeURIComponent(selectedModel)}`, {
         method: 'PATCH',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
           'Content-Type': 'application/json',
         },
       })
@@ -196,10 +187,9 @@ export default function ModelsPage() {
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
       
       const response = await fetch(`${backendUrl}/api/models/available?search=${encodeURIComponent(query)}`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
       })
 
       if (response.ok) {
@@ -227,7 +217,6 @@ export default function ModelsPage() {
   const handleUpdateGlobalSettings = async (type: 'primary' | 'fallback', modelId: string) => {
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
 
       const updateData: any = {}
       if (type === 'primary') {
@@ -239,7 +228,7 @@ export default function ModelsPage() {
       const response = await fetch(`${backendUrl}/api/models/global-settings`, {
         method: 'PATCH',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(updateData),
@@ -268,12 +257,11 @@ export default function ModelsPage() {
     setAddingCustom(true)
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
 
       const response = await fetch(`${backendUrl}/api/models/custom`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -322,12 +310,11 @@ export default function ModelsPage() {
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
 
       const response = await fetch(`${backendUrl}/api/models/test`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({

@@ -52,18 +52,13 @@ export default function UsersPage() {
     try {
       setError('')
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
 
       // Загружаем все проекты
       const projectsRes = await fetch(`${backendUrl}/api/projects`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
       })
 
       if (!projectsRes.ok) {
-        if (projectsRes.status === 401) {
-          router.push('/login')
-          return
-        }
         throw new Error(`Ошибка загрузки проектов: ${projectsRes.status}`)
       }
 
@@ -80,7 +75,7 @@ export default function UsersPage() {
       for (const project of projectsData) {
         try {
           const usersRes = await fetch(`${backendUrl}/api/users/project/${project.id}`, {
-            headers: { 'Authorization': `Bearer ${token}` },
+            headers: { 'Content-Type': 'application/json' },
           })
           if (usersRes.ok) {
             const usersData = await usersRes.json()
@@ -99,10 +94,6 @@ export default function UsersPage() {
     }
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('token')
-    router.push('/login')
-  }
 
   const handleDelete = async (userId: string) => {
     if (!confirm('Вы уверены, что хотите удалить этого пользователя?')) {

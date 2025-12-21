@@ -27,11 +27,6 @@ export default function TelegramBotsPage() {
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) {
-      router.push('/login')
-      return
-    }
     fetchBotsInfo()
   }, [router])
 
@@ -39,18 +34,14 @@ export default function TelegramBotsPage() {
     try {
       setError('')
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
 
       const response = await fetch(`${backendUrl}/api/bots/info`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
       })
 
       if (response.ok) {
         const data = await response.json()
         setBotsInfo(data)
-      } else if (response.status === 401) {
-        router.push('/login')
-        return
       } else {
         const errorData = await response.json().catch(() => ({ detail: 'Ошибка загрузки информации о ботах' }))
         throw new Error(errorData.detail || `Ошибка ${response.status}`)
@@ -86,7 +77,6 @@ export default function TelegramBotsPage() {
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
 
       const response = await fetch(`${backendUrl}/api/bots/${selectedProjectId}/verify`, {
         method: 'POST',
@@ -115,11 +105,10 @@ export default function TelegramBotsPage() {
   const handleStartBot = async (projectId: string) => {
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
 
       const response = await fetch(`${backendUrl}/api/bots/${projectId}/start`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
       })
 
       if (response.ok) {
@@ -136,11 +125,10 @@ export default function TelegramBotsPage() {
   const handleStopBot = async (projectId: string) => {
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
 
       const response = await fetch(`${backendUrl}/api/bots/${projectId}/stop`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
       })
 
       if (response.ok) {
@@ -154,10 +142,6 @@ export default function TelegramBotsPage() {
     }
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('token')
-    router.push('/login')
-  }
 
   if (loading) {
     return (

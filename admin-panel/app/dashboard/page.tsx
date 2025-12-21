@@ -18,41 +18,27 @@ export default function DashboardPage() {
   const router = useRouter()
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) {
-      router.push('/login')
-      return
-    }
-
     fetchProjects()
   }, [router])
 
   const fetchProjects = async () => {
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const token = localStorage.getItem('token')
       const response = await fetch(`${backendUrl}/api/projects`, {
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
         },
       })
 
       if (response.ok) {
         const data = await response.json()
         setProjects(data)
-      } else if (response.status === 401) {
-        router.push('/login')
       }
     } catch (err) {
       console.error('Error fetching projects:', err)
     } finally {
       setLoading(false)
     }
-  }
-
-  const handleLogout = () => {
-    localStorage.removeItem('token')
-    router.push('/login')
   }
 
   if (loading) {
