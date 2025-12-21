@@ -106,33 +106,20 @@ async def wait_for_db(max_retries: int = 5, retry_interval: int = 1):
     
     # Sprawdź czy DATABASE_URL jest ustawione
     db_url_env = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
-    if not db_url_env:
-        logger.warning("DATABASE_URL environment variable is not set!")
-        logger.warning("Switching to in-memory SQLite database")
-        return True
-    
-    # Sprawdź czy DATABASE_URL zawiera nierozwiązane zmienne
-    if "${{" in db_url_env or "${" in db_url_env:
-        logger.warning(f"DATABASE_URL contains unresolved variables: {db_url_env}")
-        logger.warning("Switching to in-memory SQLite database")
+    if not db_url_env or "${{" in db_url_env or "${" in db_url_env:
         return True
     
     # Tylko dla PostgreSQL próbuj połączyć się
     for attempt in range(max_retries):
         try:
-            # Пробуем подключиться к базе данных
             async with engine.begin() as conn:
                 await conn.execute(text("SELECT 1"))
-            logger.info("Database connection successful")
             return True
-        except Exception as e:
+        except Exception:
             if attempt < max_retries - 1:
-                logger.warning(f"Database connection attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {retry_interval}s...")
                 await asyncio.sleep(retry_interval)
             else:
-                logger.warning(f"Failed to connect to database after {max_retries} attempts: {e}")
-                logger.warning("Switching to in-memory SQLite database as fallback")
-                return True  # Nie rzucaj wyjątku, użyj SQLite w pamięci
+                return True
     return True
 
 
@@ -145,7 +132,6 @@ async def init_db():
     
     # Sprawdź czy SKIP_DB_INIT jest ustawione
     if settings.SKIP_DB_INIT:
-        logger.info("Skipping database initialization (SKIP_DB_INIT=true)")
         return
     
     # Sprawdź czy używamy SQLite w pamięci
