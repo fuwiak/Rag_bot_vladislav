@@ -121,14 +121,14 @@ class RAGService:
             
             # РАСШИРЕННЫЙ ПОИСК ЧАНКОВ - используем все техники перед fallback
             if strategy.get("use_chunks", True) and collection_exists:
-            logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
-            found_chunks, found_similar = await self._advanced_chunk_search(
+                logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
+                found_chunks, found_similar = await self._advanced_chunk_search(
                 question=question,
                 collection_name=collection_name,
                 project_id=project.id,
                 top_k=top_k,
                 strategy=strategy
-            )
+                )
                     if found_chunks:
                     chunk_texts = found_chunks
                     similar_chunks = found_similar
