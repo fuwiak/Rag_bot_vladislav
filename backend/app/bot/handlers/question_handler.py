@@ -47,7 +47,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
         return
     
     try:
-        user_id = UUID(user_id_str)
+    user_id = UUID(user_id_str)
     except ValueError as e:
         logger.error(f"[QUESTION HANDLER] ❌ Invalid user_id format: {user_id_str}, error: {e}")
         await message.answer("Ошибка: неверный формат ID пользователя. Используйте /start")
@@ -64,7 +64,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     # Отправка сообщения о том, что идет обработка
     processing_msg = None
     try:
-        processing_msg = await message.answer("⏳ Обрабатываю ваш вопрос...")
+    processing_msg = await message.answer("⏳ Обрабатываю ваш вопрос...")
         logger.info(f"[QUESTION HANDLER] Processing message sent to user {user_id}")
     except Exception as e:
         logger.error(f"[QUESTION HANDLER] Failed to send processing message: {e}")
@@ -105,9 +105,9 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
             else:
                 # Режим RAG - пытаемся использовать документы
                 # Создаем задачу с таймаутом
-                try:
-                    answer = await asyncio.wait_for(
-                        rag_service.generate_answer(user_id, question),
+            try:
+                answer = await asyncio.wait_for(
+                    rag_service.generate_answer(user_id, question),
                         timeout=10.0  # Увеличено до 10 секунд
                     )
                     logger.info(f"[QUESTION HANDLER] RAG answer generated successfully for user {user_id}")
@@ -262,7 +262,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
         # Удаление сообщения об обработке
         if processing_msg:
             try:
-                await processing_msg.delete()
+        await processing_msg.delete()
                 logger.debug(f"[QUESTION HANDLER] Processing message deleted")
             except Exception as e:
                 logger.warning(f"[QUESTION HANDLER] Failed to delete processing message: {e}")
@@ -275,15 +275,15 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
         max_length = 4096  # Максимальная длина сообщения Telegram
         logger.info(f"[QUESTION HANDLER] Sending answer to user {user_id}, length: {len(answer)}")
         try:
-            if len(answer) > max_length:
-                # Разбиваем на части
-                parts = [answer[i:i+max_length] for i in range(0, len(answer), max_length)]
+        if len(answer) > max_length:
+            # Разбиваем на части
+            parts = [answer[i:i+max_length] for i in range(0, len(answer), max_length)]
                 logger.info(f"[QUESTION HANDLER] Splitting answer into {len(parts)} parts")
                 for i, part in enumerate(parts):
-                    await message.answer(part)
+                await message.answer(part)
                     logger.debug(f"[QUESTION HANDLER] Sent part {i+1}/{len(parts)}")
-            else:
-                await message.answer(answer)
+        else:
+            await message.answer(answer)
                 logger.info(f"[QUESTION HANDLER] ✅ Answer sent successfully to user {user_id}")
         except Exception as e:
             logger.error(f"[QUESTION HANDLER] ❌ Failed to send answer to user {user_id}: {e}", exc_info=True)
@@ -296,7 +296,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
         
         if processing_msg:
             try:
-                await processing_msg.delete()
+        await processing_msg.delete()
             except:
                 pass
         
@@ -346,12 +346,12 @@ def register_question_handlers(dp: Dispatcher, project_id: str):
     сработает только для авторизованных пользователей.
     """
     import logging
-    from aiogram.filters import Command
     logger = logging.getLogger(__name__)
     
     # Регистрируем обработчик для текстовых сообщений авторизованных пользователей
     # F.text фильтрует только текстовые сообщения
-    # ~Command() исключает команды (команды обрабатываются отдельными обработчиками)
-    dp.message.register(handle_question, AuthStates.authorized, F.text, ~Command())
+    # Проверка на команды выполняется внутри обработчика (message.text.startswith('/'))
+    # Это более надежно, чем фильтр ~Command(), который может работать неправильно
+    dp.message.register(handle_question, AuthStates.authorized, F.text)
     logger.info(f"[REGISTER HANDLERS] Question handler registered for project {project_id}")
 
