@@ -40,9 +40,14 @@ class ProjectService:
         return projects
     
     async def get_project_by_id(self, project_id: UUID) -> Optional[Project]:
-        """Получить проект по ID"""
+        """Получить проект по ID (оптимизировано - без загрузки relationships)"""
+        from sqlalchemy.orm import noload
+        
+        # Загружаем проект без relationships для экономии памяти
         result = await self.db.execute(
-            select(Project).where(Project.id == project_id)
+            select(Project)
+            .where(Project.id == project_id)
+            .options(noload(Project.users), noload(Project.documents))
         )
         return result.scalar_one_or_none()
     
