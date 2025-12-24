@@ -83,55 +83,55 @@ class RAGService:
             max_length=project.max_response_length,
             conversation_history=conversation_history
         )
+        
+        # Генерация ответа через LLM
+        # Получаем глобальные настройки моделей
+        from app.models.llm_model import GlobalModelSettings
+        from sqlalchemy import select
+        settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+        global_settings = settings_result.scalar_one_or_none()
+        
+        # Определяем primary и fallback модели
+        primary_model = None
+        fallback_model = None
+        
+        if project.llm_model:
+            # Если у проекта есть своя модель, используем её как primary
+            primary_model = project.llm_model
+            # Fallback берем из глобальных настроек
+            if global_settings and global_settings.fallback_model_id:
+                fallback_model = global_settings.fallback_model_id
+        else:
+            # Используем глобальные настройки
+            if global_settings:
+                primary_model = global_settings.primary_model_id
+                fallback_model = global_settings.fallback_model_id
             
-            # Генерация ответа через LLM
-            # Получаем глобальные настройки моделей
-            from app.models.llm_model import GlobalModelSettings
-            from sqlalchemy import select
-            settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
-            global_settings = settings_result.scalar_one_or_none()
-            
-            # Определяем primary и fallback модели
-            primary_model = None
-            fallback_model = None
-            
-            if project.llm_model:
-                # Если у проекта есть своя модель, используем её как primary
-                primary_model = project.llm_model
-                # Fallback берем из глобальных настроек
-                if global_settings and global_settings.fallback_model_id:
-                    fallback_model = global_settings.fallback_model_id
-            else:
-                # Используем глобальные настройки
-                if global_settings:
-                    primary_model = global_settings.primary_model_id
-                    fallback_model = global_settings.fallback_model_id
-                
-                # Если глобальных настроек нет или модели не установлены, используем дефолтные из .env
-                from app.core.config import settings as app_settings
-                if not primary_model:
-                    primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
-                if not fallback_model:
-                    fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
-            
-            # Создаем клиент с моделями
-            llm_client = OpenRouterClient(
-                model_primary=primary_model,
-                model_fallback=fallback_model
-            )
-            max_tokens = project.max_response_length // 4  # Приблизительная оценка токенов
-            raw_answer = await llm_client.chat_completion(
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=0.7
-            )
-            
-            # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
-            answer = self.response_formatter.format_response(
-                response=raw_answer,
-                max_length=project.max_response_length,
-                chunks=similar_chunks
-            )
+            # Если глобальных настроек нет или модели не установлены, используем дефолтные из .env
+            from app.core.config import settings as app_settings
+            if not primary_model:
+                primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+            if not fallback_model:
+                fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+        
+        # Создаем клиент с моделями
+        llm_client = OpenRouterClient(
+            model_primary=primary_model,
+            model_fallback=fallback_model
+        )
+        max_tokens = project.max_response_length // 4  # Приблизительная оценка токенов
+        raw_answer = await llm_client.chat_completion(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.7
+        )
+        
+        # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
+        answer = self.response_formatter.format_response(
+            response=raw_answer,
+            max_length=project.max_response_length,
+            chunks=similar_chunks
+        )
         
         # Сохранение сообщений в историю
         await self._save_message(user_id, question, "user")
