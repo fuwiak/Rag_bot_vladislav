@@ -185,7 +185,8 @@ async def verify_bot_token(
             detail="Проект не найден"
         )
     
-    logger.info(f"[VERIFY TOKEN] Project updated. Current bot_token: {project.bot_token[:10] if project.bot_token else 'None'}...")
+    bot_is_active_str = getattr(project, 'bot_is_active', 'false') or 'false'
+    logger.info(f"[VERIFY TOKEN] Project updated. Current bot_token: {project.bot_token[:10] if project.bot_token else 'None'}..., bot_is_active: {bot_is_active_str}")
     
     # Получаем количество пользователей для проекта
     result = await db.execute(
@@ -203,6 +204,7 @@ async def verify_bot_token(
     logger.info(f"[VERIFY TOKEN] Documents count: {documents_count}")
     
     # Получаем информацию о боте
+    is_active = bot_is_active_str == "true"
     bot_info = BotInfoResponse(
         project_id=project.id,
         project_name=project.name,
@@ -210,7 +212,8 @@ async def verify_bot_token(
         bot_username=bot_user.username,
         bot_first_name=bot_user.first_name,
         users_count=users_count,
-        is_active=False,
+        is_active=is_active,
+        bot_is_active=bot_is_active_str,
         llm_model=project.llm_model,
         description=project.description,
         documents_count=documents_count
