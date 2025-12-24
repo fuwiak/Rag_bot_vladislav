@@ -49,7 +49,10 @@ export default function TelegramBotsPage() {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Неизвестная ошибка'
       if (errorMessage.includes('Failed to fetch')) {
-        setError('Ошибка подключения к серверу. Проверьте, что backend запущен на ' + (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'))
+        // Получаем реальный URL, который используется
+        const { getBackendUrl } = await import('../lib/api-helpers')
+        const backendUrl = getBackendUrl()
+        setError(`Ошибка подключения к серверу. Проверьте, что backend запущен и доступен по адресу: ${backendUrl}. Также убедитесь, что переменная NEXT_PUBLIC_BACKEND_URL установлена в Railway.`)
       } else {
         setError('Ошибка загрузки данных: ' + errorMessage)
       }
@@ -105,9 +108,9 @@ export default function TelegramBotsPage() {
 
   const handleStartBot = async (projectId: string) => {
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+      const { getApiUrl } = await import('../lib/api-helpers')
 
-      const response = await fetch(`${backendUrl}/api/bots/${projectId}/start`, {
+      const response = await fetch(getApiUrl(`/api/bots/${projectId}/start`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })

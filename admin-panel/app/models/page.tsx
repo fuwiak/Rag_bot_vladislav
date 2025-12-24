@@ -95,9 +95,10 @@ export default function ModelsPage() {
         
         if (!settingsData.primary_model_id && !settingsData.fallback_model_id) {
           // Если настроек нет, устанавливаем дефолтные
-          const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+          const { getApiUrl } = await import('../lib/api-helpers')
+          const apiUrl = getApiUrl('/api/models/global-settings')
           
-          fetch(`${backendUrl}/api/models/global-settings`, {
+          fetch(apiUrl, {
             method: 'PATCH',
             headers: {
               'Content-Type': 'application/json',
