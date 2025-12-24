@@ -3,10 +3,14 @@
 """
 import os
 import re
+import sys
 from pathlib import Path
 from pydantic_settings import BaseSettings
 from pydantic import field_validator
 from typing import List, Union
+
+# Проверка, запущен ли pytest
+IS_TESTING = 'pytest' in sys.modules or 'PYTEST_CURRENT_TEST' in os.environ
 
 
 def resolve_env_vars_in_string(value: str) -> str:
@@ -122,7 +126,14 @@ class Settings(BaseSettings):
         redis_port = os.getenv('REDIS_PORT', '6379')
         redis_db = os.getenv('REDIS_DB', '0')
         
-        # Require REDIS_HOST to be set (no localhost fallback)
+        # For testing, allow localhost fallback
+        from app.core.config import IS_TESTING
+        if IS_TESTING:
+            if not redis_host:
+                redis_host = 'localhost'
+            return f"redis://{redis_host}:{redis_port}/{redis_db}"
+        
+        # Require REDIS_HOST to be set in production (no localhost fallback)
         if not redis_host:
             raise ValueError(
                 "REDIS_HOST must be set via environment variable. "
@@ -153,7 +164,14 @@ class Settings(BaseSettings):
         redis_port = os.getenv('REDIS_PORT', '6379')
         redis_db = os.getenv('REDIS_DB', '0')
         
-        # Require REDIS_HOST to be set (no localhost fallback)
+        # For testing, allow localhost fallback
+        from app.core.config import IS_TESTING
+        if IS_TESTING:
+            if not redis_host:
+                redis_host = 'localhost'
+            return f"redis://{redis_host}:{redis_port}/{redis_db}"
+        
+        # Require REDIS_HOST to be set in production (no localhost fallback)
         if not redis_host:
             raise ValueError(
                 "REDIS_HOST must be set via environment variable. "

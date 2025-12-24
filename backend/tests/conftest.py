@@ -36,7 +36,10 @@ async def db_session():
         await conn.run_sync(Base.metadata.create_all)
     
     async with TestingSessionLocal() as session:
-        yield session
+        try:
+            yield session
+        finally:
+            await session.rollback()
     
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
