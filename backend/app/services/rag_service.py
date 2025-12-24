@@ -596,7 +596,28 @@ class RAGService:
             
             if not chunk_texts:
                 logger.warning(f"[RAG SERVICE] No content found for project {project_id} - documents may still be processing")
-                return []
+                # Используем метаданные документов для генерации вопросов
+                try:
+                    from app.services.document_metadata_service import DocumentMetadataService
+                    metadata_service = DocumentMetadataService()
+                    documents_metadata = await metadata_service.get_documents_metadata(project_id, self.db)
+                    if documents_metadata:
+                        # Создаем контекст из метаданных
+                        metadata_context = metadata_service.create_metadata_context(documents_metadata)
+                        # Извлекаем ключевые слова из всех документов
+                        all_keywords = []
+                        for doc_meta in documents_metadata:
+                            all_keywords.extend(doc_meta.get("keywords", []))
+                        # Используем уникальные ключевые слова как контекст
+                        unique_keywords = list(set(all_keywords))[:20]
+                        if unique_keywords:
+                            chunk_texts = [f"Доступные документы: {metadata_context}\nКлючевые слова: {', '.join(unique_keywords)}"]
+                            logger.info(f"[RAG SERVICE] Using metadata context with {len(unique_keywords)} keywords")
+                except Exception as metadata_error:
+                    logger.warning(f"[RAG SERVICE] Error getting metadata for questions: {metadata_error}")
+                
+                if not chunk_texts:
+                    return []
             
             # Объединяем чанки в контекст
             context = "\n\n".join(chunk_texts[:10])  # Максимум 10 чанков
