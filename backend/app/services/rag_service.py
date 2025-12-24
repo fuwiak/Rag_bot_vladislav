@@ -114,13 +114,13 @@ class RAGService:
             chunk_texts = []
             similar_chunks = []
             metadata_context = ""
-        
-        # Определяем стратегию поиска на основе анализа агента
-        collection_name = f"project_{project.id}"
-        collection_exists = await self.vector_store.collection_exists(collection_name)
-        
-        # РАСШИРЕННЫЙ ПОИСК ЧАНКОВ - используем все техники перед fallback
-        if strategy.get("use_chunks", True) and collection_exists:
+            
+            # Определяем стратегию поиска на основе анализа агента
+            collection_name = f"project_{project.id}"
+            collection_exists = await self.vector_store.collection_exists(collection_name)
+            
+            # РАСШИРЕННЫЙ ПОИСК ЧАНКОВ - используем все техники перед fallback
+            if strategy.get("use_chunks", True) and collection_exists:
             logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
             found_chunks, found_similar = await self._advanced_chunk_search(
                 question=question,
