@@ -694,10 +694,10 @@ class RAGService:
                                 logger.warning(f"Error generating summary for doc {doc.id}: {e}")
                             
                             # Приоритет 3: используем содержимое напрямую
-                        if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
-                            # Берем первые 1000 символов из содержимого
-                            content = doc.content[:1000]
-                            if content.strip():
+                            if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
+                                # Берем первые 1000 символов из содержимого
+                                content = doc.content[:1000]
+                                if content.strip():
                                     chunk_texts.append(f"Документ '{doc.filename}': {content}")
             
             if not chunk_texts:
@@ -723,7 +723,7 @@ class RAGService:
                     logger.warning(f"[RAG SERVICE] Error getting metadata for questions: {metadata_error}")
                 
                 if not chunk_texts:
-                return []
+                    return []
             
             # Объединяем чанки в контекст
             context = "\n\n".join(chunk_texts[:10])  # Максимум 10 чанков
