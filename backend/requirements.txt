@@ -29,9 +29,9 @@ pdfplumber==0.10.3
 pandas==2.1.4  # For Excel file parsing
 openpyxl==3.1.2  # Excel file support for pandas
 spacy==3.7.2  # Lightweight NLP for metadata extraction
-transformers==4.36.2  # For BERT models
-torch==2.1.2  # PyTorch for transformers (lightweight CPU version)
-sentencepiece==0.1.99  # Tokenizer for multilingual models
+# Russian language model for spaCy (optional, but recommended)
+# Install with: python -m spacy download ru_core_news_sm
+# Or use direct link: https://github.com/explosion/spacy-models/releases/download/ru_core_news_sm-3.7.0/ru_core_news_sm-3.7.0.tar.gz
 
 # Vector Database
 qdrant-client==1.7.0

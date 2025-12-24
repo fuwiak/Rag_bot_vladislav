@@ -14,21 +14,25 @@ logger = logging.getLogger(__name__)
 try:
     import spacy
     SPACY_AVAILABLE = True
+    nlp = None
     try:
         # Пробуем загрузить русскую модель
         nlp = spacy.load("ru_core_news_sm")
+        logger.debug("spaCy Russian model loaded successfully")
     except OSError:
         # Если русской модели нет, используем английскую
         try:
             nlp = spacy.load("en_core_web_sm")
+            logger.debug("spaCy English model loaded successfully (Russian model not available)")
         except OSError:
+            # Модели недоступны, но это не критично - используем простую экстракцию
             nlp = None
             SPACY_AVAILABLE = False
-            logger.warning("spaCy models not available, using simple extraction")
+            logger.debug("spaCy models not available, using simple keyword extraction (this is normal)")
 except ImportError:
     SPACY_AVAILABLE = False
     nlp = None
-    logger.warning("spaCy not installed, using simple extraction")
+    logger.debug("spaCy not installed, using simple keyword extraction (this is normal)")
 
 
 class DocumentMetadataService:
