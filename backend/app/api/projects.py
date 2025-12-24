@@ -21,14 +21,23 @@ async def get_projects(
 ):
     """Получить список всех проектов (оптимизировано - лимит 100, без relationships)"""
     import gc
+    import logging
     
-    service = ProjectService(db)
-    projects = await service.get_all_projects()
+    logger = logging.getLogger(__name__)
     
-    # Явно освобождаем память после запроса
-    gc.collect()
-    
-    return projects
+    try:
+        service = ProjectService(db)
+        projects = await service.get_all_projects()
+        
+        # Явно освобождаем память после запроса
+        gc.collect()
+        
+        return projects
+    except Exception as e:
+        logger.error(f"Error getting projects: {e}", exc_info=True)
+        # Возвращаем пустой список вместо ошибки, чтобы не падал backend
+        gc.collect()
+        return []
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)

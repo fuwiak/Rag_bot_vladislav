@@ -22,22 +22,31 @@ class ProjectService:
         """Получить все проекты (оптимизировано - без загрузки relationships, с лимитом)"""
         from sqlalchemy.orm import noload
         import gc
+        import logging
         
-        # Загружаем проекты без relationships для экономии памяти
-        # Используем noload чтобы явно не загружать users и documents
-        # Добавляем лимит на количество проектов (100) для предотвращения out of memory
-        result = await self.db.execute(
-            select(Project)
-            .options(noload(Project.users), noload(Project.documents))
-            .limit(100)
-            .order_by(Project.created_at.desc())
-        )
-        projects = list(result.scalars().all())
+        logger = logging.getLogger(__name__)
         
-        # Явно освобождаем память
-        gc.collect()
-        
-        return projects
+        try:
+            # Загружаем проекты без relationships для экономии памяти
+            # Используем noload чтобы явно не загружать users и documents
+            # Добавляем лимит на количество проектов (50) для предотвращения out of memory
+            result = await self.db.execute(
+                select(Project)
+                .options(noload(Project.users), noload(Project.documents))
+                .limit(50)
+                .order_by(Project.created_at.desc())
+            )
+            projects = list(result.scalars().all())
+            
+            # Явно освобождаем память
+            gc.collect()
+            
+            logger.info(f"Loaded {len(projects)} projects")
+            return projects
+        except Exception as e:
+            logger.error(f"Error loading projects: {e}", exc_info=True)
+            gc.collect()
+            return []
     
     async def get_project_by_id(self, project_id: UUID) -> Optional[Project]:
         """Получить проект по ID (оптимизировано - без загрузки relationships)"""
