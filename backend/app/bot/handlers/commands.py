@@ -153,7 +153,7 @@ async def cmd_help(message: Message, state: FSMContext):
 
 
 async def cmd_documents(message: Message, state: FSMContext):
-    """Обработка команды /documents - показать список документов проекта"""
+    """Обработка команды /documents или /показать_документы - показать список документов проекта"""
     # Проверка авторизации
     current_state = await state.get_state()
     if current_state != AuthStates.authorized:
@@ -231,5 +231,10 @@ def register_commands(dp: Dispatcher, project_id: str):
     """Регистрация команд"""
     dp.message.register(cmd_start, Command("start"))
     dp.message.register(cmd_help, Command("help"))
+    # Регистрируем команду /documents и альтернативные варианты
     dp.message.register(cmd_documents, Command("documents"))
+    dp.message.register(cmd_documents, Command("показать_документы"))
+    dp.message.register(cmd_documents, Command("документы"))
+    dp.message.register(cmd_documents, Command("files"))
+    dp.message.register(cmd_documents, Command("файлы"))
 

@@ -13,8 +13,13 @@ from app.services.rag_service import RAGService
 
 async def handle_question(message: Message, state: FSMContext, project_id: str = None):
     """Обработка вопроса пользователя"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Проверка авторизации
     current_state = await state.get_state()
+    logger.info(f"[QUESTION HANDLER] Current state: {current_state}, Message text: {message.text[:50] if message.text else 'None'}")
+    
     if current_state != AuthStates.authorized:
         await message.answer("Пожалуйста, сначала авторизуйтесь через /start")
         return
@@ -24,11 +29,14 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     user_id_str = data.get("user_id")
     
     if not user_id_str:
+        logger.warning(f"[QUESTION HANDLER] User ID not found in state data: {data}")
         await message.answer("Ошибка: пользователь не найден. Используйте /start")
         return
     
     user_id = UUID(user_id_str)
     question = message.text
+    
+    logger.info(f"[QUESTION HANDLER] Processing question for user {user_id}: {question[:100]}")
     
     # Отправка сообщения о том, что идет обработка
     processing_msg = await message.answer("⏳ Обрабатываю ваш вопрос...")
@@ -39,6 +47,18 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
         async with AsyncSessionLocal() as db:
             rag_service = RAGService(db)
             
+            # Сохраняем вопрос в историю перед генерацией ответа
+            from app.models.message import Message as MessageModel
+            from datetime import datetime
+            question_message = MessageModel(
+                user_id=user_id,
+                content=question,
+                role="user",
+                created_at=datetime.utcnow()
+            )
+            db.add(question_message)
+            await db.flush()  # Получаем ID сообщения
+            
             # Создаем задачу с таймаутом
             try:
                 answer = await asyncio.wait_for(
@@ -46,8 +66,21 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                     timeout=7.0  # Максимум 7 секунд
                 )
             except asyncio.TimeoutError:
+                logger.warning(f"[QUESTION HANDLER] Timeout for user {user_id}, using fast answer")
                 # Если превышено время, генерируем короткий ответ
                 answer = await rag_service.generate_answer_fast(user_id, question)
+            
+            # Сохраняем ответ в историю
+            answer_message = MessageModel(
+                user_id=user_id,
+                content=answer,
+                role="assistant",
+                created_at=datetime.utcnow()
+            )
+            db.add(answer_message)
+            await db.commit()
+            
+            logger.info(f"[QUESTION HANDLER] Answer generated and saved for user {user_id}")
         
         # Удаление сообщения об обработке
         await processing_msg.delete()
@@ -63,6 +96,10 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
             await message.answer(answer)
     
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"[QUESTION HANDLER] Error processing question for user {user_id}: {e}", exc_info=True)
+        
         await processing_msg.delete()
         
         # Улучшенная обработка ошибок согласно ТЗ (п. 5.2.8)

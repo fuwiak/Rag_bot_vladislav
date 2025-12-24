@@ -53,8 +53,8 @@ class RAGService:
         if not project:
             raise ValueError("Проект не найден")
         
-        # Получение истории диалога
-        conversation_history = await self._get_conversation_history(user_id, limit=6)
+        # Получение истории диалога (минимум 10 сообщений согласно требованиям)
+        conversation_history = await self._get_conversation_history(user_id, limit=10)
         
         # Создание эмбеддинга вопроса
         question_embedding = await self.embedding_service.create_embedding(question)
