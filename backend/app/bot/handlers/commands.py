@@ -477,12 +477,56 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
             reply_markup=mode_keyboard
         )
     elif mode == "suggest_questions":
-        # Вызываем команду предложения вопросов
+        # Вызываем команду предложения вопросов напрямую
         await callback.answer()
-        # Создаем фиктивное сообщение для вызова команды
-        fake_message = callback.message
-        fake_message.text = "/suggest_questions"
-        await cmd_suggest_questions(fake_message, state)
+        # Вызываем логику напрямую, используя callback.message
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        current_state = await state.get_state()
+        if current_state != AuthStates.authorized:
+            await callback.message.answer("Пожалуйста, сначала авторизуйтесь через /start")
+            return
+        
+        data = await state.get_data()
+        project_id_from_state = data.get("project_id")
+        
+        if not project_id_from_state:
+            await callback.message.answer("Ошибка: проект не определен. Используйте /start.")
+            return
+        
+        from uuid import UUID
+        from app.core.database import AsyncSessionLocal
+        from app.services.rag_service import RAGService
+        
+        processing_msg = await callback.message.answer("⏳ Анализирую документы и генерирую вопросы...")
+        
+        try:
+            async with AsyncSessionLocal() as db:
+                rag_service = RAGService(db)
+                questions = await rag_service.generate_suggested_questions(UUID(project_id_from_state), limit=5)
+                
+                await processing_msg.delete()
+                
+                if not questions:
+                    await callback.message.answer(
+                        "📄 В этом проекте пока нет загруженных документов или они еще обрабатываются.\n\n"
+                        "Загрузите документы через веб-интерфейс, чтобы получить предложенные вопросы."
+                    )
+                    return
+                
+                questions_text = "💡 <b>Предложенные вопросы на основе ваших документов:</b>\n\n"
+                for i, q in enumerate(questions, 1):
+                    questions_text += f"{i}. {q}\n"
+                
+                questions_text += "\n💬 <b>Совет:</b> Скопируйте любой вопрос и отправьте его боту для получения ответа!"
+                
+                await callback.message.answer(questions_text)
+                
+        except Exception as e:
+            logger.error(f"Error generating suggested questions: {e}", exc_info=True)
+            await processing_msg.delete()
+            await callback.message.answer("❌ Произошла ошибка при генерации вопросов. Попробуйте позже.")
 
 
 def register_commands(dp: Dispatcher, project_id: str):

@@ -128,7 +128,7 @@ class ProjectService:
             logger.warning(f"Field bot_is_active not found in get_project_by_id, using raw query: {e}")
             await self.db.rollback()
             from sqlalchemy import text
-            result = await self.db.execute(
+        result = await self.db.execute(
                 text("""
                     SELECT id, name, description, bot_token, llm_model, access_password, 
                            prompt_template, max_response_length, created_at, updated_at
@@ -180,7 +180,7 @@ class ProjectService:
         
         # Создание коллекции в Qdrant для проекта (не блокируем создание проекта при ошибке)
         try:
-            await self.collections_manager.create_collection(str(project.id))
+        await self.collections_manager.create_collection(str(project.id))
         except Exception as e:
             # Логируем ошибку, но не прерываем создание проекта
             import logging
@@ -209,7 +209,7 @@ class ProjectService:
         if 'bot_token' in update_data:
             if update_data['bot_token'] == '':
                 logger.info(f"[UPDATE PROJECT] Empty bot_token, setting to None")
-                update_data['bot_token'] = None
+            update_data['bot_token'] = None
             else:
                 logger.info(f"[UPDATE PROJECT] Setting bot_token (first 10 chars): {update_data['bot_token'][:10]}...")
         
@@ -278,7 +278,7 @@ class ProjectService:
         
         # Удаление коллекции из Qdrant (опционально, не блокируем удаление проекта при ошибке)
         try:
-            await self.collections_manager.delete_collection(str(project_id))
+        await self.collections_manager.delete_collection(str(project_id))
         except Exception as e:
             logger.warning(f"Не удалось удалить коллекцию Qdrant для проекта {project_id}: {e}")
             # Продолжаем удаление проекта даже если коллекция не найдена
