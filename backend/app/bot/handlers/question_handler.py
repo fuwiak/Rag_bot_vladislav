@@ -14,6 +14,7 @@ from app.services.rag_service import RAGService
 async def handle_question(message: Message, state: FSMContext, project_id: str = None):
     """Обработка вопроса пользователя"""
     import logging
+    from aiogram.filters import Command
     logger = logging.getLogger(__name__)
     
     # Проверка авторизации
@@ -22,6 +23,12 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     
     if current_state != AuthStates.authorized:
         await message.answer("Пожалуйста, сначала авторизуйтесь через /start")
+        return
+    
+    # Проверяем, что это не команда (команды должны обрабатываться отдельными обработчиками)
+    if message.text and message.text.startswith('/'):
+        # Это команда, пропускаем обработку
+        logger.debug(f"[QUESTION HANDLER] Skipping command: {message.text}")
         return
     
     # Получение user_id из состояния
@@ -35,6 +42,10 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     
     user_id = UUID(user_id_str)
     question = message.text
+    
+    if not question or not question.strip():
+        logger.warning(f"[QUESTION HANDLER] Empty question from user {user_id}")
+        return
     
     logger.info(f"[QUESTION HANDLER] Processing question for user {user_id}: {question[:100]}")
     
@@ -148,6 +159,7 @@ def register_question_handlers(dp: Dispatcher, project_id: str):
     сработает только для авторизованных пользователей.
     """
     # Регистрируем обработчик для текстовых сообщений авторизованных пользователей
-    # F.text фильтрует только текстовые сообщения (не команды, не контакты и т.д.)
-    dp.message.register(handle_question, AuthStates.authorized, F.text & ~F.command)
+    # F.text фильтрует только текстовые сообщения
+    # Проверяем, что это не команда внутри обработчика, так как ~F.command может не работать правильно
+    dp.message.register(handle_question, AuthStates.authorized, F.text)
 
