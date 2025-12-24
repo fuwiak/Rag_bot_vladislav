@@ -413,19 +413,19 @@ class RAGService:
                 # Вставляем историю перед финальным вопросом
                 messages = [messages[0]] + recent_history + [messages[1]]
         else:
-            # ВСЕГДА используем промпт проекта, даже если документов нет
-            # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
-            # Построение промпта с контекстом (может быть пустым)
+        # ВСЕГДА используем промпт проекта, даже если документов нет
+        # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+        # Построение промпта с контекстом (может быть пустым)
             # chunks_for_prompt уже определен выше
             
-            messages = self.prompt_builder.build_prompt(
+        messages = self.prompt_builder.build_prompt(
             question=question,
                 chunks=chunks_for_prompt,  # Может быть пустым списком
             prompt_template=project.prompt_template,
             max_length=project.max_response_length,
                 conversation_history=conversation_history,
                 metadata_context=metadata_context  # Добавляем метаданные если есть
-            )
+        )
         
         # Генерация ответа через LLM
         # Получаем глобальные настройки моделей из БД
@@ -482,9 +482,9 @@ class RAGService:
         # Генерируем ответ
         try:
             raw_answer = await llm_client.chat_completion(
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=0.7
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.7
             )
         
             # Проверяем, не является ли ответ отказом
@@ -508,10 +508,10 @@ class RAGService:
             else:
                 # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
                 answer = self.response_formatter.format_response(
-                response=raw_answer,
-                max_length=project.max_response_length,
-                    chunks=similar_chunks if 'similar_chunks' in locals() else []
-                )
+                    response=raw_answer,
+                    max_length=project.max_response_length,
+                            chunks=similar_chunks if 'similar_chunks' in locals() else []
+                        )
         except Exception as llm_error:
             logger.warning(f"[RAG SERVICE] LLM error: {llm_error}, trying document summary fallback")
             # Если ошибка LLM, пытаемся сгенерировать сводку
@@ -1408,12 +1408,12 @@ class RAGService:
                 # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
                 try:
                     # Пробуем обычный запрос
-                result = await self.db.execute(
-                    select(Document)
-                    .where(Document.project_id == project_id)
-                    .limit(10)
-                )
-                documents = result.scalars().all()
+                    result = await self.db.execute(
+                        select(Document)
+                        .where(Document.project_id == project_id)
+                        .limit(10)
+                    )
+                    documents = result.scalars().all()
                 except Exception as db_error:
                     # Если ошибка из-за отсутствия поля summary, используем raw SQL
                     error_str = str(db_error).lower()
@@ -1519,7 +1519,7 @@ class RAGService:
                     logger.warning(f"[RAG SERVICE] Error getting metadata for questions: {metadata_error}")
                 
                 if not chunk_texts:
-                return []
+                    return []
             
             # Объединяем чанки в контекст
             context = "\n\n".join(chunk_texts[:10])  # Максимум 10 чанков
