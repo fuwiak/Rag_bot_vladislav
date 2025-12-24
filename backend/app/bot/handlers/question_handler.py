@@ -159,9 +159,8 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                     
                     logger.info(f"[QUESTION HANDLER] GENERAL MODE: Final models - primary={primary_model}, fallback={fallback_model}")
                     
-                    # Используем RAGChain с правильно настроенным LLMClient (та же логика, что в веб-интерфейсе)
+                    # Используем LLMClient напрямую БЕЗ RAG (как в веб-интерфейсе для тестирования моделей)
                     from app.rag.llm_client import LLMClient
-                    from app.rag.rag_chain import RAGChain
                     
                     # Создаем LLMClient с выбранными моделями
                     llm_client = LLMClient(
@@ -169,43 +168,64 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                         fallback_chain=[{"model": fallback_model}] if fallback_model else None
                     )
                     
-                    # Создаем RAGChain с этим клиентом (но не используем RAG поиск)
-                    rag_chain = RAGChain(llm_client=llm_client)
+                    # Получаем историю диалога
+                    conversation_history = await rag_service._get_conversation_history(user_id, limit=10)
                     
-                    # Обновляем системный промпт для общих вопросов (без упоминания документов)
+                    # Формируем системный промпт для общих вопросов (БЕЗ упоминания документов)
                     system_prompt = "Ты дружелюбный помощник. Отвечай на вопросы пользователя естественно и полезно."
                     if project.prompt_template and project.prompt_template.strip():
-                        # Используем промпт проекта, но убираем упоминания о документах
+                        # Используем промпт проекта, но полностью убираем упоминания о документах
                         system_prompt = project.prompt_template
-                        # Убираем упоминания о документах из промпта
+                        # Убираем все упоминания о документах из промпта
                         system_prompt = system_prompt.replace("на основе документов", "")
                         system_prompt = system_prompt.replace("из документов", "")
                         system_prompt = system_prompt.replace("в документах", "")
                         system_prompt = system_prompt.replace("загруженных документов", "")
+                        system_prompt = system_prompt.replace("документах", "")
+                        system_prompt = system_prompt.replace("документов", "")
+                        system_prompt = system_prompt.replace("документ", "")
                         system_prompt = system_prompt.strip()
                     
-                    # Временно обновляем системный промпт RAGChain
-                    original_system_prompt = rag_chain.system_prompt
-                    rag_chain.system_prompt = system_prompt
+                    # Формируем сообщения для LLM (как в веб-интерфейсе для тестирования моделей)
+                    messages = []
+                    messages.append({"role": "system", "content": system_prompt})
                     
-                    try:
-                        # Используем RAGChain с use_rag=False (не ищем в документах, но используем правильную модель)
-                        logger.info(f"[QUESTION HANDLER] GENERAL MODE: Sending request via RAGChain (no RAG search, using selected model)")
-                        result = await rag_chain.query(
-                            user_query=question,
-                            use_rag=False,  # Не используем RAG поиск
-                            project_id=str(project.id)
+                    # Добавляем историю диалога (последние 5 сообщений)
+                    for hist_msg in conversation_history[-5:]:
+                        messages.append(hist_msg)
+                    
+                    # Добавляем текущий вопрос
+                    messages.append({"role": "user", "content": question})
+                    
+                    # Используем LLM напрямую через _call_api (как в веб-интерфейсе для тестирования)
+                    logger.info(f"[QUESTION HANDLER] GENERAL MODE: Sending request directly to LLM (no RAG, no documents)")
+                    llm_response = await llm_client._call_api(
+                        model=primary_model,
+                        messages=messages,
+                        temperature=0.7,
+                        max_tokens=min(project.max_response_length, 2048)
+                    )
+                    
+                    # Если основная модель не сработала, пробуем fallback
+                    if llm_response.error and fallback_model:
+                        logger.warning(f"[QUESTION HANDLER] GENERAL MODE: Primary model failed, trying fallback: {fallback_model}")
+                        llm_response = await llm_client._call_api(
+                            model=fallback_model,
+                            messages=messages,
+                            temperature=0.7,
+                            max_tokens=min(project.max_response_length, 2048)
                         )
-                        
-                        answer = result.get("answer", "").strip()
-                        
-                        if not answer:
-                            answer = "Извините, не удалось сгенерировать ответ. Попробуйте переформулировать вопрос."
-                        
-                        logger.info(f"[QUESTION HANDLER] GENERAL MODE: Response received via RAGChain, length: {len(answer)}, model: {result.get('model', 'unknown')}")
-                    finally:
-                        # Восстанавливаем оригинальный системный промпт
-                        rag_chain.system_prompt = original_system_prompt
+                    
+                    if llm_response.error:
+                        logger.error(f"[QUESTION HANDLER] GENERAL MODE: LLM error: {llm_response.error}")
+                        answer = "Извините, произошла ошибка при генерации ответа. Попробуйте позже."
+                    else:
+                        answer = llm_response.content.strip()
+                    
+                    if not answer:
+                        answer = "Извините, не удалось сгенерировать ответ. Попробуйте переформулировать вопрос."
+                    
+                    logger.info(f"[QUESTION HANDLER] GENERAL MODE: Response received directly from LLM, length: {len(answer)}, model: {llm_response.model}")
                     
                 except Exception as general_error:
                     logger.error(f"[QUESTION HANDLER] GENERAL MODE: Error for user {user_id}: {general_error}", exc_info=True)
