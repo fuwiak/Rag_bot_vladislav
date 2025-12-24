@@ -166,13 +166,13 @@ class RAGService:
                 logger.info(f"[RAG SERVICE] Getting metadata for context")
                 try:
                     from app.services.document_metadata_service import DocumentMetadataService
-                metadata_service = DocumentMetadataService()
-                documents_metadata = strategy_info.get("documents_metadata", [])
-                if not documents_metadata:
-                    documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
-                if documents_metadata:
-                    metadata_context = metadata_service.create_metadata_context(documents_metadata)
-                    logger.info(f"[RAG SERVICE] Created metadata context from {len(documents_metadata)} documents")
+                    metadata_service = DocumentMetadataService()
+                    documents_metadata = strategy_info.get("documents_metadata", [])
+                    if not documents_metadata:
+                        documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
+                    if documents_metadata:
+                        metadata_context = metadata_service.create_metadata_context(documents_metadata)
+                        logger.info(f"[RAG SERVICE] Created metadata context from {len(documents_metadata)} documents")
                 except Exception as metadata_error:
                     logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
             
@@ -187,60 +187,60 @@ class RAGService:
             if not chunk_texts:
                 logger.info(f"[RAG SERVICE] No chunks found, trying to extract content directly from documents using multiple techniques")
                 try:
-                from app.models.document import Document, DocumentChunk
-                from app.documents.chunker import DocumentChunker
-                from sqlalchemy import select, text
-                import re
-                
-                # Техника 1: Пытаемся получить чанки из БД (DocumentChunk)
-                try:
-                    result = await self.db.execute(
-                        select(DocumentChunk)
-                        .join(Document)
-                        .where(Document.project_id == project.id)
-                        .where(DocumentChunk.chunk_text.isnot(None))
-                        .where(DocumentChunk.chunk_text != "")
-                        .limit(top_k * 2)
-                    )
-                    db_chunks = result.scalars().all()
+                    from app.models.document import Document, DocumentChunk
+                    from app.documents.chunker import DocumentChunker
+                    from sqlalchemy import select, text
+                    import re
                     
-                    if db_chunks:
-                        # Извлекаем ключевые слова из вопроса для релевантности
-                        question_keywords = set(re.findall(r'\b\w+\b', question.lower()))
-                        question_keywords = {w for w in question_keywords if len(w) > 3}  # Слова длиннее 3 символов
-                        
-                        for chunk in db_chunks:
-                            chunk_text_lower = chunk.chunk_text.lower()
-                            # Вычисляем релевантность по количеству совпадающих ключевых слов
-                            relevance = sum(1 for kw in question_keywords if kw in chunk_text_lower)
-                            score = min(0.9, 0.5 + (relevance * 0.1))
-                            
-                            chunk_texts.append({
-                                "text": chunk.chunk_text,
-                                "source": chunk.document.filename if chunk.document else "Документ",
-                                "score": score
-                            })
-                        
-                        if chunk_texts:
-                            logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} chunks from DocumentChunk table")
-                except Exception as chunk_error:
-                    logger.warning(f"[RAG SERVICE] Error getting chunks from DB: {chunk_error}")
-                
-                # Техника 2: Если нет чанков в БД, получаем документы и используем chunking
-                if not chunk_texts:
+                    # Техника 1: Пытаемся получить чанки из БД (DocumentChunk)
                     try:
                         result = await self.db.execute(
-                            select(Document)
+                            select(DocumentChunk)
+                            .join(Document)
                             .where(Document.project_id == project.id)
-                            .where(Document.content.isnot(None))
-                            .where(Document.content != "")
-                            .where(Document.content.notin_(["Обработка...", "Обработан"]))
-                            .limit(10)
+                            .where(DocumentChunk.chunk_text.isnot(None))
+                            .where(DocumentChunk.chunk_text != "")
+                            .limit(top_k * 2)
                         )
-                        documents = result.scalars().all()
-                    except Exception:
-                        # Fallback на raw SQL
-                        result = await self.db.execute(
+                        db_chunks = result.scalars().all()
+                        
+                        if db_chunks:
+                            # Извлекаем ключевые слова из вопроса для релевантности
+                            question_keywords = set(re.findall(r'\b\w+\b', question.lower()))
+                            question_keywords = {w for w in question_keywords if len(w) > 3}  # Слова длиннее 3 символов
+                            
+                            for chunk in db_chunks:
+                                chunk_text_lower = chunk.chunk_text.lower()
+                                # Вычисляем релевантность по количеству совпадающих ключевых слов
+                                relevance = sum(1 for kw in question_keywords if kw in chunk_text_lower)
+                                score = min(0.9, 0.5 + (relevance * 0.1))
+                                
+                                chunk_texts.append({
+                                    "text": chunk.chunk_text,
+                                    "source": chunk.document.filename if chunk.document else "Документ",
+                                    "score": score
+                                })
+                            
+                            if chunk_texts:
+                                logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} chunks from DocumentChunk table")
+                    except Exception as chunk_error:
+                        logger.warning(f"[RAG SERVICE] Error getting chunks from DB: {chunk_error}")
+                    
+                    # Техника 2: Если нет чанков в БД, получаем документы и используем chunking
+                    if not chunk_texts:
+                        try:
+                            result = await self.db.execute(
+                                select(Document)
+                                .where(Document.project_id == project.id)
+                                .where(Document.content.isnot(None))
+                                .where(Document.content != "")
+                                .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                                .limit(10)
+                            )
+                            documents = result.scalars().all()
+                        except Exception:
+                            # Fallback на raw SQL
+                            result = await self.db.execute(
                             text("""
                                 SELECT id, filename, content, file_type 
                                 FROM documents 
@@ -251,79 +251,78 @@ class RAGService:
                                 LIMIT 10
                             """),
                             {"project_id": str(project.id)}
-                        )
-                        rows = result.all()
-                        documents = []
-                        for row in rows:
-                            doc = Document()
-                            doc.id = row[0]
-                            doc.filename = row[1]
-                            doc.content = row[2]
-                            doc.file_type = row[3]
-                            documents.append(doc)
-                    
-                    # Используем DocumentChunker для разбивки на чанки с большим overlap (50-75%)
-                    # Overlapping Chunks z kontekstem - улучшенный chunking
-                    chunker = DocumentChunker(chunk_size=1000, chunk_overlap=500)  # 50% overlap
-                    question_keywords = set(re.findall(r'\b\w+\b', question.lower()))
-                    question_keywords = {w for w in question_keywords if len(w) > 3}
-                    
-                    for doc in documents:
-                        if doc.content and len(doc.content) > 50:
-                            # Разбиваем на чанки
-                            doc_chunks = chunker.chunk_text(doc.content)
-                            
-                            # Если вопрос содержит название файла, используем все чанки
-                            is_relevant_file = doc.filename.lower() in question.lower()
-                            
-                            for chunk_text in doc_chunks[:5]:  # Максимум 5 чанков из каждого документа
-                                # Вычисляем релевантность
-                                chunk_lower = chunk_text.lower()
-                                relevance = sum(1 for kw in question_keywords if kw in chunk_lower)
-                                score = 0.9 if is_relevant_file else min(0.8, 0.5 + (relevance * 0.1))
-                                
-                                chunk_texts.append({
-                                    "text": chunk_text,
-                                    "source": doc.filename,
-                                    "score": score
-                                })
-                            
-                            logger.info(f"[RAG SERVICE] Extracted {len(doc_chunks)} chunks from document {doc.filename} using chunker")
-                    
-                    if chunk_texts:
-                        logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content chunks using DocumentChunker")
-                
-                # Техника 3: Если все еще нет чанков, используем простой preview
-                if not chunk_texts:
-                    try:
-                        result = await self.db.execute(
-                            select(Document)
-                            .where(Document.project_id == project.id)
-                            .limit(5)
-                        )
-                        documents = result.scalars().all()
+                            )
+                            rows = result.all()
+                            documents = []
+                            for row in rows:
+                                doc = Document()
+                                doc.id = row[0]
+                                doc.filename = row[1]
+                                doc.content = row[2]
+                                doc.file_type = row[3]
+                                documents.append(doc)
+                        
+                        # Используем DocumentChunker для разбивки на чанки с большим overlap (50-75%)
+                        # Overlapping Chunks z kontekstem - улучшенный chunking
+                        chunker = DocumentChunker(chunk_size=1000, chunk_overlap=500)  # 50% overlap
+                        question_keywords = set(re.findall(r'\b\w+\b', question.lower()))
+                        question_keywords = {w for w in question_keywords if len(w) > 3}
                         
                         for doc in documents:
                             if doc.content and len(doc.content) > 50:
-                                # Простой preview - первые 1000 символов
-                                content_preview = doc.content[:1000]
-                                if len(doc.content) > 1000:
-                                    content_preview += "..."
+                                # Разбиваем на чанки
+                                doc_chunks = chunker.chunk_text(doc.content)
                                 
-                                is_relevant = doc.filename.lower() in question.lower()
-                                chunk_texts.append({
-                                    "text": f"Документ '{doc.filename}':\n{content_preview}",
-                                    "source": doc.filename,
-                                    "score": 0.7 if is_relevant else 0.4
-                                })
+                                # Если вопрос содержит название файла, используем все чанки
+                                is_relevant_file = doc.filename.lower() in question.lower()
+                                
+                                for chunk_text in doc_chunks[:5]:  # Максимум 5 чанков из каждого документа
+                                    # Вычисляем релевантность
+                                    chunk_lower = chunk_text.lower()
+                                    relevance = sum(1 for kw in question_keywords if kw in chunk_lower)
+                                    score = 0.9 if is_relevant_file else min(0.8, 0.5 + (relevance * 0.1))
+                                    
+                                    chunk_texts.append({
+                                        "text": chunk_text,
+                                        "source": doc.filename,
+                                        "score": score
+                                    })
+                                
+                                logger.info(f"[RAG SERVICE] Extracted {len(doc_chunks)} chunks from document {doc.filename} using chunker")
                         
                         if chunk_texts:
-                            logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content previews")
-                    except Exception as preview_error:
-                        logger.warning(f"[RAG SERVICE] Error extracting previews: {preview_error}")
-                
-            except Exception as extract_error:
-                logger.warning(f"[RAG SERVICE] Error extracting content from documents: {extract_error}")
+                            logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content chunks using DocumentChunker")
+                        
+                        # Техника 3: Если все еще нет чанков, используем простой preview
+                        if not chunk_texts:
+                            try:
+                                result = await self.db.execute(
+                                    select(Document)
+                                    .where(Document.project_id == project.id)
+                                    .limit(5)
+                                )
+                                documents = result.scalars().all()
+                                
+                                for doc in documents:
+                                    if doc.content and len(doc.content) > 50:
+                                        # Простой preview - первые 1000 символов
+                                        content_preview = doc.content[:1000]
+                                        if len(doc.content) > 1000:
+                                            content_preview += "..."
+                                        
+                                        is_relevant = doc.filename.lower() in question.lower()
+                                        chunk_texts.append({
+                                            "text": f"Документ '{doc.filename}':\n{content_preview}",
+                                            "source": doc.filename,
+                                            "score": 0.7 if is_relevant else 0.4
+                                        })
+                                
+                                if chunk_texts:
+                                    logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content previews")
+                            except Exception as preview_error:
+                                logger.warning(f"[RAG SERVICE] Error extracting previews: {preview_error}")
+                except Exception as extract_error:
+                    logger.warning(f"[RAG SERVICE] Error extracting content from documents: {extract_error}")
             
             # Инициализируем chunks_for_prompt для использования в блоке else
             chunks_for_prompt = []
@@ -337,9 +336,9 @@ class RAGService:
             if is_content_question:
                 # Для вопросов типа "summary of each file" - используем метаданные напрямую
                 if metadata_context and not chunk_texts:
-                # Просто используем метаданные - это работает как предложенные вопросы
-                logger.info(f"[RAG SERVICE] Content question with metadata only - using direct metadata approach")
-                context = f"""Информация о загруженных документах:
+                    # Просто используем метаданные - это работает как предложенные вопросы
+                    logger.info(f"[RAG SERVICE] Content question with metadata only - using direct metadata approach")
+                    context = f"""Информация о загруженных документах:
 
 {metadata_context}
 
@@ -347,36 +346,36 @@ class RAGService:
 - Если вопрос о summary каждого файла, создай краткое описание каждого файла на основе его названия и ключевых слов
 - Используй названия файлов и ключевые слова для понимания содержания
 - Будь конкретным и информативным"""
-                
-                enhanced_prompt = f"""Вопрос пользователя: {question}
+                    
+                    enhanced_prompt = f"""Вопрос пользователя: {question}
 
 Используй информацию о документах выше для ответа. Если вопрос о summary каждого файла, предоставь краткое описание каждого файла на основе его названия и ключевых слов.
 
 Ответ:"""
-                
-                messages = [
-                    {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей на основе информации о загруженных документах. Отвечай на русском языке, будь дружелюбным и информативным. Используй названия файлов и ключевые слова для создания описаний."},
-                    {"role": "user", "content": enhanced_prompt}
-                ]
-            elif chunk_texts:
-                # Есть summaries или извлеченный контент - используем их
-                context_parts = []
-                for i, doc in enumerate(chunk_texts, 1):
-                    if isinstance(doc, dict):
-                        source = doc.get("source", "Документ")
-                        text = doc.get("text", "")
-                        score = doc.get("score", 1.0)
-                        context_parts.append(f"Фрагмент {i} (источник: {source}, релевантность: {score:.2f}):\n{text}")
-                    else:
-                        context_parts.append(f"Фрагмент {i}:\n{doc}")
-                
-                context = "\n\n".join(context_parts)
-                
-                # Добавляем метаданные для дополнительного контекста
-                if metadata_context:
-                    context += f"\n\nДополнительная информация о документах:\n{metadata_context}"
-                
-                enhanced_prompt = f"""На основе следующих фрагментов документов ответь на вопрос пользователя.
+                    
+                    messages = [
+                        {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей на основе информации о загруженных документах. Отвечай на русском языке, будь дружелюбным и информативным. Используй названия файлов и ключевые слова для создания описаний."},
+                        {"role": "user", "content": enhanced_prompt}
+                    ]
+                elif chunk_texts:
+                    # Есть summaries или извлеченный контент - используем их
+                    context_parts = []
+                    for i, doc in enumerate(chunk_texts, 1):
+                        if isinstance(doc, dict):
+                            source = doc.get("source", "Документ")
+                            text = doc.get("text", "")
+                            score = doc.get("score", 1.0)
+                            context_parts.append(f"Фрагмент {i} (источник: {source}, релевантность: {score:.2f}):\n{text}")
+                        else:
+                            context_parts.append(f"Фрагмент {i}:\n{doc}")
+                    
+                    context = "\n\n".join(context_parts)
+                    
+                    # Добавляем метаданные для дополнительного контекста
+                    if metadata_context:
+                        context += f"\n\nДополнительная информация о документах:\n{metadata_context}"
+                    
+                    enhanced_prompt = f"""На основе следующих фрагментов документов ответь на вопрос пользователя.
 Если ответа нет в контексте, так и скажи.
 
 КОНТЕКСТ:
@@ -385,48 +384,48 @@ class RAGService:
 ВОПРОС: {question}
 
 ОТВЕТ:"""
-                
-                messages = [
-                    {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей на основе предоставленных документов. Отвечай на русском языке, будь дружелюбным и информативным."},
-                    {"role": "user", "content": enhanced_prompt}
-                ]
-            elif metadata_context:
-                # Нет summaries, но есть метаданные - используем их
-                context = f"""Метаданные документов:
+                    
+                    messages = [
+                        {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей на основе предоставленных документов. Отвечай на русском языке, будь дружелюбным и информативным."},
+                        {"role": "user", "content": enhanced_prompt}
+                    ]
+                elif metadata_context:
+                    # Нет summaries, но есть метаданные - используем их
+                    context = f"""Метаданные документов:
 
 {metadata_context}
 
 ВАЖНО: Используй эту информацию для ответа на вопрос. Если вопрос касается конкретного файла, используй название файла и ключевые слова из метаданных."""
-                
-                enhanced_prompt = f"""Вопрос пользователя: {question}
+                    
+                    enhanced_prompt = f"""Вопрос пользователя: {question}
 
 Используй информацию о документах выше для ответа.
 
 Ответ:"""
-                
-                messages = [
-                    {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей на основе информации о загруженных документах. Отвечай на русском языке, будь дружелюбным и информативным."},
-                    {"role": "user", "content": enhanced_prompt}
-                ]
-            else:
-                # Нет ни summaries, ни метаданных
-                context = "Документы еще обрабатываются. Доступна только информация о загруженных файлах."
-                enhanced_prompt = f"""Вопрос: {question}
+                    
+                    messages = [
+                        {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей на основе информации о загруженных документах. Отвечай на русском языке, будь дружелюбным и информативным."},
+                        {"role": "user", "content": enhanced_prompt}
+                    ]
+                else:
+                    # Нет ни summaries, ни метаданных
+                    context = "Документы еще обрабатываются. Доступна только информация о загруженных файлах."
+                    enhanced_prompt = f"""Вопрос: {question}
 
 Контекст: {context}
 
 Ответ:"""
+                    
+                    messages = [
+                        {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей. Отвечай на русском языке, будь дружелюбным и информативным."},
+                        {"role": "user", "content": enhanced_prompt}
+                    ]
                 
-                messages = [
-                    {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей. Отвечай на русском языке, будь дружелюбным и информативным."},
-                    {"role": "user", "content": enhanced_prompt}
-                ]
-            
-            # Добавляем историю диалога
-            if conversation_history:
-                recent_history = conversation_history[-4:]  # Последние 2 пары вопрос-ответ
-                # Вставляем историю перед финальным вопросом
-                messages = [messages[0]] + recent_history + [messages[1]]
+                # Добавляем историю диалога
+                if conversation_history:
+                    recent_history = conversation_history[-4:]  # Последние 2 пары вопрос-ответ
+                    # Вставляем историю перед финальным вопросом
+                    messages = [messages[0]] + recent_history + [messages[1]]
             else:
                 # ВСЕГДА используем промпт проекта, даже если документов нет
                 # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
