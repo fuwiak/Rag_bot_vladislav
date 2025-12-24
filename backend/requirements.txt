@@ -29,6 +29,9 @@ pdfplumber==0.10.3
 pandas==2.1.4  # For Excel file parsing
 openpyxl==3.1.2  # Excel file support for pandas
 spacy==3.7.2  # Lightweight NLP for metadata extraction
+transformers==4.36.2  # For BERT models
+torch==2.1.2  # PyTorch for transformers (lightweight CPU version)
+sentencepiece==0.1.99  # Tokenizer for multilingual models
 
 # Vector Database
 qdrant-client==1.7.0

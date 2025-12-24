@@ -100,6 +100,7 @@ class RAGService:
         
         chunk_texts = []
         metadata_context = ""
+        similar_chunks = []  # Инициализируем для использования в format_response
         
         # Определяем стратегию поиска на основе анализа агента
         collection_name = f"project_{project.id}"
