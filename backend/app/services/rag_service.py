@@ -121,18 +121,18 @@ class RAGService:
             
             # РАСШИРЕННЫЙ ПОИСК ЧАНКОВ - используем все техники перед fallback
             if strategy.get("use_chunks", True) and collection_exists:
-                logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
-                found_chunks, found_similar = await self._advanced_chunk_search(
+            logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
+            found_chunks, found_similar = await self._advanced_chunk_search(
                 question=question,
                 collection_name=collection_name,
                 project_id=project.id,
                 top_k=top_k,
                 strategy=strategy
-                )
-                if found_chunks:
-                chunk_texts = found_chunks
-                similar_chunks = found_similar
-                logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} chunks using advanced search techniques")
+            )
+                    if found_chunks:
+                    chunk_texts = found_chunks
+                    similar_chunks = found_similar
+                    logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} chunks using advanced search techniques")
             
             # Для вопросов о содержании - приоритет summaries (не используем чанки)
             question_type = strategy.get("question_type", "")
@@ -427,124 +427,92 @@ class RAGService:
                 recent_history = conversation_history[-4:]  # Последние 2 пары вопрос-ответ
                 # Вставляем историю перед финальным вопросом
                 messages = [messages[0]] + recent_history + [messages[1]]
-        else:
-            # ВСЕГДА используем промпт проекта, даже если документов нет
-            # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
-            # Построение промпта с контекстом (может быть пустым)
-            # chunks_for_prompt уже определен выше
-            
-            messages = self.prompt_builder.build_prompt(
-                question=question,
-                chunks=chunks_for_prompt,  # Может быть пустым списком
-                prompt_template=project.prompt_template,
-                max_length=project.max_response_length,
-                conversation_history=conversation_history,
-                metadata_context=metadata_context  # Добавляем метаданные если есть
-            )
-        
-        # Генерация ответа через LLM
-        # Получаем глобальные настройки моделей из БД
-        from app.models.llm_model import GlobalModelSettings
-        from sqlalchemy import select
-        # logger уже определен на уровне модуля
-        
-        settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
-        global_settings = settings_result.scalar_one_or_none()
-        
-        logger.info(f"[RAG SERVICE] Global settings from DB: primary={global_settings.primary_model_id if global_settings else 'None'}, fallback={global_settings.fallback_model_id if global_settings else 'None'}")
-        
-        # Определяем primary и fallback модели
-        # Приоритет: 1) модель проекта, 2) глобальные настройки из БД, 3) дефолты из .env
-        primary_model = None
-        fallback_model = None
-        
-        if project.llm_model:
-            # Если у проекта есть своя модель, используем её как primary
-            primary_model = project.llm_model
-            logger.info(f"[RAG SERVICE] Using project model: {primary_model}")
-            # Fallback берем из глобальных настроек БД
-            if global_settings and global_settings.fallback_model_id:
-                fallback_model = global_settings.fallback_model_id
-                logger.info(f"[RAG SERVICE] Using global fallback from DB: {fallback_model}")
             else:
-                # Если в БД нет fallback, используем дефолт из .env
-                from app.core.config import settings as app_settings
-                fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
-                logger.info(f"[RAG SERVICE] Using default fallback from .env: {fallback_model}")
-        else:
-            # Используем глобальные настройки из БД
-            if global_settings:
-                primary_model = global_settings.primary_model_id
-                fallback_model = global_settings.fallback_model_id
-                logger.info(f"[RAG SERVICE] Using global models from DB: primary={primary_model}, fallback={fallback_model}")
-            
-            # Если глобальных настроек нет или модели не установлены, используем дефолтные из .env
-            from app.core.config import settings as app_settings
-            if not primary_model:
-                primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
-                logger.info(f"[RAG SERVICE] Using default primary from .env: {primary_model}")
-            if not fallback_model:
-                fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
-                logger.info(f"[RAG SERVICE] Using default fallback from .env: {fallback_model}")
-        
-        # Создаем клиент с моделями
-        llm_client = OpenRouterClient(
-            model_primary=primary_model,
-            model_fallback=fallback_model
-        )
-        max_tokens = project.max_response_length // 4  # Приблизительная оценка токенов
-        
-        # Генерируем ответ
-        try:
-            raw_answer = await llm_client.chat_completion(
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=0.7
-            )
-            
-            # Проверяем, не является ли ответ отказом
-            answer_text = raw_answer.strip().lower()
-            refusal_phrases = [
-                "нет информации", "не могу ответить", "не нашел", 
-                "не найдено", "нет данных", "недостаточно информации",
-                "нет релевантной информации", "не удалось найти"
-            ]
-            
-            # Если ответ содержит отказ и у нас есть метаданные - генерируем сводку
-            if any(phrase in answer_text for phrase in refusal_phrases) and metadata_context:
-                logger.info(f"[RAG SERVICE] Answer contains refusal, generating document summary as fallback")
-                answer = await self._generate_document_summary_fallback(
+                # ВСЕГДА используем промпт проекта, даже если документов нет
+                # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+                # Построение промпта с контекстом (может быть пустым)
+                # chunks_for_prompt уже определен выше
+                
+                messages = self.prompt_builder.build_prompt(
                     question=question,
-                    metadata_context=metadata_context,
-                    project=project,
-                    llm_client=llm_client,
-                    max_tokens=max_tokens
-                )
-            else:
-                # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
-                answer = self.response_formatter.format_response(
-                    response=raw_answer,
+                    chunks=chunks_for_prompt,  # Может быть пустым списком
+                    prompt_template=project.prompt_template,
                     max_length=project.max_response_length,
-                    chunks=similar_chunks if 'similar_chunks' in locals() else []
+                    conversation_history=conversation_history,
+                    metadata_context=metadata_context  # Добавляем метаданные если есть
                 )
-        except Exception as llm_error:
-            logger.warning(f"[RAG SERVICE] LLM error: {llm_error}, trying aggressive fallback with all techniques")
-            # АГРЕССИВНЫЙ FALLBACK - используем все техники перед отказом
-            answer = None
             
-            # Fallback 1: Пытаемся получить метаданные и сгенерировать сводку
-            if not metadata_context:
-                try:
-                    from app.services.document_metadata_service import DocumentMetadataService
-                    metadata_service = DocumentMetadataService()
-                    documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
-                    if documents_metadata:
-                        metadata_context = metadata_service.create_metadata_context(documents_metadata)
-                except Exception as meta_error:
-                    logger.warning(f"[RAG SERVICE] Error getting metadata for fallback: {meta_error}")
+            # Генерация ответа через LLM
+            # Получаем глобальные настройки моделей из БД
+            from app.models.llm_model import GlobalModelSettings
+            from sqlalchemy import select
+            # logger уже определен на уровне модуля
             
-            if metadata_context:
-                try:
+            settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+            global_settings = settings_result.scalar_one_or_none()
+            
+            logger.info(f"[RAG SERVICE] Global settings from DB: primary={global_settings.primary_model_id if global_settings else 'None'}, fallback={global_settings.fallback_model_id if global_settings else 'None'}")
+            
+            # Определяем primary и fallback модели
+            # Приоритет: 1) модель проекта, 2) глобальные настройки из БД, 3) дефолты из .env
+            primary_model = None
+            fallback_model = None
+            
+            if project.llm_model:
+                # Если у проекта есть своя модель, используем её как primary
+                primary_model = project.llm_model
+                logger.info(f"[RAG SERVICE] Using project model: {primary_model}")
+                # Fallback берем из глобальных настроек БД
+                if global_settings and global_settings.fallback_model_id:
+                    fallback_model = global_settings.fallback_model_id
+                    logger.info(f"[RAG SERVICE] Using global fallback from DB: {fallback_model}")
+                else:
+                    # Если в БД нет fallback, используем дефолт из .env
+                    from app.core.config import settings as app_settings
+                    fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                    logger.info(f"[RAG SERVICE] Using default fallback from .env: {fallback_model}")
+            else:
+                # Используем глобальные настройки из БД
+                if global_settings:
+                    primary_model = global_settings.primary_model_id
+                    fallback_model = global_settings.fallback_model_id
+                    logger.info(f"[RAG SERVICE] Using global models from DB: primary={primary_model}, fallback={fallback_model}")
+                
+                # Если глобальных настроек нет или модели не установлены, используем дефолтные из .env
+                from app.core.config import settings as app_settings
+                if not primary_model:
+                    primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                    logger.info(f"[RAG SERVICE] Using default primary from .env: {primary_model}")
+                if not fallback_model:
+                    fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                    logger.info(f"[RAG SERVICE] Using default fallback from .env: {fallback_model}")
+            
+            # Создаем клиент с моделями
+            llm_client = OpenRouterClient(
+                model_primary=primary_model,
+                model_fallback=fallback_model
+            )
+            max_tokens = project.max_response_length // 4  # Приблизительная оценка токенов
+            
+            # Генерируем ответ
+            try:
+                raw_answer = await llm_client.chat_completion(
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=0.7
+                )
+                
+                # Проверяем, не является ли ответ отказом
+                answer_text = raw_answer.strip().lower()
+                refusal_phrases = [
+                    "нет информации", "не могу ответить", "не нашел", 
+                    "не найдено", "нет данных", "недостаточно информации",
+                    "нет релевантной информации", "не удалось найти"
+                ]
+                
+                # Если ответ содержит отказ и у нас есть метаданные - генерируем сводку
+                if any(phrase in answer_text for phrase in refusal_phrases) and metadata_context:
+                    logger.info(f"[RAG SERVICE] Answer contains refusal, generating document summary as fallback")
                     answer = await self._generate_document_summary_fallback(
                         question=question,
                         metadata_context=metadata_context,
@@ -552,39 +520,83 @@ class RAGService:
                         llm_client=llm_client,
                         max_tokens=max_tokens
                     )
-                except Exception as fallback_error:
-                    logger.warning(f"[RAG SERVICE] Document summary fallback failed: {fallback_error}")
-            
-            # Fallback 2: Если все еще нет ответа, используем AI агента для генерации ответа
-            if not answer:
-                try:
-                    answer = await self._generate_ai_agent_fallback(
-                        question=question,
-                        project=project,
-                        llm_client=llm_client,
-                        max_tokens=max_tokens,
-                        conversation_history=conversation_history
+                else:
+                    # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
+                    answer = self.response_formatter.format_response(
+                        response=raw_answer,
+                        max_length=project.max_response_length,
+                        chunks=similar_chunks if 'similar_chunks' in locals() else []
                     )
-                except Exception as ai_error:
-                    logger.warning(f"[RAG SERVICE] AI agent fallback failed: {ai_error}")
+            except Exception as llm_error:
+                logger.warning(f"[RAG SERVICE] LLM error: {llm_error}, trying aggressive fallback with all techniques")
+                # АГРЕССИВНЫЙ FALLBACK - используем все техники перед отказом
+                answer = None
+                
+                # Fallback 1: Пытаемся получить метаданные и сгенерировать сводку
+                if not metadata_context:
+                    try:
+                        from app.services.document_metadata_service import DocumentMetadataService
+                        metadata_service = DocumentMetadataService()
+                        documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
+                        if documents_metadata:
+                            metadata_context = metadata_service.create_metadata_context(documents_metadata)
+                    except Exception as meta_error:
+                        logger.warning(f"[RAG SERVICE] Error getting metadata for fallback: {meta_error}")
+                
+                if metadata_context:
+                    try:
+                        answer = await self._generate_document_summary_fallback(
+                            question=question,
+                            metadata_context=metadata_context,
+                            project=project,
+                            llm_client=llm_client,
+                            max_tokens=max_tokens
+                        )
+                    except Exception as fallback_error:
+                        logger.warning(f"[RAG SERVICE] Document summary fallback failed: {fallback_error}")
+                
+                # Fallback 2: Если все еще нет ответа, используем AI агента для генерации ответа
+                if not answer:
+                    try:
+                        answer = await self._generate_ai_agent_fallback(
+                            question=question,
+                            project=project,
+                            llm_client=llm_client,
+                            max_tokens=max_tokens,
+                            conversation_history=conversation_history
+                        )
+                    except Exception as ai_error:
+                        logger.warning(f"[RAG SERVICE] AI agent fallback failed: {ai_error}")
+                
+                # Fallback 3: Базовый ответ на основе названия проекта
+                if not answer:
+                    answer = await self._generate_basic_fallback(
+                        question=question,
+                        project=project
+                    )
+                
+                # Только в самом крайнем случае возвращаем сообщение об ошибке
+                if not answer:
+                    logger.error(f"[RAG SERVICE] All fallback mechanisms failed for question: {question}")
+                    answer = "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору."
             
-            # Fallback 3: Базовый ответ на основе названия проекта
-            if not answer:
-                answer = await self._generate_basic_fallback(
-                    question=question,
-                    project=project
-                )
+            # Сохранение сообщений в историю
+            await self._save_message(user_id, question, "user")
+            await self._save_message(user_id, answer, "assistant")
             
-            # Только в самом крайнем случае возвращаем сообщение об ошибке
+            return answer
+        except Exception as e:
+            logger.error(f"[RAG SERVICE] Error in generate_answer: {e}", exc_info=True)
+            # В случае критической ошибки возвращаем базовый ответ
             if not answer:
-                logger.error(f"[RAG SERVICE] All fallback mechanisms failed for question: {question}")
                 answer = "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору."
-        
-        # Сохранение сообщений в историю
-        await self._save_message(user_id, question, "user")
-        await self._save_message(user_id, answer, "assistant")
-        
-        return answer
+            # Сохраняем сообщения даже при ошибке
+            try:
+                await self._save_message(user_id, question, "user")
+                await self._save_message(user_id, answer, "assistant")
+            except:
+                pass
+            return answer
     
     async def _advanced_chunk_search(
         self,
