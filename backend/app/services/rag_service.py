@@ -29,6 +29,7 @@ class RAGService:
         self.llm_client = None  # Будет создан с учетом модели проекта
         self.prompt_builder = PromptBuilder()
         self.response_formatter = ResponseFormatter()
+        # logger уже определен на уровне модуля
     
     async def generate_answer(
         self,

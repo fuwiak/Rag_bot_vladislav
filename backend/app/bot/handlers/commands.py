@@ -48,12 +48,13 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
             project = project_result.scalar_one_or_none()
             
             if project:
-                # Сохраняем данные в состоянии
-                await state.update_data(
-                    project_id=str(project.id),
-                    user_id=str(existing_user.id)
-                )
-                await state.set_state(AuthStates.authorized)
+                       # Сохраняем данные в состоянии
+                       await state.update_data(
+                           project_id=str(project.id),
+                           user_id=str(existing_user.id),
+                           answer_mode="rag_mode"  # По умолчанию режим RAG
+                       )
+                       await state.set_state(AuthStates.authorized)
                 
                 welcome_text = f"👋 <b>Добро пожаловать обратно в проект «{project.name}»!</b>\n\n"
                 welcome_text += "Вы уже авторизованы. Можете:\n"

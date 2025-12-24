@@ -20,6 +20,8 @@ class AuthStates(StatesGroup):
     waiting_password = State()
     waiting_phone = State()
     authorized = State()
+    # Режим ответа: rag_mode (на основе документов) или general_mode (общие вопросы)
+    # По умолчанию rag_mode
 
 
 # Хранилище состояний (в production использовать Redis)
