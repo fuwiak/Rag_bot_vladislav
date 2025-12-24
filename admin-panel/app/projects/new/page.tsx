@@ -56,7 +56,7 @@ export default function NewProjectPage() {
         description: formData.description === '' ? null : formData.description,
       }
       
-      console.log('Sending project data:', dataToSend)
+      console.log('Sending project data:', JSON.stringify(dataToSend, null, 2))
       
       const response = await apiFetch('/api/projects', {
         method: 'POST',
