@@ -42,13 +42,13 @@ echo "Waiting for database..."\n\
 python -c "import asyncio, sys; sys.path.insert(0, '\''/app'\''); from app.core.database import wait_for_db; asyncio.run(wait_for_db(max_retries=10, retry_interval=2))"\n\
 echo "Applying Alembic migrations..."\n\
 cd /app\n\
-# Применяем миграции с подробным логированием\n\
-alembic upgrade head 2>&1 | tee /tmp/migration.log || {\n\
+# Применяем все head ревизии (если есть несколько веток)\n\
+alembic upgrade heads 2>&1 | tee /tmp/migration.log || {\n\
   echo "Migration failed, checking current state..."\n\
   alembic current 2>&1 || true\n\
   echo "Retrying migration..."\n\
   sleep 3\n\
-  alembic upgrade head 2>&1 | tee -a /tmp/migration.log || {\n\
+  alembic upgrade heads 2>&1 | tee -a /tmp/migration.log || {\n\
     echo "Migration failed again, trying to apply manually..."\n\
     python -c "\n\
 import asyncio\n\
