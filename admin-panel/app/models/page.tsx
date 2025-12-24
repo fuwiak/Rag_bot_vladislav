@@ -283,13 +283,17 @@ export default function ModelsPage() {
     try {
       const { apiFetch } = await import('../lib/api-helpers')
 
+      const requestData = {
+        model_id: testModelId,
+        messages: newMessages,
+        temperature: 0.7,
+      }
+      
+      console.log('Sending test request:', JSON.stringify(requestData, null, 2))
+
       const response = await apiFetch('/api/models/test', {
         method: 'POST',
-        body: JSON.stringify({
-          model_id: testModelId,
-          messages: newMessages,
-          temperature: 0.7,
-        }),
+        body: JSON.stringify(requestData),
       })
 
       if (response.ok) {
@@ -297,8 +301,10 @@ export default function ModelsPage() {
         // Добавляем ответ модели в историю
         setTestMessages([...newMessages, { role: 'assistant', content: data.response }])
       } else {
-        const errorData = await response.json()
-        alert(errorData.detail || 'Ошибка при отправке сообщения')
+        const errorData = await response.json().catch(() => ({ detail: 'Не удалось получить детали ошибки' }))
+        const errorMessage = errorData.detail || errorData.message || `Ошибка при отправке сообщения (статус: ${response.status})`
+        console.error('Error testing model:', errorData)
+        alert(errorMessage)
         // Удаляем последнее сообщение пользователя при ошибке
         setTestMessages(testMessages)
       }
