@@ -105,9 +105,9 @@ class BotService:
     
     def _get_projects_hash(self, projects):
         """Создать хеш состояния проектов для сравнения"""
-        # Создаем строку из ID проектов и их токенов
+        # Создаем строку из ID проектов, их токенов и bot_is_active
         project_data = [
-            (str(p.id), p.bot_token or "")
+            (str(p.id), p.bot_token or "", getattr(p, 'bot_is_active', 'false') or 'false')
             for p in projects
         ]
         return hash(tuple(sorted(project_data)))
