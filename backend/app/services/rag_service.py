@@ -356,8 +356,9 @@ class RAGService:
             from app.models.document import Document
             from app.services.document_summary_service import DocumentSummaryService
             
-            # Получаем документы проекта (безопасно, если поле summary отсутствует)
+            # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
             try:
+                # Пробуем обычный запрос
                 result = await self.db.execute(
                     select(Document)
                     .where(Document.project_id == project_id)
@@ -365,27 +366,37 @@ class RAGService:
                 )
                 documents = result.scalars().all()
             except Exception as db_error:
-                # Если ошибка из-за отсутствия поля summary, получаем документы без него
-                if "summary" in str(db_error).lower():
-                    logger.warning(f"[RAG SERVICE] Summary column not found, using content only")
+                # Если ошибка из-за отсутствия поля summary, используем raw SQL
+                error_str = str(db_error).lower()
+                if "summary" in error_str or "column" in error_str:
+                    logger.warning(f"[RAG SERVICE] Summary column not found in DB, using raw SQL query")
                     from sqlalchemy import text
-                    result = await self.db.execute(
-                        text("SELECT id, project_id, filename, content, file_type, created_at FROM documents WHERE project_id = :project_id LIMIT :limit"),
-                        {"project_id": project_id, "limit": limit * 2}
-                    )
-                    # Преобразуем результаты в объекты Document вручную
-                    documents = []
-                    for row in result:
-                        doc = Document()
-                        doc.id = row[0]
-                        doc.project_id = row[1]
-                        doc.filename = row[2]
-                        doc.content = row[3]
-                        doc.file_type = row[4]
-                        doc.created_at = row[5]
-                        doc.summary = None  # Поле отсутствует
-                        documents.append(doc)
+                    try:
+                        result = await self.db.execute(
+                            text("SELECT id, project_id, filename, content, file_type, created_at FROM documents WHERE project_id = :project_id LIMIT :limit"),
+                            {"project_id": str(project_id), "limit": limit * 2}
+                        )
+                        # Преобразуем результаты в объекты Document вручную
+                        documents = []
+                        for row in result:
+                            doc = Document()
+                            doc.id = row[0]
+                            doc.project_id = row[1]
+                            doc.filename = row[2]
+                            doc.content = row[3] if row[3] else ""
+                            doc.file_type = row[4]
+                            doc.created_at = row[5]
+                            # Поле summary отсутствует - устанавливаем None через setattr
+                            try:
+                                setattr(doc, 'summary', None)
+                            except:
+                                pass
+                            documents.append(doc)
+                    except Exception as sql_error:
+                        logger.error(f"[RAG SERVICE] Error with raw SQL query: {sql_error}")
+                        documents = []
                 else:
+                    # Другая ошибка - пробрасываем дальше
                     raise
             
             if not documents:
@@ -477,8 +488,9 @@ class RAGService:
                 from app.models.document import Document, DocumentChunk
                 from app.services.document_summary_service import DocumentSummaryService
                 
-                # Получаем документы проекта (без поля summary, если его нет в БД)
+                # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
                 try:
+                    # Пробуем обычный запрос
                     result = await self.db.execute(
                         select(Document)
                         .where(Document.project_id == project_id)
@@ -486,28 +498,38 @@ class RAGService:
                     )
                     documents = result.scalars().all()
                 except Exception as db_error:
-                    # Если ошибка из-за отсутствия поля summary, получаем документы без него
-                    if "summary" in str(db_error).lower():
-                        logger.warning(f"[RAG SERVICE] Summary column not found, using content only")
+                    # Если ошибка из-за отсутствия поля summary, используем raw SQL
+                    error_str = str(db_error).lower()
+                    if "summary" in error_str or "column" in error_str:
+                        logger.warning(f"[RAG SERVICE] Summary column not found in DB, using raw SQL query")
                         # Используем raw SQL для получения документов без summary
                         from sqlalchemy import text
-                        result = await self.db.execute(
-                            text("SELECT id, project_id, filename, content, file_type, created_at FROM documents WHERE project_id = :project_id LIMIT 10"),
-                            {"project_id": project_id}
-                        )
-                        # Преобразуем результаты в объекты Document вручную
-                        documents = []
-                        for row in result:
-                            doc = Document()
-                            doc.id = row[0]
-                            doc.project_id = row[1]
-                            doc.filename = row[2]
-                            doc.content = row[3]
-                            doc.file_type = row[4]
-                            doc.created_at = row[5]
-                            doc.summary = None  # Поле отсутствует
-                            documents.append(doc)
+                        try:
+                            result = await self.db.execute(
+                                text("SELECT id, project_id, filename, content, file_type, created_at FROM documents WHERE project_id = :project_id LIMIT 10"),
+                                {"project_id": str(project_id)}
+                            )
+                            # Преобразуем результаты в объекты Document вручную
+                            documents = []
+                            for row in result:
+                                doc = Document()
+                                doc.id = row[0]
+                                doc.project_id = row[1]
+                                doc.filename = row[2]
+                                doc.content = row[3] if row[3] else ""
+                                doc.file_type = row[4]
+                                doc.created_at = row[5]
+                                # Поле summary отсутствует - устанавливаем None через setattr
+                                try:
+                                    setattr(doc, 'summary', None)
+                                except:
+                                    pass
+                                documents.append(doc)
+                        except Exception as sql_error:
+                            logger.error(f"[RAG SERVICE] Error with raw SQL query: {sql_error}")
+                            documents = []
                     else:
+                        # Другая ошибка - пробрасываем дальше
                         raise
                 
                 if not documents:
