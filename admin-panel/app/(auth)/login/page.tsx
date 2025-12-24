@@ -185,8 +185,8 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const response = await fetch(`${backendUrl}/api/auth/login`, {
+      const { getApiUrl } = await import('../lib/api-helpers')
+      const response = await fetch(getApiUrl('/api/auth/login'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

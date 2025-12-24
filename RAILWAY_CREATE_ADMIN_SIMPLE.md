@@ -97,3 +97,6 @@ python -c "import asyncio; from create_admin_auto import create_admin_auto; asyn
 
 **Самый простой способ - через Railway Dashboard → Backend Service → Deployments → Run Command!**
 
+
+
+

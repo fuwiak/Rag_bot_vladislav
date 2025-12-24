@@ -40,3 +40,6 @@ python main.py
 - `requirements.txt` - зависимости Python
 - `Dockerfile` - образ для развертывания
 
+
+
+

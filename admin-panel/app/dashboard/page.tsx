@@ -23,8 +23,8 @@ export default function DashboardPage() {
 
   const fetchProjects = async () => {
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      const response = await fetch(`${backendUrl}/api/projects`, {
+      const { getApiUrl } = await import('../lib/api-helpers')
+      const response = await fetch(getApiUrl('/api/projects'), {
         headers: {
           'Content-Type': 'application/json',
         },

@@ -187,3 +187,6 @@ railway run --service backend python create_admin_auto.py
 
 **После выполнения всех шагов вход должен работать!**
 
+
+
+

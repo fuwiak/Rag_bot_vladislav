@@ -95,3 +95,6 @@ Frontend → https://ragbotvladislav-production-back.up.railway.app
 
 **Вывод: Не нужно ничего настраивать! Railway автоматически управляет портами для каждого сервиса независимо.**
 
+
+
+

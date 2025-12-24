@@ -106,3 +106,6 @@ curl -X POST https://ragbotvladislav-production-back.up.railway.app/api/auth/cre
 
 **Самый простой способ - использовать curl или онлайн инструмент для POST запроса!**
 
+
+
+

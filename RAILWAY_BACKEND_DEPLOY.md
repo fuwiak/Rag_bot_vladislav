@@ -206,3 +206,6 @@ railway run --service backend python create_admin_auto.py
 
 **Готово!** Backend должен быть развернут и работать на Railway.
 
+
+
+

@@ -26,3 +26,6 @@ if hasattr(bcrypt_module, '_load_backend_mixin'):
 
 print("✅ bcrypt compatibility patch applied")
 
+
+
+

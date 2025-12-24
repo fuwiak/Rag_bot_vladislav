@@ -161,3 +161,6 @@ railway run --service backend python create_admin_auto.py
 
 **Важно:** Убедитесь, что frontend обращается к `/api/login`, а не просто `/login`!
 
+
+
+

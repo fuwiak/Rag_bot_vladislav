@@ -93,3 +93,6 @@ railway run --service backend python create_admin_auto.py
 
 **После создания volume и подключения его к backend, создайте администратора и вход должен работать!**
 
+
+
+

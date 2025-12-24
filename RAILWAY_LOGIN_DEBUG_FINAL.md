@@ -110,3 +110,6 @@ CORS_ORIGINS=https://ragbotvladislav-production.up.railway.app
 
 **После перезапуска Frontend и Backend - проверьте консоль браузера!**
 
+
+
+

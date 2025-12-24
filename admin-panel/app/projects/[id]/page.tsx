@@ -86,10 +86,9 @@ export default function ProjectDetailPage() {
   const fetchProjectBasicData = async () => {
     setLoading(true)
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      
+      const { getApiUrl } = await import('../../lib/api-helpers')
 
-      const projectRes = await fetch(`${backendUrl}/api/projects/${projectId}`, {
+      const projectRes = await fetch(getApiUrl(`/api/projects/${projectId}`), {
         headers: { 'Content-Type': 'application/json' },
       })
 
@@ -119,10 +118,9 @@ export default function ProjectDetailPage() {
   // Lazy loading документов
   const fetchDocuments = async () => {
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      
+      const { getApiUrl } = await import('../../lib/api-helpers')
 
-      const documentsRes = await fetch(`${backendUrl}/api/documents/${projectId}`, {
+      const documentsRes = await fetch(getApiUrl(`/api/documents/${projectId}`), {
         headers: { 'Content-Type': 'application/json' },
       })
 
@@ -138,10 +136,9 @@ export default function ProjectDetailPage() {
   // Lazy loading пользователей
   const fetchUsers = async () => {
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      
+      const { getApiUrl } = await import('../../lib/api-helpers')
 
-      const usersRes = await fetch(`${backendUrl}/api/users/project/${projectId}`, {
+      const usersRes = await fetch(getApiUrl(`/api/users/project/${projectId}`), {
         headers: { 'Content-Type': 'application/json' },
       })
 
@@ -169,10 +166,9 @@ export default function ProjectDetailPage() {
     }
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      
+      const { getApiUrl } = await import('../../lib/api-helpers')
 
-      const response = await fetch(`${backendUrl}/api/projects/${projectId}`, {
+      const response = await fetch(getApiUrl(`/api/projects/${projectId}`), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
       })
@@ -214,10 +210,9 @@ export default function ProjectDetailPage() {
     setSaving(true)
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      
+      const { getApiUrl } = await import('../../lib/api-helpers')
 
-      const response = await fetch(`${backendUrl}/api/projects/${projectId}`, {
+      const response = await fetch(getApiUrl(`/api/projects/${projectId}`), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -622,9 +617,9 @@ export default function ProjectDetailPage() {
                             return
                           }
                           try {
-                            const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+                            const { getApiUrl } = await import('../../lib/api-helpers')
                             
-                            const response = await fetch(`${backendUrl}/api/documents/${doc.id}`, {
+                            const response = await fetch(getApiUrl(`/api/documents/${doc.id}`), {
                               method: 'DELETE',
                               headers: { 'Content-Type': 'application/json' },
                             })
@@ -696,9 +691,9 @@ export default function ProjectDetailPage() {
                           onClick={async () => {
                             const newStatus = user.status === 'active' ? 'blocked' : 'active'
                             try {
-                              const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+                              const { getApiUrl } = await import('../../lib/api-helpers')
                               
-                              const response = await fetch(`${backendUrl}/api/users/${user.id}/status`, {
+                              const response = await fetch(getApiUrl(`/api/users/${user.id}/status`), {
                                 method: 'PATCH',
                                 headers: {
                                   'Content-Type': 'application/json',
@@ -726,9 +721,9 @@ export default function ProjectDetailPage() {
                           onClick={async () => {
                             if (confirm(`Удалить пользователя ${user.username || user.phone}?`)) {
                               try {
-                                const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+                                const { getApiUrl } = await import('../../lib/api-helpers')
                                 
-                                const response = await fetch(`${backendUrl}/api/users/${user.id}`, {
+                                const response = await fetch(getApiUrl(`/api/users/${user.id}`), {
                                   method: 'DELETE',
                                   headers: { 'Content-Type': 'application/json' },
                                 })
@@ -805,8 +800,7 @@ export default function ProjectDetailPage() {
                   
                   setUploading(true)
                   try {
-                    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-                    
+                    const { getApiUrl } = await import('../../lib/api-helpers')
                     
                     const formData = new FormData()
                     uploadFiles.forEach(file => {
@@ -859,9 +853,9 @@ export default function ProjectDetailPage() {
               setAddingUser(true)
 
               try {
-                const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+                const { getApiUrl } = await import('../../lib/api-helpers')
                 
-                const response = await fetch(`${backendUrl}/api/users/project/${projectId}`, {
+                const response = await fetch(getApiUrl(`/api/users/project/${projectId}`), {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',

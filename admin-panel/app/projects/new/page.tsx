@@ -38,9 +38,9 @@ export default function NewProjectPage() {
     setLoading(true)
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+      const { getApiUrl } = await import('../lib/api-helpers')
       
-      const response = await fetch(`${backendUrl}/api/projects`, {
+      const response = await fetch(getApiUrl('/api/projects'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

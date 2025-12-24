@@ -187,3 +187,6 @@ railway variables --service backend
 
 **Главное: убедитесь, что `DATABASE_URL` установлен БЕЗ кавычек и с 4 слешами!**
 
+
+
+

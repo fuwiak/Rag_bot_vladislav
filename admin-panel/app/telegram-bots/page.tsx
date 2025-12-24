@@ -33,9 +33,9 @@ export default function TelegramBotsPage() {
   const fetchBotsInfo = async () => {
     try {
       setError('')
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+      const { getApiUrl } = await import('../lib/api-helpers')
 
-      const response = await fetch(`${backendUrl}/api/bots/info`, {
+      const response = await fetch(getApiUrl('/api/bots/info'), {
         headers: { 'Content-Type': 'application/json' },
       })
 
@@ -76,10 +76,10 @@ export default function TelegramBotsPage() {
     setError('')
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+      const { getApiUrl } = await import('../lib/api-helpers')
       const token = localStorage.getItem('token')
 
-      const response = await fetch(`${backendUrl}/api/bots/${selectedProjectId}/verify`, {
+      const response = await fetch(getApiUrl(`/api/bots/${selectedProjectId}/verify`), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -125,9 +125,9 @@ export default function TelegramBotsPage() {
 
   const handleStopBot = async (projectId: string) => {
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+      const { getApiUrl } = await import('../lib/api-helpers')
 
-      const response = await fetch(`${backendUrl}/api/bots/${projectId}/stop`, {
+      const response = await fetch(getApiUrl(`/api/bots/${projectId}/stop`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })

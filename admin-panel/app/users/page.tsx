@@ -51,10 +51,10 @@ export default function UsersPage() {
   const fetchData = async () => {
     try {
       setError('')
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+      const { getApiUrl } = await import('../lib/api-helpers')
 
       // Загружаем все проекты
-      const projectsRes = await fetch(`${backendUrl}/api/projects`, {
+      const projectsRes = await fetch(getApiUrl('/api/projects'), {
         headers: { 'Content-Type': 'application/json' },
       })
 
@@ -101,9 +101,9 @@ export default function UsersPage() {
     }
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+      const { getApiUrl } = await import('../lib/api-helpers')
       
-      const response = await fetch(`${backendUrl}/api/users/${userId}`, {
+      const response = await fetch(getApiUrl(`/api/users/${userId}`), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
       })
@@ -120,9 +120,9 @@ export default function UsersPage() {
   const handleStatusChange = async (userId: string, currentStatus: string) => {
     const newStatus = currentStatus === 'active' ? 'blocked' : 'active'
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+      const { getApiUrl } = await import('../lib/api-helpers')
       
-      const response = await fetch(`${backendUrl}/api/users/${userId}/status`, {
+      const response = await fetch(getApiUrl(`/api/users/${userId}/status`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -161,8 +161,7 @@ export default function UsersPage() {
     setError('')
 
     try {
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-      
+      const { getApiUrl } = await import('../lib/api-helpers')
       
       const updateData: any = {}
       if (editUserPhone !== editingUser.phone) updateData.phone = editUserPhone
@@ -378,9 +377,9 @@ export default function UsersPage() {
               }
 
               try {
-                const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+                const { getApiUrl } = await import('../lib/api-helpers')
                 
-                const response = await fetch(`${backendUrl}/api/users/project/${newUserProjectId}`, {
+                const response = await fetch(getApiUrl(`/api/users/project/${newUserProjectId}`), {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',

@@ -44,3 +44,6 @@ async def create_admin_auto():
 if __name__ == "__main__":
     asyncio.run(create_admin_auto())
 
+
+
+

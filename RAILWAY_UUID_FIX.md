@@ -46,3 +46,6 @@ WARNING: Admin user 'admin' created automatically with password 'admin'
 
 **Попробуйте войти: `admin` / любой пароль (если DISABLE_PASSWORD_CHECK=true)**
 
+
+
+
