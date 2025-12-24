@@ -137,8 +137,7 @@ class RAGService:
         if (strategy.get("use_summaries", True) and not chunk_texts) or is_content_question:
             if is_content_question:
                 logger.info(f"[RAG SERVICE] Content question detected, using summaries strategy")
-                # Для вопросов о содержании не используем чанки, только summaries
-            chunk_texts = []
+                # Для вопросов о содержании не используем чанки, только summaries                chunk_texts = []
             else:
                 logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
             
