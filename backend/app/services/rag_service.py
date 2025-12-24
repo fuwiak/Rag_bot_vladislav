@@ -142,7 +142,7 @@ class RAGService:
             if is_content_question:
                 logger.info(f"[RAG SERVICE] Content question detected, using summaries strategy")
                 # Для вопросов о содержании не используем чанки, только summaries
-                chunk_texts = []
+            chunk_texts = []
             else:
                 logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
             
@@ -419,12 +419,12 @@ class RAGService:
                 # Вставляем историю перед финальным вопросом
                 messages = [messages[0]] + recent_history + [messages[1]]
         else:
-            # ВСЕГДА используем промпт проекта, даже если документов нет
-            # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
-            # Построение промпта с контекстом (может быть пустым)
+        # ВСЕГДА используем промпт проекта, даже если документов нет
+        # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+        # Построение промпта с контекстом (может быть пустым)
             # chunks_for_prompt уже определен выше
             
-            messages = self.prompt_builder.build_prompt(
+        messages = self.prompt_builder.build_prompt(
             question=question,
                 chunks=chunks_for_prompt,  # Может быть пустым списком
             prompt_template=project.prompt_template,
@@ -487,11 +487,11 @@ class RAGService:
         
         # Генерируем ответ
         try:
-            raw_answer = await llm_client.chat_completion(
+        raw_answer = await llm_client.chat_completion(
             messages=messages,
             max_tokens=max_tokens,
             temperature=0.7
-            )
+        )
         
             # Проверяем, не является ли ответ отказом
             answer_text = raw_answer.strip().lower()
@@ -512,10 +512,10 @@ class RAGService:
                     max_tokens=max_tokens
                 )
             else:
-                # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
-                answer = self.response_formatter.format_response(
-                    response=raw_answer,
-                    max_length=project.max_response_length,
+        # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
+        answer = self.response_formatter.format_response(
+            response=raw_answer,
+            max_length=project.max_response_length,
                     chunks=similar_chunks if 'similar_chunks' in locals() else []
                 )
         except Exception as llm_error:
@@ -1359,7 +1359,7 @@ class RAGService:
             
             # Только в самом крайнем случае возвращаем финальное сообщение
             if not answer:
-                return "В загруженных документах нет информации по этому вопросу."
+            return "В загруженных документах нет информации по этому вопросу."
             
             return answer
         
@@ -1442,6 +1442,298 @@ class RAGService:
         await self._save_message(user_id, answer, "assistant")
         
         return answer
+    
+    async def _generate_followup_questions(
+        self,
+        question: str,
+        sample_chunks: List[Dict],
+        project_id: UUID
+    ) -> List[str]:
+        """
+        Генерирует follow-up вопросы на основе найденных фрагментов для итеративного поиска
+        
+        Args:
+            question: Оригинальный вопрос
+            sample_chunks: Примеры найденных чанков
+            project_id: ID проекта
+            
+        Returns:
+            Список follow-up вопросов
+        """
+        try:
+            from app.llm.openrouter_client import OpenRouterClient
+            from app.models.llm_model import GlobalModelSettings
+            from sqlalchemy import select
+            
+            # Получаем модель для генерации вопросов
+            settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+            global_settings = settings_result.scalar_one_or_none()
+            
+            primary_model = global_settings.primary_model_id if global_settings else None
+            fallback_model = global_settings.fallback_model_id if global_settings else None
+            
+            if not primary_model:
+                from app.core.config import settings as app_settings
+                primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
+            
+            llm_client = OpenRouterClient(
+                model_primary=primary_model,
+                model_fallback=fallback_model
+            )
+            
+            # Формируем контекст из найденных чанков
+            chunks_text = "\n\n".join([chunk.get("text", "")[:300] for chunk in sample_chunks[:3]])
+            
+            followup_prompt = f"""На основе следующего вопроса и найденных фрагментов документов, сгенерируй 2-3 дополнительных вопроса для более глубокого поиска информации.
+
+Оригинальный вопрос: {question}
+
+Найденные фрагменты:
+{chunks_text}
+
+Сгенерируй вопросы, которые помогут найти более релевантную информацию. Каждый вопрос с новой строки, без нумерации."""
+            
+            messages = [
+                {"role": "system", "content": "Ты помощник, который генерирует дополнительные вопросы для улучшения поиска информации."},
+                {"role": "user", "content": followup_prompt}
+            ]
+            
+            response = await llm_client.chat_completion(
+                messages=messages,
+                max_tokens=200,
+                temperature=0.7
+            )
+            
+            # Парсим вопросы
+            followup_questions = [line.strip() for line in response.strip().split("\n") if line.strip() and len(line.strip()) > 10]
+            return followup_questions[:3]  # Максимум 3 вопроса
+            
+        except Exception as e:
+            logger.warning(f"[RAG SERVICE] Follow-up questions generation failed: {e}")
+            return []
+    
+    async def _process_full_documents_with_subagent(
+        self,
+        question: str,
+        project,
+        llm_client=None,
+        max_tokens: int = 500
+    ) -> Optional[str]:
+        """
+        Sub-agent для обработки целых документов как fallback механизм
+        
+        Args:
+            question: Вопрос пользователя
+            project: Объект проекта
+            llm_client: Клиент LLM (если None, создается новый)
+            max_tokens: Максимальное количество токенов
+            
+        Returns:
+            Ответ на основе целых документов или None
+        """
+        try:
+            from app.models.document import Document
+            from sqlalchemy import select
+            
+            # Получаем документы проекта
+            result = await self.db.execute(
+                select(Document)
+                .where(Document.project_id == project.id)
+                .where(Document.content.isnot(None))
+                .where(Document.content != "")
+                .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                .limit(3)  # Обрабатываем максимум 3 документа
+            )
+            documents = result.scalars().all()
+            
+            if not documents:
+                return None
+            
+            # Создаем клиент LLM если не передан
+            if llm_client is None:
+                from app.llm.openrouter_client import OpenRouterClient
+                from app.models.llm_model import GlobalModelSettings
+                from sqlalchemy import select
+                
+                settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+                global_settings = settings_result.scalar_one_or_none()
+                
+                primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
+                fallback_model = global_settings.fallback_model_id if global_settings else None
+                
+                if not primary_model:
+                    from app.core.config import settings as app_settings
+                    primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                    fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
+                
+                llm_client = OpenRouterClient(
+                    model_primary=primary_model,
+                    model_fallback=fallback_model
+                )
+            
+            # Обрабатываем каждый документ отдельно (sub-agent подход)
+            document_responses = []
+            for doc in documents:
+                if doc.content and len(doc.content) > 100:
+                    # Берем первые 4000 символов из каждого документа (для экономии токенов)
+                    doc_content = doc.content[:4000]
+                    if len(doc.content) > 4000:
+                        doc_content += "..."
+                    
+                    subagent_prompt = f"""Вопрос пользователя: {question}
+
+Полный документ '{doc.filename}':
+{doc_content}
+
+Ответь на вопрос на основе этого документа. Если информации нет, так и скажи."""
+                    
+                    messages = [
+                        {"role": "system", "content": "Ты - sub-agent, который анализирует целые документы для ответа на вопросы. Отвечай кратко и по делу."},
+                        {"role": "user", "content": subagent_prompt}
+                    ]
+                    
+                    try:
+                        response = await llm_client.chat_completion(
+                            messages=messages,
+                            max_tokens=max_tokens // len(documents),  # Делим токены между документами
+                            temperature=0.7
+                        )
+                        
+                        # Проверяем, не является ли ответ отказом
+                        response_lower = response.strip().lower()
+                        refusal_phrases = ["нет информации", "не могу ответить", "не нашел", "не найдено"]
+                        if not any(phrase in response_lower for phrase in refusal_phrases):
+                            document_responses.append(f"Из документа '{doc.filename}': {response.strip()}")
+                    except Exception as doc_error:
+                        logger.debug(f"[RAG SERVICE] Sub-agent failed for doc {doc.filename}: {doc_error}")
+                        continue
+            
+            if document_responses:
+                combined_response = "\n\n".join(document_responses)
+                logger.info(f"[RAG SERVICE] Sub-agent processed {len(document_responses)} documents")
+                return combined_response
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"[RAG SERVICE] Sub-agent fallback failed: {e}")
+            return None
+    
+    async def _late_chunking_fallback(
+        self,
+        question: str,
+        project,
+        llm_client=None,
+        max_tokens: int = 500
+    ) -> Optional[str]:
+        """
+        Late Chunking fallback - обработка через long-context embedding
+        
+        Args:
+            question: Вопрос пользователя
+            project: Объект проекта
+            llm_client: Клиент LLM (если None, создается новый)
+            max_tokens: Максимальное количество токенов
+            
+        Returns:
+            Ответ на основе late chunking или None
+        """
+        try:
+            from app.models.document import Document
+            from sqlalchemy import select
+            import numpy as np
+            
+            # Получаем документы проекта
+            result = await self.db.execute(
+                select(Document)
+                .where(Document.project_id == project.id)
+                .where(Document.content.isnot(None))
+                .where(Document.content != "")
+                .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                .limit(2)  # Обрабатываем максимум 2 документа
+            )
+            documents = result.scalars().all()
+            
+            if not documents:
+                return None
+            
+            # Создаем эмбеддинг вопроса
+            question_embedding = await self.embedding_service.create_embedding(question)
+            
+            # Для каждого документа создаем эмбеддинг всего документа (late chunking)
+            best_doc = None
+            best_score = 0.0
+            
+            for doc in documents:
+                if doc.content and len(doc.content) > 100:
+                    # Создаем эмбеддинг всего документа (первые 8000 символов для экономии)
+                    doc_content = doc.content[:8000]
+                    doc_embedding = await self.embedding_service.create_embedding(doc_content)
+                    
+                    # Вычисляем косинусное сходство
+                    similarity = np.dot(question_embedding, doc_embedding) / (
+                        np.linalg.norm(question_embedding) * np.linalg.norm(doc_embedding)
+                    )
+                    
+                    if similarity > best_score:
+                        best_score = similarity
+                        best_doc = doc
+            
+            # Если нашли релевантный документ, используем его
+            if best_doc and best_score > 0.3:
+                if llm_client is None:
+                    from app.llm.openrouter_client import OpenRouterClient
+                    from app.models.llm_model import GlobalModelSettings
+                    from sqlalchemy import select
+                    
+                    settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+                    global_settings = settings_result.scalar_one_or_none()
+                    
+                    primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
+                    fallback_model = global_settings.fallback_model_id if global_settings else None
+                    
+                    if not primary_model:
+                        from app.core.config import settings as app_settings
+                        primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                        fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
+                    
+                    llm_client = OpenRouterClient(
+                        model_primary=primary_model,
+                        model_fallback=fallback_model
+                    )
+                
+                # Используем первые 5000 символов документа
+                doc_content = best_doc.content[:5000]
+                if len(best_doc.content) > 5000:
+                    doc_content += "..."
+                
+                late_chunking_prompt = f"""Вопрос пользователя: {question}
+
+Документ '{best_doc.filename}' (релевантность: {best_score:.2f}):
+{doc_content}
+
+Ответь на вопрос на основе этого документа."""
+                
+                messages = [
+                    {"role": "system", "content": "Ты - ассистент, который отвечает на вопросы на основе документов. Отвечай кратко и информативно."},
+                    {"role": "user", "content": late_chunking_prompt}
+                ]
+                
+                response = await llm_client.chat_completion(
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=0.7
+                )
+                
+                logger.info(f"[RAG SERVICE] Late chunking found relevant document with score {best_score:.2f}")
+                return response.strip()
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"[RAG SERVICE] Late chunking fallback failed: {e}")
+            return None
     
     async def _get_user(self, user_id: UUID) -> Optional[User]:
         """Получить пользователя"""
@@ -1646,12 +1938,12 @@ class RAGService:
                 # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
                 try:
                     # Пробуем обычный запрос
-                    result = await self.db.execute(
-                        select(Document)
-                        .where(Document.project_id == project_id)
-                        .limit(10)
-                    )
-                    documents = result.scalars().all()
+                result = await self.db.execute(
+                    select(Document)
+                    .where(Document.project_id == project_id)
+                    .limit(10)
+                )
+                documents = result.scalars().all()
                 except Exception as db_error:
                     # Если ошибка из-за отсутствия поля summary, используем raw SQL
                     error_str = str(db_error).lower()
@@ -1757,7 +2049,7 @@ class RAGService:
                     logger.warning(f"[RAG SERVICE] Error getting metadata for questions: {metadata_error}")
                 
                 if not chunk_texts:
-                    return []
+                return []
             
             # Объединяем чанки в контекст
             context = "\n\n".join(chunk_texts[:10])  # Максимум 10 чанков
