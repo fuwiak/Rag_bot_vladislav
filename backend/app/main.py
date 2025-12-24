@@ -2,6 +2,7 @@
 Главный файл FastAPI приложения
 """
 import logging
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -37,6 +38,63 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(0.5)
         except Exception as e:
             logger.warning(f"Database initialization failed: {e}")
+        
+        # Применяем миграции Alembic автоматически
+        try:
+            import subprocess
+            import sys
+            logger.info("Applying Alembic migrations...")
+            result = subprocess.run(
+                ["alembic", "upgrade", "head"],
+                cwd="/app" if os.path.exists("/app") else ".",
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            if result.returncode == 0:
+                logger.info("✅ Migrations applied successfully")
+            else:
+                logger.warning(f"Migration output: {result.stdout}\n{result.stderr}")
+                # Пробуем применить миграции вручную для summary колонки
+                try:
+                    from app.core.database import AsyncSessionLocal
+                    from sqlalchemy import text
+                    async with AsyncSessionLocal() as db:
+                        # Проверяем наличие колонки summary
+                        result = await db.execute(text("""
+                            SELECT column_name FROM information_schema.columns 
+                            WHERE table_name = 'documents' AND column_name = 'summary'
+                        """))
+                        if result.first() is None:
+                            # Добавляем колонку summary если её нет
+                            await db.execute(text("""
+                                ALTER TABLE documents 
+                                ADD COLUMN summary TEXT
+                            """))
+                            await db.commit()
+                            logger.info("✅ Summary column added manually")
+                        else:
+                            logger.info("Summary column already exists")
+                except Exception as manual_error:
+                    logger.warning(f"Manual migration failed: {manual_error}")
+        except Exception as migration_error:
+            logger.warning(f"Automatic migration failed: {migration_error}, trying manual migration...")
+            # Fallback: ручное применение миграций
+            try:
+                from app.core.database import AsyncSessionLocal
+                from sqlalchemy import text
+                async with AsyncSessionLocal() as db:
+                    # Проверяем и добавляем колонку summary если её нет
+                    result = await db.execute(text("""
+                        SELECT column_name FROM information_schema.columns 
+                        WHERE table_name = 'documents' AND column_name = 'summary'
+                    """))
+                    if result.first() is None:
+                        await db.execute(text("ALTER TABLE documents ADD COLUMN summary TEXT"))
+                        await db.commit()
+                        logger.info("✅ Summary column added via manual migration")
+            except Exception as manual_error:
+                logger.warning(f"Manual migration also failed: {manual_error}")
         
         # Потом создаем администратора - игнорируем все ошибки
         try:
