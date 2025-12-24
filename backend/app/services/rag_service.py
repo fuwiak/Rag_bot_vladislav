@@ -1683,7 +1683,7 @@ class RAGService:
                     logger.warning(f"[RAG SERVICE] Error getting metadata for questions: {metadata_error}")
                 
                 if not chunk_texts:
-                return []
+                    return []
             
             # Объединяем чанки в контекст
             context = "\n\n".join(chunk_texts[:10])  # Максимум 10 чанков
