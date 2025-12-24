@@ -31,9 +31,37 @@ cd /app/backend\n\
 python -c "import asyncio, sys; sys.path.insert(0, '\''/app/backend'\''); from app.core.database import wait_for_db; asyncio.run(wait_for_db(max_retries=10, retry_interval=2))"\n\
 echo "Applying Alembic migrations..."\n\
 alembic upgrade head 2>&1 || {\n\
-  echo "Migration failed, retrying..."\n\
-  sleep 2\n\
-  alembic upgrade head 2>&1 || echo "Warning: Migration failed, but continuing..."\n\
+  echo "Migration failed, trying manual migration..."\n\
+  python -c "\n\
+import asyncio\n\
+import sys\n\
+sys.path.insert(0, '\''/app/backend'\'')\n\
+from sqlalchemy import text\n\
+from app.core.database import AsyncSessionLocal\n\
+async def apply_manual():\n\
+    async with AsyncSessionLocal() as db:\n\
+        try:\n\
+            result = await db.execute(text(\"\"\"\n\
+                SELECT column_name FROM information_schema.columns \n\
+                WHERE table_name = '\''projects'\'' AND column_name = '\''bot_is_active'\''\n\
+            \"\"\"))\n\
+            if result.first() is None:\n\
+                await db.execute(text(\"\"\"\n\
+                    ALTER TABLE projects \n\
+                    ADD COLUMN bot_is_active VARCHAR(10) DEFAULT '\''false'\'' NOT NULL\n\
+                \"\"\"))\n\
+                await db.execute(text(\"\"\"\n\
+                    UPDATE projects SET bot_is_active = '\''true'\'' WHERE bot_token IS NOT NULL\n\
+                \"\"\"))\n\
+                await db.commit()\n\
+                print(\"✅ Manual migration applied successfully!\")\n\
+            else:\n\
+                print(\"Column bot_is_active already exists\")\n\
+        except Exception as e:\n\
+            print(f\"Manual migration error: {e}\")\n\
+            await db.rollback()\n\
+asyncio.run(apply_manual())\n\
+    "\n\
 }\n\
 echo "Starting Telegram Bots Service..."\n\
 cd /app\n\
