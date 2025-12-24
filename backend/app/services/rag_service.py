@@ -138,9 +138,9 @@ class RAGService:
                 chunk_texts = summaries  # summaries в формате dict с text, source, score
                 logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
         
-        # Если агент рекомендует использовать метаданные или контента все еще нет
-        if (strategy.get("use_metadata", True) and not chunk_texts) or strategy.get("question_type") == "содержание":
-            logger.info(f"[RAG SERVICE] Using metadata strategy (AI Agent recommendation)")
+        # ВСЕГДА получаем метаданные, если их еще нет (для использования в промпте)
+        if not metadata_context:
+            logger.info(f"[RAG SERVICE] Getting metadata for context")
             try:
                 from app.services.document_metadata_service import DocumentMetadataService
                 metadata_service = DocumentMetadataService()
@@ -152,6 +152,10 @@ class RAGService:
                     logger.info(f"[RAG SERVICE] Created metadata context from {len(documents_metadata)} documents")
             except Exception as metadata_error:
                 logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
+        
+        # Если агент рекомендует использовать метаданные и нет чанков - логируем это
+        if strategy.get("use_metadata", True) and not chunk_texts and metadata_context:
+            logger.info(f"[RAG SERVICE] Using metadata strategy (AI Agent recommendation) - no chunks available")
         
         # Для вопросов о содержании используем простой промпт из рабочего скрипта
         if is_content_question:
