@@ -123,13 +123,13 @@ class RAGService:
             if strategy.get("use_chunks", True) and collection_exists:
                 logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
                 found_chunks, found_similar = await self._advanced_chunk_search(
-                question=question,
-                collection_name=collection_name,
-                project_id=project.id,
-                top_k=top_k,
-                strategy=strategy
+                    question=question,
+                    collection_name=collection_name,
+                    project_id=project.id,
+                    top_k=top_k,
+                    strategy=strategy
                 )
-                    if found_chunks:
+                if found_chunks:
                     chunk_texts = found_chunks
                     similar_chunks = found_similar
                     logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} chunks using advanced search techniques")
@@ -148,17 +148,17 @@ class RAGService:
             
             # Если агент рекомендует использовать summaries или это вопрос о содержании
             if (strategy.get("use_summaries", True) and not chunk_texts) or is_content_question:
-            if is_content_question:
-                logger.info(f"[RAG SERVICE] Content question detected, using summaries strategy")
-                # Для вопросов о содержании не используем чанки, только summaries
-                chunk_texts = []
-            else:
-                logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
-            
-            summaries = await self._get_document_summaries(project.id, top_k * 2)  # Берем больше summaries для содержания
-            if summaries:
-                chunk_texts = summaries  # summaries в формате dict с text, source, score
-                logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
+                if is_content_question:
+                    logger.info(f"[RAG SERVICE] Content question detected, using summaries strategy")
+                    # Для вопросов о содержании не используем чанки, только summaries
+                    chunk_texts = []
+                else:
+                    logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
+                
+                summaries = await self._get_document_summaries(project.id, top_k * 2)  # Берем больше summaries для содержания
+                if summaries:
+                    chunk_texts = summaries  # summaries в формате dict с text, source, score
+                    logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
             
             # ВСЕГДА получаем метаданные для использования в промпте (даже если есть чанки)
             # Это позволяет отвечать на вопросы о файлах и ключевых словах
