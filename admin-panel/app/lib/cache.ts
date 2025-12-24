@@ -73,12 +73,14 @@ class DataCache {
    */
   cleanup(): void {
     const now = Date.now()
-    for (const [key, entry] of this.cache.entries()) {
+    const keysToDelete: string[] = []
+    this.cache.forEach((entry, key) => {
       // Удаляем только очень старые записи (старше 2x TTL)
       if (now - entry.timestamp > entry.ttl * 2) {
-        this.cache.delete(key)
+        keysToDelete.push(key)
       }
-    }
+    })
+    keysToDelete.forEach(key => this.cache.delete(key))
   }
 }
 
