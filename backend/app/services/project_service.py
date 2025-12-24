@@ -20,7 +20,7 @@ class ProjectService:
     
     async def get_all_projects(self) -> List[Project]:
         """Получить все проекты (оптимизировано - без загрузки relationships)"""
-        from sqlalchemy.orm import selectinload, noload
+        from sqlalchemy.orm import noload
         
         # Загружаем проекты без relationships для экономии памяти
         # Используем noload чтобы явно не загружать users и documents
@@ -28,11 +28,6 @@ class ProjectService:
             select(Project).options(noload(Project.users), noload(Project.documents))
         )
         projects = list(result.scalars().all())
-        
-        # Явно освобождаем память от relationships если они были загружены
-        for project in projects:
-            if hasattr(project, '_sa_instance_state'):
-                project._sa_instance_state.expunge_all()
         
         return projects
     
