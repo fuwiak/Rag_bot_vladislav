@@ -19,43 +19,48 @@ class ProjectService:
         self.collections_manager = CollectionsManager()
     
     async def get_all_projects(self) -> List[Project]:
-        """Получить все проекты (оптимизировано - без загрузки relationships, с лимитом)"""
+        """Получить все проекты (оптимизировано - загружаем только нужные поля)"""
         from sqlalchemy.orm import noload
+        from sqlalchemy import select
         import gc
         import logging
         
         logger = logging.getLogger(__name__)
         
         try:
-            # Загружаем проекты без relationships для экономии памяти
-            # Используем noload чтобы явно не загружать users и documents
-            # Добавляем лимит на количество проектов (50) для предотвращения out of memory
+            # КРИТИЧНО: Загружаем только нужные поля, не всю модель
+            # Это предотвращает загрузку больших полей (prompt_template, access_password) в память
             result = await self.db.execute(
-                select(Project)
-                .options(noload(Project.users), noload(Project.documents))
+                select(
+                    Project.id,
+                    Project.name,
+                    Project.description,
+                    Project.created_at,
+                    Project.updated_at
+                )
                 .limit(50)
                 .order_by(Project.created_at.desc())
             )
-            projects = list(result.scalars().all())
             
-            # Ограничиваем размер больших полей для экономии памяти
-            # Это критично для предотвращения out of memory
-            for project in projects:
-                # Ограничиваем description до 200 символов
-                if project.description and len(project.description) > 200:
-                    project.description = project.description[:200] + "..."
-                # НЕ загружаем prompt_template в списке - это очень большое поле
-                # Устанавливаем минимальное значение для экономии памяти
-                if project.prompt_template:
-                    project.prompt_template = ""  # Не загружаем в списке
-                # Не загружаем access_password в списке
-                if project.access_password:
-                    project.access_password = ""  # Не загружаем в списке
+            # Преобразуем результат в объекты Project с минимальными данными
+            projects = []
+            for row in result.all():
+                # Создаем минимальный объект Project только с нужными полями
+                project = Project()
+                project.id = row.id
+                project.name = row.name
+                # Ограничиваем description до 200 символов сразу при загрузке
+                project.description = (row.description[:200] + "...") if row.description and len(row.description) > 200 else row.description
+                project.created_at = row.created_at
+                project.updated_at = row.updated_at
+                # НЕ загружаем prompt_template, access_password и другие большие поля
+                projects.append(project)
             
             # Явно освобождаем память
+            del result
             gc.collect()
             
-            logger.info(f"Loaded {len(projects)} projects")
+            logger.info(f"Loaded {len(projects)} projects (minimal fields only)")
             return projects
         except Exception as e:
             logger.error(f"Error loading projects: {e}", exc_info=True)
