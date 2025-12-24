@@ -253,8 +253,9 @@ class RAGService:
                             doc.file_type = row[3]
                             documents.append(doc)
                     
-                    # Используем DocumentChunker для разбивки на чанки
-                    chunker = DocumentChunker(chunk_size=1000, chunk_overlap=200)
+                    # Используем DocumentChunker для разбивки на чанки с большим overlap (50-75%)
+                    # Overlapping Chunks z kontekstem - улучшенный chunking
+                    chunker = DocumentChunker(chunk_size=1000, chunk_overlap=500)  # 50% overlap
                     question_keywords = set(re.findall(r'\b\w+\b', question.lower()))
                     question_keywords = {w for w in question_keywords if len(w) > 3}
                     
@@ -688,11 +689,11 @@ class RAGService:
                 except Exception as e:
                     logger.warning(f"[RAG SERVICE] Query expansion failed: {e}")
             
-            # ТЕХНИКА 3: Iteracyjne wyszukiwanie z reformulacją query через LLM
+            # ТЕХНИКА 3: Iteracyjne wyszukiwanie z reformulacją query через LLM + follow-up вопросы
             if len(all_found_chunks) < top_k:
-                logger.info(f"[RAG SERVICE] Technique 3: Iterative search with query reformulation")
+                logger.info(f"[RAG SERVICE] Technique 3: Iterative search with query reformulation and follow-up questions")
                 try:
-                    # Переформулируем запрос через LLM для лучшего поиска
+                    # Первая итерация: переформулируем запрос через LLM
                     reformulated_queries = await self._reformulate_query(question, project_id)
                     
                     for reformulated in reformulated_queries:
@@ -728,6 +729,50 @@ class RAGService:
                         except Exception as e:
                             logger.debug(f"[RAG SERVICE] Reformulated query '{reformulated}' failed: {e}")
                             continue
+                    
+                    # Вторая итерация: генерируем follow-up вопросы на основе найденных фрагментов
+                    if len(all_found_chunks) > 0 and len(all_found_chunks) < top_k:
+                        logger.info(f"[RAG SERVICE] Generating follow-up questions based on found chunks")
+                        try:
+                            # Берем первые несколько найденных чанков для анализа
+                            sample_chunks = list(all_found_chunks.values())[:3]
+                            follow_up_queries = await self._generate_followup_questions(question, sample_chunks, project_id)
+                            
+                            for follow_up in follow_up_queries:
+                                if len(all_found_chunks) >= top_k * 2:
+                                    break
+                                
+                                try:
+                                    follow_embedding = await self.embedding_service.create_embedding(follow_up)
+                                    follow_chunks = await self.vector_store.search_similar(
+                                        collection_name=collection_name,
+                                        query_vector=follow_embedding,
+                                        limit=top_k // 2,
+                                        score_threshold=0.3
+                                    )
+                                    
+                                    for chunk in follow_chunks:
+                                        payload = chunk.get("payload", {})
+                                        text = payload.get("chunk_text", "")
+                                        if text and len(text) > 20:
+                                            text_key = text[:100]
+                                            if text_key not in all_found_chunks:
+                                                score = chunk.get("score", 0.3) * 0.8
+                                                all_found_chunks[text_key] = {
+                                                    "text": text,
+                                                    "source": payload.get("filename", payload.get("source_url", "Документ")),
+                                                    "score": score,
+                                                    "method": "iterative_followup"
+                                                }
+                                                similar_chunks.append({
+                                                    "payload": payload,
+                                                    "score": score
+                                                })
+                                except Exception as e:
+                                    logger.debug(f"[RAG SERVICE] Follow-up query '{follow_up}' failed: {e}")
+                                    continue
+                        except Exception as e:
+                            logger.warning(f"[RAG SERVICE] Follow-up questions generation failed: {e}")
                     
                     if all_found_chunks:
                         logger.info(f"[RAG SERVICE] Iterative search found {len(all_found_chunks)} total unique chunks")
@@ -1286,8 +1331,37 @@ class RAGService:
             except Exception as e2:
                 logger.warning(f"[RAG SERVICE FAST] Aggressive fallback failed: {e2}")
             
-            # Только в самом крайнем случае возвращаем базовое сообщение
-            return "К сожалению, не удалось найти информацию в документах. Документы могут быть еще в процессе обработки. Попробуйте задать вопрос позже или уточните ваш запрос."
+            # Fallback 4: Sub-agents dla całych документов - обработка целых документов
+            if not answer:
+                logger.info(f"[RAG SERVICE FAST] Trying sub-agent for full document processing")
+                try:
+                    answer = await self._process_full_documents_with_subagent(
+                        question=question,
+                        project=project,
+                        llm_client=None,
+                        max_tokens=500
+                    )
+                except Exception as subagent_error:
+                    logger.warning(f"[RAG SERVICE FAST] Sub-agent fallback failed: {subagent_error}")
+            
+            # Fallback 5: Late Chunking - обработка через long-context embedding
+            if not answer:
+                logger.info(f"[RAG SERVICE FAST] Trying late chunking approach")
+                try:
+                    answer = await self._late_chunking_fallback(
+                        question=question,
+                        project=project,
+                        llm_client=None,
+                        max_tokens=500
+                    )
+                except Exception as late_chunking_error:
+                    logger.warning(f"[RAG SERVICE FAST] Late chunking fallback failed: {late_chunking_error}")
+            
+            # Только в самом крайнем случае возвращаем финальное сообщение
+            if not answer:
+                return "В загруженных документах нет информации по этому вопросу."
+            
+            return answer
         
         # Извлечение текстов чанков
         chunk_texts = [chunk["payload"]["chunk_text"] for chunk in similar_chunks[:2]]  # Только 2 чанка
