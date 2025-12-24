@@ -14,6 +14,15 @@ interface BotInfo {
   bot_first_name: string | null
   is_active: boolean
   users_count: number
+  llm_model: string | null
+  description: string | null
+  documents_count: number
+}
+
+interface LLMModel {
+  id: string
+  name: string
+  description: string | null
 }
 
 export default function TelegramBotsPage() {
@@ -23,7 +32,11 @@ export default function TelegramBotsPage() {
   const [error, setError] = useState('')
   const [showTokenModal, setShowTokenModal] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState('')
+  const [selectedProject, setSelectedProject] = useState<BotInfo | null>(null)
   const [newBotToken, setNewBotToken] = useState('')
+  const [selectedModelId, setSelectedModelId] = useState<string>('')
+  const [availableModels, setAvailableModels] = useState<LLMModel[]>([])
+  const [loadingModels, setLoadingModels] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
@@ -60,11 +73,31 @@ export default function TelegramBotsPage() {
     }
   }
 
-  const handleAddBot = (projectId: string) => {
+  const handleAddBot = async (projectId: string) => {
+    const project = botsInfo.find(b => b.project_id === projectId)
     setSelectedProjectId(projectId)
-    setNewBotToken('')
+    setSelectedProject(project || null)
+    setNewBotToken(project?.bot_token || '')
+    setSelectedModelId(project?.llm_model || '')
     setShowTokenModal(true)
     setError('')
+    await fetchAvailableModels()
+  }
+
+  const fetchAvailableModels = async () => {
+    setLoadingModels(true)
+    try {
+      const { apiFetch } = await import('../lib/api-helpers')
+      const response = await apiFetch('/api/models/available')
+      if (response.ok) {
+        const data = await response.json()
+        setAvailableModels(data.models || [])
+      }
+    } catch (err) {
+      console.error('Error fetching models:', err)
+    } finally {
+      setLoadingModels(false)
+    }
   }
 
   const handleVerifyToken = async () => {
@@ -79,19 +112,34 @@ export default function TelegramBotsPage() {
     try {
       const { apiFetch } = await import('../lib/api-helpers')
 
-      const response = await apiFetch(`/api/bots/${selectedProjectId}/verify`, {
+      // Обновляем токен бота
+      const tokenResponse = await apiFetch(`/api/bots/${selectedProjectId}/verify`, {
         method: 'POST',
         body: JSON.stringify({ bot_token: newBotToken.trim() }),
       })
 
-      if (response.ok) {
-        setShowTokenModal(false)
-        setNewBotToken('')
-        await fetchBotsInfo()
-      } else {
-        const errorData = await response.json()
+      if (!tokenResponse.ok) {
+        const errorData = await tokenResponse.json()
         setError(errorData.detail || 'Ошибка проверки токена')
+        setSubmitting(false)
+        return
       }
+
+      // Обновляем модель LLM если выбрана
+      if (selectedModelId) {
+        const modelResponse = await apiFetch(`/api/models/project/${selectedProjectId}/assign?model_id=${encodeURIComponent(selectedModelId)}`, {
+          method: 'POST',
+        })
+        if (!modelResponse.ok) {
+          console.warn('Failed to assign model:', await modelResponse.json())
+          // Не блокируем успех, если модель не удалось установить
+        }
+      }
+
+      setShowTokenModal(false)
+      setNewBotToken('')
+      setSelectedModelId('')
+      await fetchBotsInfo()
     } catch (err) {
       setError('Ошибка подключения к серверу')
     } finally {
@@ -267,7 +315,7 @@ export default function TelegramBotsPage() {
                             ? 'bg-yellow-100 text-yellow-800'
                             : 'bg-gray-100 text-gray-800'
                         }`}>
-                          {bot.is_active ? 'Активен' : bot.bot_token ? 'Остановлен' : 'Не настроен'}
+                          {bot.is_active ? 'Активен' : bot.bot_token ? 'Настроен' : 'Не настроен'}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -284,26 +332,11 @@ export default function TelegramBotsPage() {
                             </button>
                           ) : (
                             <>
-                              {!bot.is_active ? (
-                                <button
-                                  onClick={() => handleStartBot(bot.project_id)}
-                                  className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-colors text-sm"
-                                >
-                                  Запустить
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleStopBot(bot.project_id)}
-                                  className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-colors text-sm"
-                                >
-                                  Остановить
-                                </button>
-                              )}
                               <button
                                 onClick={() => handleAddBot(bot.project_id)}
                                 className="px-3 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors text-sm"
                               >
-                                Изменить токен
+                                Настроить
                               </button>
                             </>
                           )}
@@ -426,7 +459,9 @@ export default function TelegramBotsPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-fb-text">Добавить токен бота</h2>
+              <h2 className="text-xl font-bold text-fb-text">
+                {selectedProject?.bot_token ? 'Настроить бота' : 'Добавить токен бота'}
+              </h2>
               <a
                 href="https://t.me/BotFather"
                 target="_blank"
@@ -459,13 +494,27 @@ export default function TelegramBotsPage() {
                 </ol>
               </div>
 
+              {/* Информация о проекте */}
+              {selectedProject && (
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <h3 className="font-semibold text-gray-900 mb-2">Информация о проекте</h3>
+                  {selectedProject.description && (
+                    <p className="text-sm text-gray-700 mb-2">{selectedProject.description}</p>
+                  )}
+                  <div className="flex items-center space-x-4 text-sm text-gray-600">
+                    <span>📄 Документов: <strong>{selectedProject.documents_count || 0}</strong></span>
+                    <span>👥 Пользователей: <strong>{selectedProject.users_count || 0}</strong></span>
+                  </div>
+                </div>
+              )}
+
               {/* Поле для токена */}
               <div className="bg-fb-blue bg-opacity-5 border-2 border-fb-blue rounded-lg p-4">
                 <label className="block text-sm font-bold text-fb-blue mb-3 flex items-center">
                   <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
                   </svg>
-                  ВСТАВЬТЕ ТОКЕН БОТА СЮДА:
+                  ТОКЕН БОТА:
                 </label>
                 <input
                   type="text"
@@ -481,6 +530,38 @@ export default function TelegramBotsPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   <span>Токен должен выглядеть как: <code className="bg-gray-100 px-1 rounded font-mono">123456789:ABCdefGHIjklMNOpqrsTUVwxyz</code> (две части, разделенные двоеточием)</span>
+                </p>
+              </div>
+
+              {/* Выбор модели LLM */}
+              <div className="bg-purple-50 border-2 border-purple-300 rounded-lg p-4">
+                <label className="block text-sm font-bold text-purple-700 mb-3 flex items-center">
+                  <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                  </svg>
+                  МОДЕЛЬ LLM (опционально):
+                </label>
+                {loadingModels ? (
+                  <div className="text-sm text-gray-600">Загрузка моделей...</div>
+                ) : (
+                  <select
+                    value={selectedModelId}
+                    onChange={(e) => setSelectedModelId(e.target.value)}
+                    className="block w-full border-2 border-purple-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-fb-text bg-white"
+                  >
+                    <option value="">Использовать глобальную модель (по умолчанию)</option>
+                    {availableModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name} {model.description ? `- ${model.description}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <p className="text-xs text-purple-700 mt-3 flex items-start">
+                  <svg className="w-4 h-4 mr-1 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Выберите модель для генерации ответов. Если не выбрано, будет использоваться глобальная модель из настроек.</span>
                 </p>
               </div>
 

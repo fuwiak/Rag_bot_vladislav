@@ -29,6 +29,9 @@ class BotInfoResponse(BaseModel):
     bot_first_name: Optional[str] = None
     is_active: bool = False
     users_count: int = 0
+    llm_model: Optional[str] = None
+    description: Optional[str] = None
+    documents_count: int = 0
 
 
 @router.get("/info", response_model=List[BotInfoResponse])
@@ -70,6 +73,19 @@ async def get_all_bots_info(
         del result
         gc.collect()
         
+        # Получаем количество документов для всех проектов одним запросом
+        from app.models.document import Document
+        if projects:
+            project_ids = [p.id for p in projects]
+            docs_result = await db.execute(
+                select(Document.project_id, func.count(Document.id))
+                .where(Document.project_id.in_(project_ids))
+                .group_by(Document.project_id)
+            )
+            documents_counts = {row[0]: row[1] for row in docs_result.all()}
+        else:
+            documents_counts = {}
+        
         for project in projects:
             # Бот считается активным, если есть токен
             # Бот-сервис автоматически подхватит изменения
@@ -80,7 +96,10 @@ async def get_all_bots_info(
                 project_name=project.name,
                 bot_token=project.bot_token,
                 users_count=users_counts.get(project.id, 0),
-                is_active=is_active
+                is_active=is_active,
+                llm_model=project.llm_model,
+                description=project.description,
+                documents_count=documents_counts.get(project.id, 0)
             )
             
             # КРИТИЧНО: НЕ делаем запросы к Telegram API в списке
