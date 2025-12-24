@@ -70,6 +70,8 @@ class ProjectService:
     async def get_project_by_id(self, project_id: UUID) -> Optional[Project]:
         """Получить проект по ID (оптимизировано - без загрузки relationships)"""
         from sqlalchemy.orm import noload
+        import logging
+        logger = logging.getLogger(__name__)
         
         # Загружаем проект без relationships для экономии памяти
         result = await self.db.execute(
@@ -77,7 +79,14 @@ class ProjectService:
             .where(Project.id == project_id)
             .options(noload(Project.users), noload(Project.documents))
         )
-        return result.scalar_one_or_none()
+        project = result.scalar_one_or_none()
+        
+        if project:
+            logger.info(f"[GET PROJECT BY ID] Project {project_id} found: bot_token={'SET' if project.bot_token else 'NULL'}")
+        else:
+            logger.warning(f"[GET PROJECT BY ID] Project {project_id} not found")
+        
+        return project
     
     async def create_project(self, project_data: ProjectCreate) -> Project:
         """Создать новый проект"""

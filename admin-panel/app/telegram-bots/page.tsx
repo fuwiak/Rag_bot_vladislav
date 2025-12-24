@@ -214,18 +214,32 @@ export default function TelegramBotsPage() {
         console.log('[BOT TOKEN] No model selected, skipping model update')
       }
 
-      // Обновляем список ботов ПЕРЕД закрытием модального окна
-      console.log('[BOT TOKEN] Fetching updated bots info...')
-      await fetchBotsInfo()
-      console.log('[BOT TOKEN] Bots info fetched, current botsInfo:', botsInfo)
-      
-      // Закрываем модальное окно
+      // Закрываем модальное окно сначала
       console.log('[BOT TOKEN] Closing modal...')
       setShowTokenModal(false)
       setNewBotToken('')
       setSelectedModelId('')
       setSelectedProject(null)
       setError('')
+      
+      // Небольшая задержка для гарантии, что БД обновилась
+      console.log('[BOT TOKEN] Waiting 500ms before fetching updated bots info...')
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      // Обновляем список ботов ПОСЛЕ закрытия модального окна
+      console.log('[BOT TOKEN] Fetching updated bots info...')
+      await fetchBotsInfo()
+      
+      // Проверяем, что данные обновились
+      console.log('[BOT TOKEN] Checking if bot token was saved...')
+      const updatedBots = botsInfo
+      const updatedBot = updatedBots.find(b => b.project_id === selectedProjectId)
+      console.log('[BOT TOKEN] Updated bot data:', updatedBot)
+      if (updatedBot) {
+        console.log('[BOT TOKEN] Bot token in updated list:', updatedBot.bot_token ? updatedBot.bot_token.substring(0, 10) + '...' : 'NULL')
+      } else {
+        console.warn('[BOT TOKEN] Bot not found in updated list!')
+      }
       
       // Показываем сообщение об успехе
       console.log('[BOT TOKEN] Showing success message')
@@ -367,7 +381,19 @@ export default function TelegramBotsPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-fb-gray-dark">
-                  {botsInfo.map((bot) => (
+                  {botsInfo.map((bot) => {
+                    // Логирование для отладки
+                    if (process.env.NODE_ENV === 'development') {
+                      console.log('[RENDER] Rendering bot:', {
+                        project_id: bot.project_id,
+                        project_name: bot.project_name,
+                        bot_token: bot.bot_token ? 'SET' : 'NULL',
+                        bot_username: bot.bot_username,
+                        bot_url: bot.bot_url
+                      })
+                    }
+                    
+                    return (
                     <tr key={bot.project_id} className="hover:bg-fb-gray transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <Link
@@ -407,6 +433,8 @@ export default function TelegramBotsPage() {
                           <span className="text-sm text-fb-text-secondary">Бот не настроен</span>
                         )}
                       </td>
+                    )
+                  })}
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-fb-text-secondary">
                         {bot.users_count}
                       </td>
