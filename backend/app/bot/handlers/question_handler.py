@@ -92,12 +92,12 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                 logger.error(f"[QUESTION HANDLER] RAG error for user {user_id}: {rag_error}, using LLM fallback", exc_info=True)
                 use_fallback = True
             
-            # Fallback: используем прямой LLM без RAG
+            # Fallback: используем прямой LLM, но ВСЕГДА с настройками проекта и промптом
             if use_fallback or not answer:
-                logger.warning(f"[QUESTION HANDLER] ⚠️ FALLBACK MODE: Using direct LLM without RAG for user {user_id}, question: {question[:100]}")
+                logger.warning(f"[QUESTION HANDLER] ⚠️ FALLBACK MODE: RAG failed, using LLM with project settings for user {user_id}, question: {question[:100]}")
                 
                 try:
-                    # Получаем проект для определения модели
+                    # Получаем проект для использования его настроек и промпта
                     from app.models.user import User
                     from app.models.project import Project
                     from sqlalchemy import select
@@ -114,7 +114,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                     if not project:
                         raise ValueError("Project not found")
                     
-                    # Определяем модель LLM
+                    # Определяем модель LLM (приоритет: модель проекта > глобальная)
                     from app.models.llm_model import GlobalModelSettings
                     settings_result = await db.execute(select(GlobalModelSettings).limit(1))
                     global_settings = settings_result.scalar_one_or_none()
@@ -134,43 +134,54 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                     if not fallback_model:
                         fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
                     
-                    logger.info(f"[QUESTION HANDLER] FALLBACK: Using model {primary_model} for user {user_id}")
+                    logger.info(f"[QUESTION HANDLER] FALLBACK: Using model {primary_model} with project prompt template for user {user_id}")
                     
                     # Получаем историю диалога
                     conversation_history = await rag_service._get_conversation_history(user_id, limit=10)
                     
-                    # Формируем сообщения для LLM
-                    messages = []
-                    for msg in conversation_history:
-                        messages.append({
-                            "role": msg["role"],
-                            "content": msg["content"]
-                        })
-                    # Добавляем текущий вопрос
-                    messages.append({
-                        "role": "user",
-                        "content": question
-                    })
+                    # ВАЖНО: Используем промпт проекта даже в fallback режиме
+                    # Создаем промпт с пустым контекстом (документы недоступны), но с настройками проекта
+                    from app.llm.prompt_builder import PromptBuilder
+                    prompt_builder = PromptBuilder()
                     
-                    # Используем прямой LLM без RAG
+                    # Используем промпт проекта с пустым контекстом
+                    messages = prompt_builder.build_prompt(
+                        question=question,
+                        chunks=[],  # Пустой список - документы недоступны
+                        prompt_template=project.prompt_template,
+                        max_length=project.max_response_length,
+                        conversation_history=conversation_history
+                    )
+                    
+                    logger.info(f"[QUESTION HANDLER] FALLBACK: Using project prompt template, max_length={project.max_response_length}, messages={len(messages)}")
+                    
+                    # Используем LLM с настройками проекта
                     from app.llm.openrouter_client import OpenRouterClient
                     llm_client = OpenRouterClient(
                         model_primary=primary_model,
                         model_fallback=fallback_model
                     )
                     
-                    logger.info(f"[QUESTION HANDLER] FALLBACK: Sending request to LLM with {len(messages)} messages")
+                    logger.info(f"[QUESTION HANDLER] FALLBACK: Sending request to LLM with project settings")
                     raw_answer = await llm_client.chat_completion(
                         messages=messages,
-                        max_tokens=min(project.max_response_length, 1000),
+                        max_tokens=min(project.max_response_length // 4, 1000),  # Примерно 1 токен = 4 символа
                         temperature=0.7
                     )
                     
-                    answer = raw_answer.strip()
+                    # Форматируем ответ с учетом max_response_length проекта
+                    from app.llm.response_formatter import ResponseFormatter
+                    formatter = ResponseFormatter()
+                    answer = formatter.format_response(
+                        response=raw_answer.strip(),
+                        max_length=project.max_response_length,
+                        chunks=None  # Нет чанков в fallback режиме
+                    )
+                    
                     if not answer:
                         answer = "Извините, не удалось сгенерировать ответ. Попробуйте переформулировать вопрос."
                     
-                    logger.info(f"[QUESTION HANDLER] FALLBACK: LLM response received, length: {len(answer)}")
+                    logger.info(f"[QUESTION HANDLER] FALLBACK: LLM response received, length: {len(answer)}, max_length: {project.max_response_length}")
                     
                 except Exception as fallback_error:
                     logger.error(f"[QUESTION HANDLER] FALLBACK also failed for user {user_id}: {fallback_error}", exc_info=True)

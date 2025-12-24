@@ -68,21 +68,21 @@ class RAGService:
             score_threshold=0.5
         )
         
-        # Если релевантных чанков нет, возвращаем стандартный ответ
-        if not similar_chunks or len(similar_chunks) == 0:
-            answer = "В загруженных документах нет информации по этому вопросу."
-        else:
-            # Извлечение текстов чанков
+        # Извлечение текстов чанков (может быть пустым)
+        chunk_texts = []
+        if similar_chunks and len(similar_chunks) > 0:
             chunk_texts = [chunk["payload"]["chunk_text"] for chunk in similar_chunks]
-            
-            # Построение промпта
-            messages = self.prompt_builder.build_prompt(
-                question=question,
-                chunks=chunk_texts,
-                prompt_template=project.prompt_template,
-                max_length=project.max_response_length,
-                conversation_history=conversation_history
-            )
+        
+        # ВСЕГДА используем промпт проекта, даже если документов нет
+        # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+        # Построение промпта с контекстом (может быть пустым)
+        messages = self.prompt_builder.build_prompt(
+            question=question,
+            chunks=chunk_texts,  # Может быть пустым списком
+            prompt_template=project.prompt_template,
+            max_length=project.max_response_length,
+            conversation_history=conversation_history
+        )
             
             # Генерация ответа через LLM
             # Получаем глобальные настройки моделей
