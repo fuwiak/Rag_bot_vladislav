@@ -366,17 +366,26 @@ async def upload_documents(
             
             documents.append(document)
             
-            # Запускаем обработку через BackgroundTasks (выполнится после отправки ответа)
-            # Передаем путь к временному файлу вместо содержимого в памяти
-            logger.info(f"[Upload] Scheduling background processing for document {document.id}, temp_file: {temp_path}")
-            background_tasks.add_task(
-                process_document_async_from_file,
-                document.id, 
-                project_id, 
-                temp_path,  # Путь к файлу вместо содержимого
-                file.filename,
-                file_type
-            )
+            # Запускаем обработку в фоне через asyncio.create_task
+            # Это позволяет обработке выполняться полностью асинхронно, не блокируя ответ
+            import asyncio
+            logger.info(f"[Upload] Scheduling async background processing for document {document.id}, temp_file: {temp_path}")
+            
+            # Создаем задачу, которая будет выполняться независимо от основного запроса
+            async def process_in_background():
+                try:
+                    await process_document_async_from_file(
+                        document.id, 
+                        project_id, 
+                        temp_path,
+                        file.filename,
+                        file_type
+                    )
+                except Exception as e:
+                    logger.error(f"[Upload] Background processing error for document {document.id}: {e}", exc_info=True)
+            
+            # Запускаем задачу в фоне (не ждем её завершения)
+            asyncio.create_task(process_in_background())
         except HTTPException:
             # Если ошибка размера, удаляем временный файл если был создан
             if temp_file and os.path.exists(temp_path):

@@ -100,7 +100,12 @@ class Settings(BaseSettings):
         """Parse CORS_ORIGINS from comma-separated string or list"""
         if isinstance(v, str):
             # Split by comma and strip whitespace
-            return [origin.strip() for origin in v.split(',') if origin.strip()]
+            origins = [origin.strip() for origin in v.split(',') if origin.strip()]
+            # Логируем для отладки
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Parsed CORS origins: {origins}")
+            return origins
         return v
     
     class Config:
