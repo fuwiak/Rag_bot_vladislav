@@ -106,8 +106,12 @@ class RAGService:
         collection_name = f"project_{project.id}"
         collection_exists = await self.vector_store.collection_exists(collection_name)
         
-        # Если агент рекомендует использовать чанки и они доступны
-        if strategy.get("use_chunks", True) and collection_exists:
+        # Для вопросов о содержании - приоритет summaries
+        question_lower = question.lower()
+        is_content_question = any(word in question_lower for word in ["содержание", "содержание", "обзор", "что в", "что есть", "список", "перечисли"])
+        
+        # Если агент рекомендует использовать чанки и они доступны (но не для вопросов о содержании)
+        if strategy.get("use_chunks", True) and collection_exists and not is_content_question:
             logger.info(f"[RAG SERVICE] Using chunks strategy (AI Agent recommendation)")
             question_embedding = await self.embedding_service.create_embedding(question)
             similar_chunks = await self.vector_store.search_similar(
@@ -121,15 +125,15 @@ class RAGService:
                 chunk_texts = [chunk.get("payload", {}).get("chunk_text", "") for chunk in similar_chunks if chunk.get("payload", {}).get("chunk_text")]
                 logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} chunks from vector search")
         
-        # Если агент рекомендует использовать summaries или чанков нет
-        if strategy.get("use_summaries", True) and not chunk_texts:
-            logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
+        # Если вопрос о содержании или агент рекомендует использовать summaries
+        if is_content_question or (strategy.get("use_summaries", True) and not chunk_texts):
+            logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation or content question)")
             chunk_texts = await self._get_document_summaries(project.id, top_k)
             if chunk_texts:
                 logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
         
         # Если агент рекомендует использовать метаданные или контента все еще нет
-        if (strategy.get("use_metadata", True) and not chunk_texts) or strategy.get("question_type") == "содержание":
+        if (strategy.get("use_metadata", True) and not chunk_texts) or (is_content_question and not chunk_texts):
             logger.info(f"[RAG SERVICE] Using metadata strategy (AI Agent recommendation)")
             try:
                 from app.services.document_metadata_service import DocumentMetadataService

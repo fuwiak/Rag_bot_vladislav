@@ -4,35 +4,33 @@ AI агент для определения стратегии ответа на
 Использует легкий BERT для русского языка для улучшения анализа
 """
 import logging
+import re
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
-# Пробуем загрузить легкий BERT для русского языка (опционально)
+# Пробуем загрузить легкий BERT для русского языка через spaCy (опционально)
 try:
-    from transformers import AutoTokenizer, AutoModel
-    import torch
-    BERT_AVAILABLE = True
-    
-    # Используем легкую модель для русского языка
+    import spacy
+    SPACY_AVAILABLE = True
     try:
-        # Пробуем загрузить легкую русскую модель
-        bert_model_name = "cointegrated/rubert-tiny2"  # Очень легкая модель для русского
-        bert_tokenizer = AutoTokenizer.from_pretrained(bert_model_name)
-        bert_model = AutoModel.from_pretrained(bert_model_name)
-        bert_model.eval()  # Режим инференса
-        logger.info(f"[RAG AGENT] Loaded BERT model: {bert_model_name}")
-    except Exception as e:
-        logger.warning(f"[RAG AGENT] Could not load Russian BERT model: {e}")
-        bert_model = None
-        bert_tokenizer = None
-        BERT_AVAILABLE = False
+        # Пробуем загрузить русскую модель spaCy (легкая)
+        nlp_ru = spacy.load("ru_core_news_sm")
+        logger.info("[RAG AGENT] Loaded Russian spaCy model for keyword extraction")
+    except OSError:
+        # Если русской модели нет, пробуем английскую
+        try:
+            nlp_ru = spacy.load("en_core_web_sm")
+            logger.info("[RAG AGENT] Loaded English spaCy model (Russian not available)")
+        except OSError:
+            nlp_ru = None
+            SPACY_AVAILABLE = False
+            logger.warning("[RAG AGENT] spaCy models not available, using simple extraction")
 except ImportError:
-    BERT_AVAILABLE = False
-    bert_model = None
-    bert_tokenizer = None
-    logger.warning("[RAG AGENT] transformers not available, BERT features disabled")
+    SPACY_AVAILABLE = False
+    nlp_ru = None
+    logger.warning("[RAG AGENT] spaCy not installed, using simple extraction")
 
 
 class RAGAgent:
@@ -40,12 +38,11 @@ class RAGAgent:
     
     def __init__(self, llm_client):
         self.llm_client = llm_client
-        self.bert_model = bert_model if BERT_AVAILABLE else None
-        self.bert_tokenizer = bert_tokenizer if BERT_AVAILABLE else None
+        self.nlp = nlp_ru if SPACY_AVAILABLE and nlp_ru else None
     
-    def extract_keywords_with_bert(self, text: str, max_keywords: int = 5) -> List[str]:
+    def extract_keywords_with_spacy(self, text: str, max_keywords: int = 5) -> List[str]:
         """
-        Извлекает ключевые слова из текста используя BERT (если доступен)
+        Извлекает ключевые слова из текста используя spaCy (если доступен)
         
         Args:
             text: Текст для анализа
@@ -54,45 +51,29 @@ class RAGAgent:
         Returns:
             Список ключевых слов
         """
-        if not self.bert_model or not self.bert_tokenizer:
+        if not self.nlp:
             return []
         
         try:
-            import torch.nn.functional as F
+            doc = self.nlp(text[:500])  # Ограничиваем длину для скорости
             
-            # Токенизируем текст
-            inputs = self.bert_tokenizer(
-                text,
-                return_tensors="pt",
-                max_length=128,
-                truncation=True,
-                padding=True
-            )
-            
-            # Получаем эмбеддинги
-            with torch.no_grad():
-                outputs = self.bert_model(**inputs)
-                # Используем [CLS] токен для получения представления текста
-                embeddings = outputs.last_hidden_state[:, 0, :]
-            
-            # Простое извлечение: используем важные токены
-            # В реальности можно использовать более сложные методы
-            tokens = self.bert_tokenizer.convert_ids_to_tokens(inputs['input_ids'][0])
-            
-            # Фильтруем специальные токены и получаем слова
             keywords = []
-            for token in tokens:
-                if token not in ['[CLS]', '[SEP]', '[PAD]', '[UNK]'] and not token.startswith('##'):
-                    clean_token = token.replace('##', '').strip()
-                    if len(clean_token) > 2 and clean_token.isalpha():
-                        keywords.append(clean_token.lower())
+            # Извлекаем именованные сущности (NER)
+            for ent in doc.ents:
+                if ent.label_ in ["ORG", "PERSON", "PRODUCT", "EVENT", "WORK_OF_ART"]:
+                    keywords.append(ent.text.lower())
+            
+            # Извлекаем существительные и прилагательные (важные слова)
+            for token in doc:
+                if token.pos_ in ["NOUN", "ADJ"] and not token.is_stop and len(token.text) > 2:
+                    keywords.append(token.lemma_.lower())
             
             # Убираем дубликаты и возвращаем
             unique_keywords = list(dict.fromkeys(keywords))[:max_keywords]
             return unique_keywords
             
         except Exception as e:
-            logger.debug(f"[RAG AGENT] BERT keyword extraction failed: {e}")
+            logger.debug(f"[RAG AGENT] spaCy keyword extraction failed: {e}")
             return []
     
     async def analyze_question(
@@ -199,17 +180,6 @@ class RAGAgent:
             # Fallback: определяем стратегию по ключевым словам в вопросе
             question_lower = question.lower()
             
-            # Пробуем использовать BERT для извлечения ключевых слов
-            keywords = self.extract_keywords_with_bert(question, max_keywords=5)
-            
-            # Если BERT не дал результатов, используем простой способ
-            if not keywords:
-                import re
-                # Убираем стоп-слова
-                stop_words = {"что", "как", "почему", "где", "когда", "кто", "в", "на", "с", "по", "для", "о", "об", "документ", "документы"}
-                words = re.findall(r'\b\w+\b', question_lower)
-                keywords = [w for w in words if w not in stop_words and len(w) > 2][:5]
-            
             # Определяем тип вопроса
             if any(word in question_lower for word in ["содержание", "содержание", "обзор", "что в", "что есть", "список"]):
                 question_type = "содержание"
@@ -224,6 +194,17 @@ class RAGAgent:
                 use_chunks = has_chunks
                 use_summaries = True
                 use_metadata = True
+            
+            # Извлекаем ключевые слова из вопроса
+            # Сначала пробуем spaCy (если доступен)
+            keywords = self.extract_keywords_with_spacy(question, max_keywords=5)
+            
+            # Если spaCy не дал результатов, используем простой способ
+            if not keywords:
+                # Убираем стоп-слова
+                stop_words = {"что", "как", "почему", "где", "когда", "кто", "в", "на", "с", "по", "для", "о", "об", "документ", "документы"}
+                words = re.findall(r'\b\w+\b', question_lower)
+                keywords = [w for w in words if w not in stop_words and len(w) > 2][:5]
             
             return {
                 "question_type": question_type,
