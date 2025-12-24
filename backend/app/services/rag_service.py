@@ -514,40 +514,40 @@ class RAGService:
             summaries = []
             
             for doc in documents[:limit]:
-                        # Приоритет 1: используем существующий summary (проверяем безопасно)
-                        doc_summary = getattr(doc, 'summary', None)
-                        if doc_summary and doc_summary.strip():
-                            # Форматируем как в рабочем скрипте: "Фрагмент X (источник: filename): summary"
+                # Приоритет 1: используем существующий summary (проверяем безопасно)
+                doc_summary = getattr(doc, 'summary', None)
+                if doc_summary and doc_summary.strip():
+                    # Форматируем как в рабочем скрипте: "Фрагмент X (источник: filename): summary"
+                    summaries.append({
+                        "text": doc_summary,
+                        "source": doc.filename,
+                        "score": 1.0
+                    })
+                else:
+                    # Приоритет 2: пытаемся создать summary (только если поле существует в БД)
+                    try:
+                        # Проверяем, существует ли поле summary в модели
+                        if hasattr(Document, 'summary'):
+                            summary = await summary_service.generate_summary(doc.id)
+                            if summary and summary.strip():
+                                summaries.append({
+                                    "text": summary,
+                                    "source": doc.filename,
+                                    "score": 1.0
+                                })
+                                continue
+                    except Exception as e:
+                        logger.warning(f"Error generating summary for doc {doc.id}: {e}")
+                    
+                    # Приоритет 3: используем содержимое (первые 500 символов)
+                    if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
+                        content = doc.content[:500]
+                        if content.strip():
                             summaries.append({
-                                "text": doc_summary,
+                                "text": content,
                                 "source": doc.filename,
-                                "score": 1.0
+                                "score": 0.8
                             })
-                        else:
-                            # Приоритет 2: пытаемся создать summary (только если поле существует в БД)
-                            try:
-                                # Проверяем, существует ли поле summary в модели
-                                if hasattr(Document, 'summary'):
-                                    summary = await summary_service.generate_summary(doc.id)
-                                    if summary and summary.strip():
-                                        summaries.append({
-                                            "text": summary,
-                                            "source": doc.filename,
-                                            "score": 1.0
-                                        })
-                                        continue
-                            except Exception as e:
-                                logger.warning(f"Error generating summary for doc {doc.id}: {e}")
-                            
-                            # Приоритет 3: используем содержимое (первые 500 символов)
-                            if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
-                                content = doc.content[:500]
-                                if content.strip():
-                                    summaries.append({
-                                        "text": content,
-                                        "source": doc.filename,
-                                        "score": 0.8
-                                    })
             
             logger.info(f"[RAG SERVICE] Retrieved {len(summaries)} document summaries for project {project_id}")
             return summaries
@@ -612,12 +612,12 @@ class RAGService:
                 # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
                 try:
                     # Пробуем обычный запрос
-                result = await self.db.execute(
-                    select(Document)
-                    .where(Document.project_id == project_id)
-                    .limit(10)
-                )
-                documents = result.scalars().all()
+                    result = await self.db.execute(
+                        select(Document)
+                        .where(Document.project_id == project_id)
+                        .limit(10)
+                    )
+                    documents = result.scalars().all()
                 except Exception as db_error:
                     # Если ошибка из-за отсутствия поля summary, используем raw SQL
                     error_str = str(db_error).lower()
@@ -723,7 +723,7 @@ class RAGService:
                     logger.warning(f"[RAG SERVICE] Error getting metadata for questions: {metadata_error}")
                 
                 if not chunk_texts:
-                return []
+                    return []
             
             # Объединяем чанки в контекст
             context = "\n\n".join(chunk_texts[:10])  # Максимум 10 чанков
