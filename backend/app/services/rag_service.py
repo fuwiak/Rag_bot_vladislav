@@ -163,8 +163,8 @@ class RAGService:
             # ВСЕГДА получаем метаданные для использования в промпте (даже если есть чанки)
             # Это позволяет отвечать на вопросы о файлах и ключевых словах
             if not metadata_context:
-            logger.info(f"[RAG SERVICE] Getting metadata for context")
-            try:
+                logger.info(f"[RAG SERVICE] Getting metadata for context")
+                try:
                 from app.services.document_metadata_service import DocumentMetadataService
                 metadata_service = DocumentMetadataService()
                 documents_metadata = strategy_info.get("documents_metadata", [])
@@ -173,8 +173,8 @@ class RAGService:
                 if documents_metadata:
                     metadata_context = metadata_service.create_metadata_context(documents_metadata)
                     logger.info(f"[RAG SERVICE] Created metadata context from {len(documents_metadata)} documents")
-            except Exception as metadata_error:
-                logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
+                except Exception as metadata_error:
+                    logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
             
             # Логируем стратегию использования метаданных
             if metadata_context:
