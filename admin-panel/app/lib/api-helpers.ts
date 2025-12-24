@@ -6,7 +6,10 @@
  */
 export function getBackendUrl(): string {
   const USE_MOCK_API = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
-  const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+  let API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+  
+  // Убираем trailing slash, если есть
+  API_BASE_URL = API_BASE_URL.replace(/\/+$/, '')
   
   if (USE_MOCK_API) {
     // В режиме моков используем локальные Next.js API routes
