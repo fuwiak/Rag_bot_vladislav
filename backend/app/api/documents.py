@@ -17,6 +17,37 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def process_document_async_from_file(document_id: UUID, project_id: UUID, file_path: str, filename: str, file_type: str):
+    """
+    Асинхронная обработка документа из файла (парсинг, эмбеддинги, сохранение в Qdrant)
+    Использует путь к файлу вместо содержимого в памяти для экономии памяти
+    """
+    import os
+    import gc
+    
+    try:
+        # Читаем файл только когда нужно
+        with open(file_path, 'rb') as f:
+            file_content = f.read()
+        
+        # Освобождаем файл сразу после чтения
+        os.unlink(file_path)
+        
+        # Вызываем основную функцию обработки
+        await process_document_async(document_id, project_id, file_content, filename, file_type)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при обработке файла {file_path}: {e}", exc_info=True)
+        # Удаляем временный файл в случае ошибки
+        if os.path.exists(file_path):
+            try:
+                os.unlink(file_path)
+            except:
+                pass
+    finally:
+        gc.collect()
+
+
 async def process_document_async(document_id: UUID, project_id: UUID, file_content: bytes, filename: str, file_type: str):
     """Асинхронная обработка документа (парсинг, эмбеддинги, сохранение в Qdrant)"""
     import asyncio
@@ -189,8 +220,7 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             logger.error(f"Не удалось обновить статус документа после ошибки: {e2}")
     finally:
         # Освобождаем память после обработки
-        if 'file_content' in locals():
-            del file_content
+        # file_content уже удален после парсинга
         if 'text' in locals():
             del text
         if 'chunks' in locals():
@@ -234,42 +264,84 @@ async def upload_documents(
             except (ValueError, TypeError):
                 pass
         
-        # Читаем содержимое файла с ограничением размера
-        file_content = await file.read()
-        actual_size = len(file_content)
-        
-        # Проверяем размер после чтения (на случай, если Content-Length не был доступен)
-        if actual_size > MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"Файл {file.filename} слишком большой ({actual_size / 1024 / 1024:.2f}MB). Максимальный размер: {MAX_FILE_SIZE / 1024 / 1024:.2f}MB"
-            )
-        
         file_type = file.filename.split('.')[-1].lower()
         
-        # Создаем документ в БД сразу (временно с placeholder content)
-        from app.models.document import Document
-        document = Document(
-            project_id=project_id,
-            filename=file.filename,
-            content="Обработка...",  # Временный placeholder
-            file_type=file_type
-        )
-        db.add(document)
-        await db.commit()
-        await db.refresh(document)
+        # Читаем файл по частям для проверки размера (streaming)
+        import tempfile
+        import os
+        import shutil
         
-        documents.append(document)
-        
-        # Запускаем обработку через BackgroundTasks (выполнится после отправки ответа)
-        background_tasks.add_task(
-            process_document_async,
-            document.id, 
-            project_id, 
-            file_content, 
-            file.filename,
-            file_type
-        )
+        # Создаем временный файл для хранения содержимого
+        # Это позволяет не держать весь файл в памяти
+        temp_file = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_type}') as temp_file:
+                temp_path = temp_file.name
+                total_size = 0
+                
+                # Читаем файл по частям и записываем во временный файл
+                while True:
+                    chunk = await file.read(8192)  # Читаем по 8KB
+                    if not chunk:
+                        break
+                    total_size += len(chunk)
+                    
+                    # Проверяем размер во время чтения
+                    if total_size > MAX_FILE_SIZE:
+                        os.unlink(temp_path)
+                        raise HTTPException(
+                            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail=f"Файл {file.filename} слишком большой ({total_size / 1024 / 1024:.2f}MB). Максимальный размер: {MAX_FILE_SIZE / 1024 / 1024:.2f}MB"
+                        )
+                    
+                    temp_file.write(chunk)
+                
+                temp_file.flush()
+                temp_file.close()
+            
+            # Создаем документ в БД сразу (временно с placeholder content)
+            from app.models.document import Document
+            document = Document(
+                project_id=project_id,
+                filename=file.filename,
+                content="Обработка...",  # Временный placeholder
+                file_type=file_type
+            )
+            db.add(document)
+            await db.commit()
+            await db.refresh(document)
+            
+            documents.append(document)
+            
+            # Запускаем обработку через BackgroundTasks (выполнится после отправки ответа)
+            # Передаем путь к временному файлу вместо содержимого в памяти
+            background_tasks.add_task(
+                process_document_async_from_file,
+                document.id, 
+                project_id, 
+                temp_path,  # Путь к файлу вместо содержимого
+                file.filename,
+                file_type
+            )
+        except HTTPException:
+            # Если ошибка размера, удаляем временный файл если был создан
+            if temp_file and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+            raise
+        except Exception as e:
+            # Если другая ошибка, удаляем временный файл
+            if temp_file and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Ошибка при загрузке файла: {str(e)}"
+            )
     
     # Возвращаем документы сразу (обработка будет происходить в фоне)
     return documents

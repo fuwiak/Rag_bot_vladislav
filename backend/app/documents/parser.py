@@ -50,20 +50,47 @@ class DocumentParser:
     
     def _parse_docx(self, content: bytes) -> str:
         """Парсинг DOCX файла (блокирующая операция, выполняется в thread pool)"""
+        import gc
+        
         doc = docx.Document(io.BytesIO(content))
-        paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
+        paragraphs = []
+        
+        # Обрабатываем параграфы по одному для экономии памяти
+        for para in doc.paragraphs:
+            if para.text.strip():
+                paragraphs.append(para.text)
+        
+        # Освобождаем память после парсинга
+        del doc
+        gc.collect()
+        
         return "\n".join(paragraphs)
     
     def _parse_pdf(self, content: bytes) -> str:
         """Парсинг PDF файла (блокирующая операция, выполняется в thread pool)"""
+        import gc
+        
         pdf_file = io.BytesIO(content)
         pdf_reader = PyPDF2.PdfReader(pdf_file)
         
         text_parts = []
-        for page in pdf_reader.pages:
-            text = page.extract_text()
-            if text.strip():
-                text_parts.append(text)
+        # Обрабатываем страницы по одной и освобождаем память
+        for i, page in enumerate(pdf_reader.pages):
+            try:
+                text = page.extract_text()
+                if text.strip():
+                    text_parts.append(text)
+                # Освобождаем память после каждой страницы
+                if i % 10 == 0:  # Каждые 10 страниц
+                    gc.collect()
+            except Exception as e:
+                # Пропускаем страницы с ошибками, продолжаем обработку
+                continue
+        
+        # Освобождаем память после парсинга
+        del pdf_reader
+        del pdf_file
+        gc.collect()
         
         return "\n\n".join(text_parts)
 
