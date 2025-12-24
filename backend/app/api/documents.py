@@ -281,11 +281,11 @@ async def upload_documents(
     documents = []
     for file_index, file in enumerate(files):
         logger.info(f"[Upload] Processing file {file_index + 1}/{len(files)}: {file.filename}")
-        # Валидация формата файла
-        if not file.filename.endswith(('.txt', '.docx', '.pdf')):
+        # Валидация формата файла (PDF, Excel, Word, TXT)
+        if not file.filename.endswith(('.txt', '.docx', '.pdf', '.xlsx', '.xls')):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Неподдерживаемый формат файла: {file.filename}"
+                detail=f"Неподдерживаемый формат файла: {file.filename}. Поддерживаются: PDF, Excel (.xlsx, .xls), Word (.docx), TXT"
             )
         
         # Проверяем размер файла перед чтением

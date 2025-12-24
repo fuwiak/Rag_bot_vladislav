@@ -834,12 +834,12 @@ export default function ProjectDetailPage() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-fb-text mb-2">
-                  Выберите файлы (TXT, DOCX, PDF)
+                  Выберите файлы (TXT, DOCX, PDF, Excel)
                 </label>
                 <input
                   type="file"
                   multiple
-                  accept=".txt,.docx,.pdf"
+                  accept=".txt,.docx,.pdf,.xlsx,.xls"
                   onChange={(e) => {
                     const files = Array.from(e.target.files || [])
                     setUploadFiles(files)
@@ -847,7 +847,7 @@ export default function ProjectDetailPage() {
                   className="block w-full text-sm text-fb-text-secondary file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-fb-blue file:text-white hover:file:bg-fb-blue-dark file:cursor-pointer"
                 />
                 <p className="text-xs text-fb-text-secondary mt-2">
-                  Можно загрузить несколько файлов одновременно
+                  Можно загрузить несколько файлов одновременно. Поддерживаются: PDF, Excel (.xlsx, .xls), Word (.docx), TXT
                 </p>
               </div>
             </div>
