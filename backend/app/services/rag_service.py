@@ -487,11 +487,11 @@ class RAGService:
         
         # Генерируем ответ
         try:
-        raw_answer = await llm_client.chat_completion(
+            raw_answer = await llm_client.chat_completion(
             messages=messages,
             max_tokens=max_tokens,
             temperature=0.7
-        )
+            )
         
             # Проверяем, не является ли ответ отказом
             answer_text = raw_answer.strip().lower()
@@ -513,7 +513,7 @@ class RAGService:
                 )
             else:
         # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
-        answer = self.response_formatter.format_response(
+            answer = self.response_formatter.format_response(
             response=raw_answer,
             max_length=project.max_response_length,
                     chunks=similar_chunks if 'similar_chunks' in locals() else []
