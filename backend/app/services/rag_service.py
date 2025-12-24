@@ -66,12 +66,12 @@ class RAGService:
         try:
             # Получение пользователя и проекта
             user = await self._get_user(user_id)
-        if not user:
-            raise ValueError("Пользователь не найден")
-        
-        project = await self._get_project(user.project_id)
-        if not project:
-            raise ValueError("Проект не найден")
+            if not user:
+                raise ValueError("Пользователь не найден")
+            
+            project = await self._get_project(user.project_id)
+            if not project:
+                raise ValueError("Проект не найден")
         
         # Получение истории диалога (минимум 10 сообщений согласно требованиям)
         conversation_history = await self._get_conversation_history(user_id, limit=10)
@@ -2058,7 +2058,7 @@ class RAGService:
                     logger.warning(f"[RAG SERVICE] Error getting metadata for questions: {metadata_error}")
                 
                 if not chunk_texts:
-                return []
+                    return []
             
             # Объединяем чанки в контекст
             context = "\n\n".join(chunk_texts[:10])  # Максимум 10 чанков
