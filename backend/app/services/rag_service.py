@@ -165,7 +165,7 @@ class RAGService:
             if not metadata_context:
                 logger.info(f"[RAG SERVICE] Getting metadata for context")
                 try:
-                from app.services.document_metadata_service import DocumentMetadataService
+                    from app.services.document_metadata_service import DocumentMetadataService
                 metadata_service = DocumentMetadataService()
                 documents_metadata = strategy_info.get("documents_metadata", [])
                 if not documents_metadata:
@@ -185,8 +185,8 @@ class RAGService:
             
             # Если нет чанков, пытаемся извлечь контент напрямую из документов разными способами
             if not chunk_texts:
-            logger.info(f"[RAG SERVICE] No chunks found, trying to extract content directly from documents using multiple techniques")
-            try:
+                logger.info(f"[RAG SERVICE] No chunks found, trying to extract content directly from documents using multiple techniques")
+                try:
                 from app.models.document import Document, DocumentChunk
                 from app.documents.chunker import DocumentChunker
                 from sqlalchemy import select, text
@@ -335,8 +335,8 @@ class RAGService:
             
             # Для вопросов о содержании используем простой промпт из рабочего скрипта
             if is_content_question:
-            # Для вопросов типа "summary of each file" - используем метаданные напрямую
-            if metadata_context and not chunk_texts:
+                # Для вопросов типа "summary of each file" - используем метаданные напрямую
+                if metadata_context and not chunk_texts:
                 # Просто используем метаданные - это работает как предложенные вопросы
                 logger.info(f"[RAG SERVICE] Content question with metadata only - using direct metadata approach")
                 context = f"""Информация о загруженных документах:
