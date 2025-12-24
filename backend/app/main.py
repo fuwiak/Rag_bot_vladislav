@@ -88,6 +88,28 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Добавляем обработчик ошибок для предотвращения падения приложения
+from fastapi.responses import JSONResponse
+from fastapi import Request
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Глобальный обработчик ошибок для предотвращения падения приложения"""
+    import traceback
+    logger = logging.getLogger(__name__)
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    
+    # Возвращаем ошибку с CORS заголовками
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
+        headers={
+            "Access-Control-Allow-Origin": "*",  # Разрешаем все origins при ошибке
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+
 # CORS middleware
 # Логируем CORS origins для отладки
 cors_origins = settings.CORS_ORIGINS
