@@ -125,6 +125,10 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             logger.info(f"Документ {document_id} ({filename}) успешно обработан: {len(chunks)} чанков")
     except Exception as e:
         logger.error(f"Ошибка при обработке документа {document_id}: {e}", exc_info=True)
+    finally:
+        # Освобождаем память после обработки
+        del file_content
+        gc.collect()
 
 
 @router.post("/{project_id}/upload", response_model=List[DocumentResponse], status_code=status.HTTP_201_CREATED)
@@ -136,6 +140,11 @@ async def upload_documents(
     current_admin = Depends(get_current_admin)
 ):
     """Загрузить документы в проект"""
+    from app.core.config import settings
+    
+    # Максимальный размер файла: 10MB (можно настроить через переменную окружения)
+    MAX_FILE_SIZE = getattr(settings, 'MAX_DOCUMENT_SIZE', 10 * 1024 * 1024)  # 10MB по умолчанию
+    
     service = DocumentService(db)
     
     documents = []
@@ -147,8 +156,28 @@ async def upload_documents(
                 detail=f"Неподдерживаемый формат файла: {file.filename}"
             )
         
-        # Читаем содержимое файла
+        # Проверяем размер файла перед чтением
+        # Получаем размер из заголовка Content-Length, если доступен
+        file_size = 0
+        if hasattr(file, 'size') and file.size:
+            file_size = file.size
+        elif hasattr(file, 'headers') and 'content-length' in file.headers:
+            try:
+                file_size = int(file.headers['content-length'])
+            except (ValueError, TypeError):
+                pass
+        
+        # Читаем содержимое файла с ограничением размера
         file_content = await file.read()
+        actual_size = len(file_content)
+        
+        # Проверяем размер после чтения (на случай, если Content-Length не был доступен)
+        if actual_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Файл {file.filename} слишком большой ({actual_size / 1024 / 1024:.2f}MB). Максимальный размер: {MAX_FILE_SIZE / 1024 / 1024:.2f}MB"
+            )
+        
         file_type = file.filename.split('.')[-1].lower()
         
         # Создаем документ в БД сразу (временно с placeholder content)
