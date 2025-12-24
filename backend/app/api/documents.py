@@ -33,7 +33,18 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             chunker = DocumentChunker()
             
             # Парсинг документа (неблокирующий, выполняется в thread pool для PDF/DOCX)
-            text = await parser.parse(file_content, file_type)
+            # Обрабатываем ошибки парсинга, чтобы приложение не падало
+            try:
+                text = await parser.parse(file_content, file_type)
+            except Exception as e:
+                logger.error(f"Ошибка парсинга документа {document_id} ({filename}): {e}")
+                # Обновляем статус документа на ошибку
+                result = await db.execute(select(Document).where(Document.id == document_id))
+                document = result.scalar_one_or_none()
+                if document:
+                    document.content = f"Ошибка обработки: {str(e)[:200]}"
+                    await db.commit()
+                return  # Прерываем обработку, но не падаем
             
             # Получаем документ и обновляем его content
             result = await db.execute(select(Document).where(Document.id == document_id))
@@ -63,72 +74,125 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             embedding_service = EmbeddingService()
             vector_store = VectorStore()
             
-            # Обрабатываем чанки батчами по 10
-            batch_size = 10
+            # Обрабатываем чанки батчами (меньший размер батча для больших файлов)
+            # Для больших файлов используем меньший батч, чтобы не перегружать память
+            total_chunks = len(chunks)
+            if total_chunks > 100:
+                batch_size = 5  # Меньший батч для больших документов
+            else:
+                batch_size = 10
+            
             for batch_start in range(0, len(chunks), batch_size):
                 batch_end = min(batch_start + batch_size, len(chunks))
                 batch_chunks = chunks[batch_start:batch_end]
                 
-                # Создаем эмбеддинги батчем
                 try:
-                    embeddings = await embedding_service.create_embeddings_batch(batch_chunks)
-                except Exception as e:
-                    logger.error(f"Ошибка создания эмбеддингов для батча {batch_start}-{batch_end}: {e}")
-                    # Fallback: создаем эмбеддинги по одному
-                    embeddings = []
-                    for chunk in batch_chunks:
-                        try:
-                            emb = await embedding_service.create_embedding(chunk)
-                            embeddings.append(emb)
-                        except Exception as e2:
-                            logger.error(f"Ошибка создания эмбеддинга для чанка: {e2}")
-                            # Пропускаем этот чанк
-                            embeddings.append(None)
-                
-                # Сохраняем каждый чанк
-                for i, (chunk_text, embedding) in enumerate(zip(batch_chunks, embeddings)):
-                    if embedding is None:
-                        continue
-                    
-                    chunk_index = batch_start + i
-                    
-                    # Сохранение чанка в БД
-                    chunk = DocumentChunk(
-                        document_id=document.id,
-                        chunk_text=chunk_text,
-                        chunk_index=chunk_index
-                    )
-                    db.add(chunk)
-                    await db.flush()
-                    
-                    # Сохранение вектора в Qdrant
+                    # Создаем эмбеддинги батчем
                     try:
-                        point_id = await vector_store.store_vector(
-                            collection_name=f"project_{project_id}",
-                            vector=embedding,
-                            payload={
-                                "document_id": str(document.id),
-                                "chunk_id": str(chunk.id),
-                                "chunk_index": chunk_index,
-                                "chunk_text": chunk_text
-                            }
-                        )
-                        chunk.qdrant_point_id = point_id
+                        embeddings = await embedding_service.create_embeddings_batch(batch_chunks)
                     except Exception as e:
-                        logger.error(f"Ошибка сохранения вектора в Qdrant: {e}")
+                        logger.warning(f"Ошибка создания эмбеддингов для батча {batch_start}-{batch_end}: {e}")
+                        # Fallback: создаем эмбеддинги по одному
+                        embeddings = []
+                        for chunk in batch_chunks:
+                            try:
+                                emb = await embedding_service.create_embedding(chunk)
+                                embeddings.append(emb)
+                            except Exception as e2:
+                                logger.error(f"Ошибка создания эмбеддинга для чанка: {e2}")
+                                # Пропускаем этот чанк, но продолжаем обработку
+                                embeddings.append(None)
+                    
+                    # Сохраняем каждый чанк
+                    for i, (chunk_text, embedding) in enumerate(zip(batch_chunks, embeddings)):
+                        if embedding is None:
+                            continue
+                        
+                        chunk_index = batch_start + i
+                        
+                        try:
+                            # Сохранение чанка в БД
+                            chunk = DocumentChunk(
+                                document_id=document.id,
+                                chunk_text=chunk_text,
+                                chunk_index=chunk_index
+                            )
+                            db.add(chunk)
+                            await db.flush()
+                            
+                            # Сохранение вектора в Qdrant
+                            try:
+                                point_id = await vector_store.store_vector(
+                                    collection_name=f"project_{project_id}",
+                                    vector=embedding,
+                                    payload={
+                                        "document_id": str(document.id),
+                                        "chunk_id": str(chunk.id),
+                                        "chunk_index": chunk_index,
+                                        "chunk_text": chunk_text
+                                    }
+                                )
+                                chunk.qdrant_point_id = point_id
+                            except Exception as e:
+                                logger.error(f"Ошибка сохранения вектора в Qdrant для чанка {chunk_index}: {e}")
+                                # Продолжаем обработку, даже если Qdrant недоступен
+                        except Exception as e:
+                            logger.error(f"Ошибка сохранения чанка {chunk_index} в БД: {e}")
+                            # Продолжаем обработку следующих чанков
+                            continue
+                    
+                    await db.commit()
+                    logger.info(f"Обработано {batch_end} из {len(chunks)} чанков документа {document_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Критическая ошибка при обработке батча {batch_start}-{batch_end}: {e}")
+                    # Пробуем откатить транзакцию и продолжить
+                    try:
+                        await db.rollback()
+                    except:
+                        pass
+                    # Продолжаем обработку следующих батчей
+                    continue
                 
-                await db.commit()
-                logger.info(f"Обработано {batch_end} из {len(chunks)} чанков документа {document_id}")
+                # Освобождаем память после каждого батча
+                del batch_chunks
+                if 'embeddings' in locals():
+                    del embeddings
+                gc.collect()
                 
-                # Yield control для неблокирующей обработки
-                await asyncio.sleep(0)
+                # Пауза между батчами для освобождения памяти и неблокирующей обработки
+                await asyncio.sleep(0.1)
             
             logger.info(f"Документ {document_id} ({filename}) успешно обработан: {len(chunks)} чанков")
+            
+            # Обновляем статус документа на успешную обработку
+            result = await db.execute(select(Document).where(Document.id == document_id))
+            document = result.scalar_one_or_none()
+            if document and document.content == "Обработка...":
+                # Обновляем только если еще placeholder
+                document.content = text[:1000] + "..." if len(text) > 1000 else text
+                await db.commit()
+                
     except Exception as e:
-        logger.error(f"Ошибка при обработке документа {document_id}: {e}", exc_info=True)
+        logger.error(f"Критическая ошибка при обработке документа {document_id}: {e}", exc_info=True)
+        # Пробуем обновить статус документа на ошибку
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(select(Document).where(Document.id == document_id))
+                document = result.scalar_one_or_none()
+                if document:
+                    document.content = f"Ошибка обработки: {str(e)[:200]}"
+                    await db.commit()
+        except Exception as e2:
+            logger.error(f"Не удалось обновить статус документа после ошибки: {e2}")
     finally:
         # Освобождаем память после обработки
-        del file_content
+        if 'file_content' in locals():
+            del file_content
+        if 'text' in locals():
+            del text
+        if 'chunks' in locals():
+            del chunks
         gc.collect()
 
 
@@ -143,8 +207,8 @@ async def upload_documents(
     """Загрузить документы в проект"""
     from app.core.config import settings
     
-    # Максимальный размер файла: 10MB (можно настроить через переменную окружения)
-    MAX_FILE_SIZE = getattr(settings, 'MAX_DOCUMENT_SIZE', 10 * 1024 * 1024)  # 10MB по умолчанию
+    # Максимальный размер файла: 50MB (можно настроить через переменную окружения)
+    MAX_FILE_SIZE = getattr(settings, 'MAX_DOCUMENT_SIZE', 50 * 1024 * 1024)  # 50MB по умолчанию
     
     service = DocumentService(db)
     
