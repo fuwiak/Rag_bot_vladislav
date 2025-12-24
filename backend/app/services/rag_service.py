@@ -184,8 +184,9 @@ class RAGService:
                     logger.info(f"[RAG SERVICE] Using metadata as additional context (chunks available)")
             
             # Если нет чанков, пытаемся извлечь контент напрямую из документов разными способами
+            # Используем все стратегии fallback: Late Chunking, Sub-agents, Overlapping Chunks
             if not chunk_texts:
-                logger.info(f"[RAG SERVICE] No chunks found, trying to extract content directly from documents using multiple techniques")
+                logger.info(f"[RAG SERVICE] No chunks found, trying all fallback strategies: Late Chunking, Sub-agents, Overlapping Chunks")
                 try:
                     from app.models.document import Document, DocumentChunk
                     from app.documents.chunker import DocumentChunker
@@ -323,6 +324,63 @@ class RAGService:
                                 logger.warning(f"[RAG SERVICE] Error extracting previews: {preview_error}")
                 except Exception as extract_error:
                     logger.warning(f"[RAG SERVICE] Error extracting content from documents: {extract_error}")
+                
+                # Если все еще нет чанков после всех техник, пробуем Late Chunking
+                if not chunk_texts:
+                    logger.info(f"[RAG SERVICE] Still no chunks after extraction techniques, trying Late Chunking")
+                    try:
+                        # Late Chunking - создаем embedding всего документа
+                        from app.models.document import Document
+                        from sqlalchemy import select
+                        import numpy as np
+                        
+                        result = await self.db.execute(
+                            select(Document)
+                            .where(Document.project_id == project.id)
+                            .where(Document.content.isnot(None))
+                            .where(Document.content != "")
+                            .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                            .limit(2)
+                        )
+                        documents = result.scalars().all()
+                        
+                        if documents:
+                            # Создаем эмбеддинг вопроса
+                            question_embedding = await self.embedding_service.create_embedding(question)
+                            
+                            # Для каждого документа создаем эмбеддинг всего документа
+                            best_doc = None
+                            best_score = 0.0
+                            
+                            for doc in documents:
+                                if doc.content and len(doc.content) > 100:
+                                    # Создаем эмбеддинг всего документа (первые 8000 символов)
+                                    doc_content = doc.content[:8000]
+                                    doc_embedding = await self.embedding_service.create_embedding(doc_content)
+                                    
+                                    # Вычисляем косинусное сходство
+                                    similarity = np.dot(question_embedding, doc_embedding) / (
+                                        np.linalg.norm(question_embedding) * np.linalg.norm(doc_embedding)
+                                    )
+                                    
+                                    if similarity > best_score:
+                                        best_score = similarity
+                                        best_doc = doc
+                            
+                            # Если нашли релевантный документ, используем его первые 5000 символов как чанк
+                            if best_doc and best_score > 0.3:
+                                doc_content = best_doc.content[:5000]
+                                if len(best_doc.content) > 5000:
+                                    doc_content += "..."
+                                
+                                chunk_texts.append({
+                                    "text": doc_content,
+                                    "source": best_doc.filename,
+                                    "score": best_score
+                                })
+                                logger.info(f"[RAG SERVICE] Late chunking found relevant document '{best_doc.filename}' with score {best_score:.2f}")
+                    except Exception as late_error:
+                        logger.warning(f"[RAG SERVICE] Late chunking failed: {late_error}")
             
             # Инициализируем chunks_for_prompt для использования в блоке else
             chunks_for_prompt = []
@@ -554,7 +612,33 @@ class RAGService:
                     except Exception as fallback_error:
                         logger.warning(f"[RAG SERVICE] Document summary fallback failed: {fallback_error}")
                 
-                # Fallback 2: Если все еще нет ответа, используем AI агента для генерации ответа
+                # Fallback 2: Sub-agents для целых документов - обработка целых документов
+                if not answer:
+                    logger.info(f"[RAG SERVICE] Trying sub-agent for full document processing")
+                    try:
+                        answer = await self._process_full_documents_with_subagent(
+                            question=question,
+                            project=project,
+                            llm_client=llm_client,
+                            max_tokens=max_tokens
+                        )
+                    except Exception as subagent_error:
+                        logger.warning(f"[RAG SERVICE] Sub-agent fallback failed: {subagent_error}")
+                
+                # Fallback 3: Late Chunking - обработка через long-context embedding
+                if not answer:
+                    logger.info(f"[RAG SERVICE] Trying late chunking approach")
+                    try:
+                        answer = await self._late_chunking_fallback(
+                            question=question,
+                            project=project,
+                            llm_client=llm_client,
+                            max_tokens=max_tokens
+                        )
+                    except Exception as late_chunking_error:
+                        logger.warning(f"[RAG SERVICE] Late chunking fallback failed: {late_chunking_error}")
+                
+                # Fallback 4: Если все еще нет ответа, используем AI агента для генерации ответа
                 if not answer:
                     try:
                         answer = await self._generate_ai_agent_fallback(
@@ -567,7 +651,7 @@ class RAGService:
                     except Exception as ai_error:
                         logger.warning(f"[RAG SERVICE] AI agent fallback failed: {ai_error}")
                 
-                # Fallback 3: Базовый ответ на основе названия проекта
+                # Fallback 5: Базовый ответ на основе названия проекта
                 if not answer:
                     answer = await self._generate_basic_fallback(
                         question=question,
