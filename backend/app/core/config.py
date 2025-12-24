@@ -93,9 +93,10 @@ class Settings(BaseSettings):
     
     # Redis for Celery broker
     # Railway provides REDIS_URL automatically, or use REDIS_PASSWORD + private networking
-    REDIS_URL: str = "redis://localhost:6379/0"
-    REDIS_PASSWORD: str = ""  # Railway Redis password (if using private networking)
-    REDIS_HOST: str = "localhost"  # Use 'redis.railway.internal' for private networking
+    # No localhost defaults - all values must be set via environment variables
+    REDIS_URL: str = ""  # Railway provides this automatically
+    REDIS_PASSWORD: str = ""  # Railway Redis password (required for private networking)
+    REDIS_HOST: str = ""  # Use 'redis.railway.internal' for private networking
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     
@@ -117,9 +118,16 @@ class Settings(BaseSettings):
         
         # Build from components (for private networking with password)
         redis_password = os.getenv('REDIS_PASSWORD', '')
-        redis_host = os.getenv('REDIS_HOST', 'redis.railway.internal')
+        redis_host = os.getenv('REDIS_HOST', '')
         redis_port = os.getenv('REDIS_PORT', '6379')
         redis_db = os.getenv('REDIS_DB', '0')
+        
+        # Require REDIS_HOST to be set (no localhost fallback)
+        if not redis_host:
+            raise ValueError(
+                "REDIS_HOST must be set via environment variable. "
+                "For Railway private networking, set REDIS_HOST=redis.railway.internal"
+            )
         
         if redis_password:
             # Format: redis://:password@host:port/db
@@ -141,9 +149,16 @@ class Settings(BaseSettings):
         
         # Build from components (for private networking with password)
         redis_password = os.getenv('REDIS_PASSWORD', '')
-        redis_host = os.getenv('REDIS_HOST', 'redis.railway.internal')
+        redis_host = os.getenv('REDIS_HOST', '')
         redis_port = os.getenv('REDIS_PORT', '6379')
         redis_db = os.getenv('REDIS_DB', '0')
+        
+        # Require REDIS_HOST to be set (no localhost fallback)
+        if not redis_host:
+            raise ValueError(
+                "REDIS_HOST must be set via environment variable. "
+                "For Railway private networking, set REDIS_HOST=redis.railway.internal"
+            )
         
         if redis_password:
             # Format: redis://:password@host:port/db
