@@ -116,19 +116,32 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                 logger.error(f"Документ {document_id} не найден для обработки")
                 return
             
-            # Обновляем content в документе
-            document.content = text
+            # Обновляем content в документе - сохраняем только первые 1000 символов для экономии памяти
+            document.content = text[:1000] + "..." if len(text) > 1000 else text
             await db.commit()
             await db.refresh(document)
             
+            # Освобождаем file_content сразу после парсинга
+            del file_content
+            gc.collect()
+            
+            parse_memory = process.memory_info().rss / 1024 / 1024
+            logger.info(f"[Process] After parse, memory: {parse_memory:.2f}MB, text_length: {len(text)} chars")
+            
             # Разбивка на чанки (быстрая операция строк, не блокирует)
             chunks = chunker.chunk_text(text)
+            
+            # Освобождаем text сразу после разбивки на чанки
+            del text
+            gc.collect()
             
             if not chunks:
                 logger.warning(f"Документ {document_id} не содержит текста")
                 return
             
-            # Создание эмбеддингов батчами для ускорения
+            logger.info(f"[Process] Document split into {len(chunks)} chunks")
+            
+            # Создание эмбеддингов по одному для минимального использования памяти
             from app.services.embedding_service import EmbeddingService
             from app.vector_db.vector_store import VectorStore
             from app.models.document import DocumentChunk
@@ -136,97 +149,74 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             embedding_service = EmbeddingService()
             vector_store = VectorStore()
             
-            # Обрабатываем чанки батчами (меньший размер батча для больших файлов)
-            # Для больших файлов используем меньший батч, чтобы не перегружать память
-            total_chunks = len(chunks)
-            if total_chunks > 100:
-                batch_size = 5  # Меньший батч для больших документов
-            else:
-                batch_size = 10
+            # Обрабатываем чанки по одному для минимального использования памяти
+            # Это медленнее, но предотвращает out of memory
             
-            for batch_start in range(0, len(chunks), batch_size):
-                batch_end = min(batch_start + batch_size, len(chunks))
-                batch_chunks = chunks[batch_start:batch_end]
-                
+            # Обрабатываем чанки по одному для минимального использования памяти
+            for chunk_index, chunk_text in enumerate(chunks):
                 try:
-                    # Создаем эмбеддинги батчем
-                    try:
-                        embeddings = await embedding_service.create_embeddings_batch(batch_chunks)
-                    except Exception as e:
-                        logger.warning(f"Ошибка создания эмбеддингов для батча {batch_start}-{batch_end}: {e}")
-                        # Fallback: создаем эмбеддинги по одному
-                        embeddings = []
-                        for chunk in batch_chunks:
-                            try:
-                                emb = await embedding_service.create_embedding(chunk)
-                                embeddings.append(emb)
-                            except Exception as e2:
-                                logger.error(f"Ошибка создания эмбеддинга для чанка: {e2}")
-                                # Пропускаем этот чанк, но продолжаем обработку
-                                embeddings.append(None)
+                    chunk_memory_before = process.memory_info().rss / 1024 / 1024
                     
-                    # Сохраняем каждый чанк
-                    for i, (chunk_text, embedding) in enumerate(zip(batch_chunks, embeddings)):
-                        if embedding is None:
-                            continue
-                        
-                        chunk_index = batch_start + i
-                        
-                        try:
-                            # Сохранение чанка в БД
-                            chunk = DocumentChunk(
-                                document_id=document.id,
-                                chunk_text=chunk_text,
-                                chunk_index=chunk_index
-                            )
-                            db.add(chunk)
-                            await db.flush()
-                            
-                            # Сохранение вектора в Qdrant
-                            try:
-                                point_id = await vector_store.store_vector(
-                                    collection_name=f"project_{project_id}",
-                                    vector=embedding,
-                                    payload={
-                                        "document_id": str(document.id),
-                                        "chunk_id": str(chunk.id),
-                                        "chunk_index": chunk_index,
-                                        "chunk_text": chunk_text
-                                    }
-                                )
-                                chunk.qdrant_point_id = point_id
-                            except Exception as e:
-                                logger.error(f"Ошибка сохранения вектора в Qdrant для чанка {chunk_index}: {e}")
-                                # Продолжаем обработку, даже если Qdrant недоступен
-                        except Exception as e:
-                            logger.error(f"Ошибка сохранения чанка {chunk_index} в БД: {e}")
-                            # Продолжаем обработку следующих чанков
-                            continue
+                    # Создаем эмбеддинг для одного чанка
+                    try:
+                        embedding = await embedding_service.create_embedding(chunk_text)
+                    except Exception as e:
+                        logger.error(f"Ошибка создания эмбеддинга для чанка {chunk_index}: {e}")
+                        # Пропускаем этот чанк, но продолжаем обработку
+                        continue
+                    
+                    # Сохранение чанка в БД
+                    chunk = DocumentChunk(
+                        document_id=document.id,
+                        chunk_text=chunk_text,
+                        chunk_index=chunk_index
+                    )
+                    db.add(chunk)
+                    await db.flush()
+                    
+                    # Сохранение вектора в Qdrant
+                    try:
+                        point_id = await vector_store.store_vector(
+                            collection_name=f"project_{project_id}",
+                            vector=embedding,
+                            payload={
+                                "document_id": str(document.id),
+                                "chunk_id": str(chunk.id),
+                                "chunk_index": chunk_index,
+                                "chunk_text": chunk_text[:500]  # Сохраняем только первые 500 символов в payload
+                            }
+                        )
+                        chunk.qdrant_point_id = point_id
+                    except Exception as e:
+                        logger.error(f"Ошибка сохранения вектора в Qdrant для чанка {chunk_index}: {e}")
+                        # Продолжаем обработку, даже если Qdrant недоступен
                     
                     await db.commit()
                     
-                    # Логируем память после каждого батча
-                    batch_memory = process.memory_info().rss / 1024 / 1024
-                    logger.info(f"[Process] Batch {batch_end}/{len(chunks)} processed, memory: {batch_memory:.2f}MB")
+                    # Освобождаем память после каждого чанка
+                    del embedding
+                    del chunk_text
+                    gc.collect()
+                    
+                    chunk_memory_after = process.memory_info().rss / 1024 / 1024
+                    
+                    # Логируем каждые 10 чанков
+                    if (chunk_index + 1) % 10 == 0:
+                        logger.info(f"[Process] Processed {chunk_index + 1}/{len(chunks)} chunks, memory: {chunk_memory_after:.2f}MB")
+                    
+                    # Пауза каждые 5 чанков для освобождения памяти
+                    if (chunk_index + 1) % 5 == 0:
+                        await asyncio.sleep(0.1)
                     
                 except Exception as e:
-                    logger.error(f"[Process] Критическая ошибка при обработке батча {batch_start}-{batch_end}: {e}")
+                    logger.error(f"[Process] Ошибка при обработке чанка {chunk_index}: {e}")
                     # Пробуем откатить транзакцию и продолжить
                     try:
                         await db.rollback()
                     except:
                         pass
-                    # Продолжаем обработку следующих батчей
+                    # Продолжаем обработку следующих чанков
                     continue
-                
-                # Освобождаем память после каждого батча
-                del batch_chunks
-                if 'embeddings' in locals():
-                    del embeddings
-                gc.collect()
-                
-                # Пауза между батчами для освобождения памяти и неблокирующей обработки
-                await asyncio.sleep(0.1)
             
             final_memory = process.memory_info().rss / 1024 / 1024
             logger.info(f"[Process] Документ {document_id} ({filename}) успешно обработан: {len(chunks)} чанков, final memory: {final_memory:.2f}MB")

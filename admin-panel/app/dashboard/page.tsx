@@ -24,7 +24,15 @@ export default function DashboardPage() {
   const fetchProjects = async () => {
     try {
       const { apiFetch } = await import('../lib/api-helpers')
-      const response = await apiFetch('/api/projects')
+      // Добавляем timestamp для предотвращения кэширования
+      const response = await apiFetch(`/api/projects?t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      })
 
       if (response.ok) {
         const data = await response.json()
@@ -35,15 +43,27 @@ export default function DashboardPage() {
         if (typeof window !== 'undefined' && !localStorage.getItem('token')) {
           localStorage.setItem('token', 'dummy-token')
           // Повторяем запрос
-          const retryResponse = await apiFetch('/api/projects')
+          const retryResponse = await apiFetch(`/api/projects?t=${Date.now()}`, {
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+              'Pragma': 'no-cache',
+              'Expires': '0'
+            }
+          })
           if (retryResponse.ok) {
             const data = await retryResponse.json()
             setProjects(data)
           }
         }
+      } else {
+        // При ошибке (502, 503 и т.д.) показываем пустой список вместо кэша
+        setProjects([])
       }
     } catch (err) {
       console.error('Error fetching projects:', err)
+      // При ошибке показываем пустой список вместо кэша
+      setProjects([])
     } finally {
       setLoading(false)
     }
