@@ -14,14 +14,61 @@ from sqlalchemy import select
 
 async def cmd_start(message: Message, state: FSMContext, project_id: str = None):
     """Обработка команды /start"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Проверяем, авторизован ли пользователь
     current_state = await state.get_state()
-    if current_state == AuthStates.authorized:
-        # Пользователь уже авторизован, показываем информацию о проекте
-        data = await state.get_data()
-        project_id_from_state = data.get("project_id")
+    
+    # Проверяем, есть ли пользователь в БД по telegram_id
+    async with AsyncSessionLocal() as db:
+        from app.models.user import User
+        from sqlalchemy import select
         
-        async with AsyncSessionLocal() as db:
+        telegram_user_id = str(message.from_user.id)
+        telegram_username = message.from_user.username
+        
+        # Ищем пользователя по telegram_id или username
+        user_result = await db.execute(
+            select(User).where(
+                (User.telegram_id == telegram_user_id) | 
+                (User.username == telegram_username)
+            )
+        )
+        existing_user = user_result.scalar_one_or_none()
+        
+        if existing_user and existing_user.status != "blocked":
+            # Пользователь уже существует в БД - автоматически авторизуем
+            logger.info(f"[START] User {telegram_user_id} already exists, auto-authorizing")
+            
+            # Получаем проект
+            project_result = await db.execute(
+                select(Project).where(Project.id == existing_user.project_id)
+            )
+            project = project_result.scalar_one_or_none()
+            
+            if project:
+                # Сохраняем данные в состоянии
+                await state.update_data(
+                    project_id=str(project.id),
+                    user_id=str(existing_user.id)
+                )
+                await state.set_state(AuthStates.authorized)
+                
+                welcome_text = f"👋 <b>Добро пожаловать обратно в проект «{project.name}»!</b>\n\n"
+                welcome_text += "Вы уже авторизованы. Можете:\n"
+                welcome_text += "• Задавать вопросы о документах (/documents - показать список документов)\n"
+                welcome_text += "• Получать ответы на основе загруженных документов\n"
+                welcome_text += "• Использовать /help для справки\n\n"
+                welcome_text += "❓ <b>Задайте ваш вопрос:</b>"
+                await message.answer(welcome_text)
+                return
+        
+        # Если пользователь уже авторизован в текущей сессии
+        if current_state == AuthStates.authorized:
+            data = await state.get_data()
+            project_id_from_state = data.get("project_id")
+            
             if project_id_from_state:
                 result = await db.execute(
                     select(Project).where(Project.id == project_id_from_state)
@@ -38,8 +85,9 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                     await message.answer(welcome_text)
                     return
         
-        # Если не нашли проект, продолжаем с обычной авторизацией
-        await state.clear()
+        # Если не нашли пользователя или проект, продолжаем с обычной авторизацией
+        if current_state == AuthStates.authorized:
+            await state.clear()
     
     # Получаем bot_token из бота
     bot_token = None

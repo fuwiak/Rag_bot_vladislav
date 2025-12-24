@@ -16,6 +16,7 @@ class User(Base):
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
     project_id = Column(GUID, ForeignKey("projects.id"), nullable=False)
     phone = Column(String(20), nullable=False)
+    telegram_id = Column(String(50), nullable=True)  # Telegram user ID для автоматической авторизации
     username = Column(String(255), nullable=True)
     status = Column(String(20), default="active", nullable=False)  # active, blocked
     first_login_at = Column(DateTime, nullable=True)

@@ -46,7 +46,7 @@ class UserService:
         return result.scalar_one_or_none()
     
     async def get_user_by_phone(self, project_id: UUID, phone: str) -> Optional[User]:
-        """Получить пользователя по номеру телефона и проекту"""
+        """Получить пользователя по телефону"""
         result = await self.db.execute(
             select(User).where(
                 User.project_id == project_id,
@@ -55,12 +55,20 @@ class UserService:
         )
         return result.scalar_one_or_none()
     
-    async def create_user(self, project_id: UUID, phone: str, username: Optional[str] = None) -> User:
+    async def get_user_by_telegram_id(self, telegram_id: str) -> Optional[User]:
+        """Получить пользователя по Telegram ID"""
+        result = await self.db.execute(
+            select(User).where(User.telegram_id == telegram_id)
+        )
+        return result.scalar_one_or_none()
+    
+    async def create_user(self, project_id: UUID, phone: str, username: Optional[str] = None, telegram_id: Optional[str] = None) -> User:
         """Создать нового пользователя"""
         user = User(
             project_id=project_id,
             phone=phone,
             username=username,
+            telegram_id=telegram_id,
             status="active"
         )
         self.db.add(user)

@@ -86,6 +86,9 @@ async def handle_password(message: Message, state: FSMContext, project_id: str =
 
 async def handle_contact(message: Message, state: FSMContext, project_id: str = None):
     """Обработка получения контакта или ручного ввода телефона"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Получаем project_id из состояния (был сохранен при вводе пароля)
     data = await state.get_data()
     project_id_from_state = data.get("project_id")
@@ -116,25 +119,33 @@ async def handle_contact(message: Message, state: FSMContext, project_id: str = 
     async with AsyncSessionLocal() as db:
         user_service = UserService(db)
         
-        # Проверка существования пользователя
+        # Получаем telegram_id для сохранения
+        telegram_user_id = str(message.from_user.id)
+        telegram_username = message.from_user.username
+        
+        # Проверка существования пользователя по телефону
         user = await user_service.get_user_by_phone(project_id_from_state, phone)
         
         if not user:
             # Создание нового пользователя
-            username = message.from_user.username if message.from_user.username else None
-            user = await user_service.create_user(project_id_from_state, phone, username)
+            user = await user_service.create_user(project_id_from_state, phone, telegram_username)
             
-            # Обновление first_login_at
+            # Сохраняем telegram_id для будущей авторизации
+            user.telegram_id = telegram_user_id
             user.first_login_at = datetime.utcnow()
             await db.commit()
+            logger.info(f"[AUTH] Created new user {user.id} with telegram_id {telegram_user_id}")
         elif user.status == "blocked":
             await message.answer("❌ Ваш доступ заблокирован. Обратитесь к администратору.")
             return
         else:
-            # Обновление username если изменился
-            if message.from_user.username and user.username != message.from_user.username:
-                user.username = message.from_user.username
-                await db.commit()
+            # Обновление telegram_id и username если изменились
+            if user.telegram_id != telegram_user_id:
+                user.telegram_id = telegram_user_id
+            if telegram_username and user.username != telegram_username:
+                user.username = telegram_username
+            await db.commit()
+            logger.info(f"[AUTH] Updated user {user.id} with telegram_id {telegram_user_id}")
         
         # Сохранение user_id в состоянии
         await state.update_data(user_id=str(user.id))
