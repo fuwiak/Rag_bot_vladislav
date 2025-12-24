@@ -194,11 +194,23 @@ async def handle_text_before_auth(message: Message, state: FSMContext):
     Этот обработчик срабатывает для всех текстовых сообщений, которые не обрабатываются
     более специфичными обработчиками (с фильтрами состояний).
     Если пользователь вводит текст, а состояние не установлено, пытаемся обработать как пароль.
+    
+    ВАЖНО: Этот обработчик НЕ должен перехватывать сообщения авторизованных пользователей!
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     current_state = await state.get_state()
+    logger.info(f"[AUTH HANDLER] handle_text_before_auth called, state: {current_state}, text: {message.text[:50] if message.text else 'None'}")
+    
+    # КРИТИЧНО: Если пользователь авторизован, НЕ обрабатываем здесь - пусть обрабатывает question_handler
+    if current_state == AuthStates.authorized:
+        logger.debug(f"[AUTH HANDLER] User is authorized, skipping handle_text_before_auth")
+        return  # Пропускаем, чтобы вопрос обработал question_handler
     
     # Если состояние не установлено, устанавливаем waiting_password и обрабатываем как пароль
     if current_state is None:
+        logger.info(f"[AUTH HANDLER] No state set, setting waiting_password and processing as password")
         await state.set_state(AuthStates.waiting_password)
         # Рекурсивно вызываем handle_password
         await handle_password(message, state)
@@ -206,6 +218,7 @@ async def handle_text_before_auth(message: Message, state: FSMContext):
     
     # Если не авторизован и не в процессе авторизации, показываем сообщение
     if current_state != AuthStates.authorized:
+        logger.info(f"[AUTH HANDLER] User not authorized (state: {current_state}), asking for password")
         await message.answer("Для начала работы введите пароль доступа или используйте /start")
 
 
