@@ -336,11 +336,12 @@ def register_question_handlers(dp: Dispatcher, project_id: str):
     сработает только для авторизованных пользователей.
     """
     import logging
+    from aiogram.filters import Command
     logger = logging.getLogger(__name__)
     
     # Регистрируем обработчик для текстовых сообщений авторизованных пользователей
     # F.text фильтрует только текстовые сообщения
-    # Проверяем, что это не команда внутри обработчика, так как ~F.command может не работать правильно
-    dp.message.register(handle_question, AuthStates.authorized, F.text)
+    # ~Command() исключает команды (команды обрабатываются отдельными обработчиками)
+    dp.message.register(handle_question, AuthStates.authorized, F.text, ~Command())
     logger.info(f"[REGISTER HANDLERS] Question handler registered for project {project_id}")
 

@@ -331,5 +331,143 @@ class RAGService:
         )
         self.db.add(message)
         await self.db.commit()
+    
+    async def generate_suggested_questions(
+        self,
+        project_id: UUID,
+        limit: int = 5
+    ) -> List[str]:
+        """
+        Генерировать предложенные вопросы на основе загруженных документов
+        
+        Args:
+            project_id: ID проекта
+            limit: Количество предложенных вопросов
+        
+        Returns:
+            Список предложенных вопросов
+        """
+        collection_name = f"project_{project_id}"
+        
+        # Проверяем существование коллекции
+        collection_exists = await self.vector_store.collection_exists(collection_name)
+        if not collection_exists:
+            logger.info(f"[RAG SERVICE] Collection {collection_name} does not exist, no documents to suggest questions from")
+            return []
+        
+        try:
+            # Получаем несколько случайных чанков из коллекции для контекста
+            from app.models.document import Document, DocumentChunk
+            
+            # Получаем документы проекта
+            result = await self.db.execute(
+                select(Document)
+                .where(Document.project_id == project_id)
+                .limit(10)
+            )
+            documents = result.scalars().all()
+            
+            if not documents:
+                logger.info(f"[RAG SERVICE] No documents found for project {project_id}")
+                return []
+            
+            # Получаем несколько чанков из разных документов
+            chunk_texts = []
+            for doc in documents[:5]:  # Берем максимум 5 документов
+                chunks_result = await self.db.execute(
+                    select(DocumentChunk)
+                    .where(DocumentChunk.document_id == doc.id)
+                    .limit(3)  # По 3 чанка из каждого документа
+                )
+                chunks = chunks_result.scalars().all()
+                for chunk in chunks:
+                    if chunk.chunk_text:
+                        chunk_texts.append(chunk.chunk_text[:500])  # Ограничиваем длину
+            
+            if not chunk_texts:
+                logger.info(f"[RAG SERVICE] No chunks found for project {project_id}")
+                return []
+            
+            # Объединяем чанки в контекст
+            context = "\n\n".join(chunk_texts[:10])  # Максимум 10 чанков
+            
+            # Используем LLM для генерации вопросов на основе контекста
+            project_result = await self.db.execute(
+                select(Project).where(Project.id == project_id)
+            )
+            project = project_result.scalar_one_or_none()
+            
+            if not project:
+                return []
+            
+            # Получаем настройки моделей
+            from app.models.llm_model import GlobalModelSettings
+            settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+            global_settings = settings_result.scalar_one_or_none()
+            
+            primary_model = None
+            fallback_model = None
+            
+            if project.llm_model:
+                primary_model = project.llm_model
+            elif global_settings:
+                primary_model = global_settings.primary_model_id
+                fallback_model = global_settings.fallback_model_id
+            
+            from app.core.config import settings as app_settings
+            if not primary_model:
+                primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+            if not fallback_model:
+                fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+            
+            llm_client = OpenRouterClient(
+                model_primary=primary_model,
+                model_fallback=fallback_model
+            )
+            
+            # Промпт для генерации вопросов
+            prompt = f"""На основе следующего контекста из документов, сгенерируй {limit} интересных и полезных вопросов, которые можно задать об этом содержимом.
+
+Контекст из документов:
+{context[:2000]}
+
+Требования к вопросам:
+1. Вопросы должны быть конкретными и релевантными содержимому
+2. Вопросы должны быть на русском языке
+3. Вопросы должны быть разными по тематике
+4. Каждый вопрос должен быть на отдельной строке
+5. Не используй нумерацию или маркеры
+
+Сгенерируй только вопросы, без дополнительных комментариев:"""
+            
+            messages = [
+                {"role": "system", "content": "Ты помощник, который генерирует вопросы на основе документов."},
+                {"role": "user", "content": prompt}
+            ]
+            
+            response = await llm_client.chat_completion(
+                messages=messages,
+                max_tokens=500,
+                temperature=0.8
+            )
+            
+            # Парсим вопросы из ответа
+            questions = []
+            for line in response.strip().split('\n'):
+                line = line.strip()
+                # Убираем нумерацию и маркеры
+                line = line.lstrip('1234567890.-•* ')
+                if line and line.endswith('?'):
+                    questions.append(line)
+            
+            # Ограничиваем количество
+            questions = questions[:limit]
+            
+            logger.info(f"[RAG SERVICE] Generated {len(questions)} suggested questions for project {project_id}")
+            return questions
+            
+        except Exception as e:
+            logger.error(f"[RAG SERVICE] Error generating suggested questions: {e}", exc_info=True)
+            return []
 
 

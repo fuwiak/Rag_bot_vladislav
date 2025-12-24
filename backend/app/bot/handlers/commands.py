@@ -441,11 +441,16 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
                 )
             ]
         ])
-        await callback.message.edit_text(
-            "🔧 <b>Режим ответа:</b> 📄 Документы\n\n"
-            "Бот будет отвечать на основе загруженных документов проекта.",
-            reply_markup=mode_keyboard
-        )
+        try:
+            await callback.message.edit_text(
+                "🔧 <b>Режим ответа:</b> 📄 Документы\n\n"
+                "Бот будет отвечать на основе загруженных документов проекта.",
+                reply_markup=mode_keyboard
+            )
+        except Exception as e:
+            # Игнорируем ошибку если сообщение не изменилось
+            if "message is not modified" not in str(e):
+                logger.warning(f"Error editing message: {e}")
     elif mode == "set_mode_general":
         await state.update_data(answer_mode="general_mode")
         await callback.answer("✅ Режим изменен: Общие вопросы", show_alert=False)
@@ -471,11 +476,16 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
                 )
             ]
         ])
-        await callback.message.edit_text(
-            "🔧 <b>Режим ответа:</b> 💬 Общие вопросы\n\n"
-            "Бот будет отвечать на общие вопросы без использования документов.",
-            reply_markup=mode_keyboard
-        )
+        try:
+            await callback.message.edit_text(
+                "🔧 <b>Режим ответа:</b> 💬 Общие вопросы\n\n"
+                "Бот будет отвечать на общие вопросы без использования документов.",
+                reply_markup=mode_keyboard
+            )
+        except Exception as e:
+            # Игнорируем ошибку если сообщение не изменилось
+            if "message is not modified" not in str(e):
+                logger.warning(f"Error editing message: {e}")
     elif mode == "suggest_questions":
         # Вызываем команду предложения вопросов напрямую
         await callback.answer()
