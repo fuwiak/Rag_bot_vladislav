@@ -61,17 +61,29 @@ class RAGService:
         
         # Поиск релевантных чанков в Qdrant
         collection_name = f"project_{project.id}"
-        similar_chunks = await self.vector_store.search_similar(
-            collection_name=collection_name,
-            query_vector=question_embedding,
-            limit=top_k,
-            score_threshold=0.5
-        )
+        logger.info(f"[RAG SERVICE] Searching in collection {collection_name} for project {project.id}")
         
-        # Извлечение текстов чанков (может быть пустым)
-        chunk_texts = []
-        if similar_chunks and len(similar_chunks) > 0:
-            chunk_texts = [chunk["payload"]["chunk_text"] for chunk in similar_chunks]
+        # Проверяем существование коллекции и документов
+        collection_exists = await self.vector_store.collection_exists(collection_name)
+        if not collection_exists:
+            logger.warning(f"[RAG SERVICE] Collection {collection_name} does not exist. No documents indexed for this project.")
+            # Возвращаем пустой список чанков, но продолжаем генерацию с пустым контекстом
+            chunk_texts = []
+        else:
+            similar_chunks = await self.vector_store.search_similar(
+                collection_name=collection_name,
+                query_vector=question_embedding,
+                limit=top_k,
+                score_threshold=0.5
+            )
+            
+            logger.info(f"[RAG SERVICE] Found {len(similar_chunks)} similar chunks in collection {collection_name}")
+            
+            # Извлечение текстов чанков (может быть пустым)
+            chunk_texts = []
+            if similar_chunks and len(similar_chunks) > 0:
+                chunk_texts = [chunk.get("payload", {}).get("chunk_text", "") for chunk in similar_chunks if chunk.get("payload", {}).get("chunk_text")]
+                logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} chunk texts")
         
         # ВСЕГДА используем промпт проекта, даже если документов нет
         # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
