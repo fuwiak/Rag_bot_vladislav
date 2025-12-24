@@ -127,11 +127,15 @@ async def handle_contact(message: Message, state: FSMContext, project_id: str = 
         user = await user_service.get_user_by_phone(project_id_from_state, phone)
         
         if not user:
-            # Создание нового пользователя
-            user = await user_service.create_user(project_id_from_state, phone, telegram_username)
+            # Создание нового пользователя с telegram_id
+            user = await user_service.create_user(
+                project_id_from_state, 
+                phone, 
+                telegram_username,
+                telegram_id=telegram_user_id
+            )
             
-            # Сохраняем telegram_id для будущей авторизации
-            user.telegram_id = telegram_user_id
+            # Обновление first_login_at
             user.first_login_at = datetime.utcnow()
             await db.commit()
             logger.info(f"[AUTH] Created new user {user.id} with telegram_id {telegram_user_id}")
