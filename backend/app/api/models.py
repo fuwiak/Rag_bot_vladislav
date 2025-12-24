@@ -304,13 +304,24 @@ async def test_model(
                 model_id=test_request.model_id
             )
     except httpx.HTTPStatusError as e:
-        error_detail = f"Ошибка API: {e.response.status_code}"
+        error_detail = f"Ошибка API OpenRouter: {e.response.status_code}"
         try:
             error_data = e.response.json()
+            logger.error(f"OpenRouter API error: {error_data}")
             if "error" in error_data:
                 error_detail = error_data["error"].get("message", error_detail)
-        except:
-            pass
+                # Добавляем дополнительную информацию, если есть
+                if "type" in error_data["error"]:
+                    error_detail += f" (тип: {error_data['error']['type']})"
+        except Exception as parse_error:
+            logger.error(f"Failed to parse error response: {parse_error}")
+            # Пробуем получить текст ответа
+            try:
+                error_text = e.response.text
+                if error_text:
+                    error_detail = f"Ошибка API: {error_text[:200]}"
+            except:
+                pass
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error_detail

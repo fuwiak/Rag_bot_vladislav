@@ -303,8 +303,14 @@ export default function ModelsPage() {
       } else {
         const errorData = await response.json().catch(() => ({ detail: 'Не удалось получить детали ошибки' }))
         const errorMessage = errorData.detail || errorData.message || `Ошибка при отправке сообщения (статус: ${response.status})`
-        console.error('Error testing model:', errorData)
-        alert(errorMessage)
+        console.error('Error testing model - Full response:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorData: errorData,
+          headers: Object.fromEntries(response.headers.entries())
+        })
+        // Показываем детальную ошибку
+        alert(`Ошибка тестирования модели:\n\n${errorMessage}\n\nПроверьте консоль (F12) для деталей.`)
         // Удаляем последнее сообщение пользователя при ошибке
         setTestMessages(testMessages)
       }
