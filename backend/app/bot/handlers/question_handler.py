@@ -72,6 +72,10 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     answer = None
     use_fallback = False
     
+    # Проверяем режим ответа
+    answer_mode = data.get("answer_mode", "rag_mode")
+    logger.info(f"[QUESTION HANDLER] Answer mode for user {user_id}: {answer_mode}")
+    
     try:
         # Генерация ответа через RAG сервис с ограничением времени (5-7 секунд согласно ТЗ п. 6.3)
         import asyncio
@@ -94,24 +98,30 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
             except Exception as e:
                 logger.warning(f"[QUESTION HANDLER] Failed to save question to history: {e}")
             
-            # Создаем задачу с таймаутом
-            try:
-                answer = await asyncio.wait_for(
-                    rag_service.generate_answer(user_id, question),
-                    timeout=7.0  # Максимум 7 секунд
-                )
-                logger.info(f"[QUESTION HANDLER] RAG answer generated successfully for user {user_id}")
-            except asyncio.TimeoutError:
-                logger.warning(f"[QUESTION HANDLER] Timeout for user {user_id}, trying fast answer")
-                try:
-                    answer = await rag_service.generate_answer_fast(user_id, question)
-                    logger.info(f"[QUESTION HANDLER] Fast RAG answer generated for user {user_id}")
-                except Exception as fast_error:
-                    logger.warning(f"[QUESTION HANDLER] Fast RAG also failed for user {user_id}: {fast_error}, using LLM fallback")
-                    use_fallback = True
-            except Exception as rag_error:
-                logger.error(f"[QUESTION HANDLER] RAG error for user {user_id}: {rag_error}, using LLM fallback", exc_info=True)
+            if answer_mode == "general_mode":
+                # Режим общих вопросов - сразу используем LLM без RAG
+                logger.info(f"[QUESTION HANDLER] General mode: skipping RAG, using LLM directly")
                 use_fallback = True
+            else:
+                # Режим RAG - пытаемся использовать документы
+                # Создаем задачу с таймаутом
+                try:
+                    answer = await asyncio.wait_for(
+                        rag_service.generate_answer(user_id, question),
+                        timeout=10.0  # Увеличено до 10 секунд
+                    )
+                    logger.info(f"[QUESTION HANDLER] RAG answer generated successfully for user {user_id}")
+                except asyncio.TimeoutError:
+                    logger.warning(f"[QUESTION HANDLER] Timeout for user {user_id}, trying fast answer")
+                    try:
+                        answer = await rag_service.generate_answer_fast(user_id, question)
+                        logger.info(f"[QUESTION HANDLER] Fast RAG answer generated for user {user_id}")
+                    except Exception as fast_error:
+                        logger.warning(f"[QUESTION HANDLER] Fast RAG also failed for user {user_id}: {fast_error}, using LLM fallback")
+                        use_fallback = True
+                except Exception as rag_error:
+                    logger.error(f"[QUESTION HANDLER] RAG error for user {user_id}: {rag_error}, using LLM fallback", exc_info=True)
+                    use_fallback = True
             
             # Fallback: используем прямой LLM, но ВСЕГДА с настройками проекта и промптом
             if use_fallback or not answer:
