@@ -1,0 +1,80 @@
+# Настройка Celery для обработки файлов на Railway
+
+## Обзор
+
+Celery используется для обработки файлов в отдельном воркере, что предотвращает out of memory ошибки на основном сервере.
+
+## Шаги настройки
+
+### 1. Добавить Redis в Railway проект
+
+1. В Railway проекте нажмите **"New"** → **"Database"** → **"Add Redis"**
+2. Railway автоматически создаст Redis и добавит переменную окружения `REDIS_URL`
+
+### 2. Настроить переменные окружения для Backend
+
+Убедитесь, что в Backend сервисе установлены следующие переменные:
+
+- `REDIS_URL` - автоматически устанавливается Railway при добавлении Redis
+- `CELERY_BROKER_URL` - можно оставить пустым (будет использован `REDIS_URL`)
+- `CELERY_RESULT_BACKEND` - можно оставить пустым (будет использован `REDIS_URL`)
+
+### 3. Создать отдельный Worker сервис в Railway
+
+1. В Railway проекте нажмите **"New"** → **"GitHub Repo"**
+2. Выберите тот же репозиторий, что и для Backend
+3. Настройте сервис:
+   - **Name**: `backend-worker` (или любое другое имя)
+   - **Root Directory**: (пусто)
+   - **Dockerfile Path**: `backend/Dockerfile`
+   - **Start Command**: `bash backend/start_celery_worker.sh`
+
+### 4. Настроить переменные окружения для Worker
+
+Скопируйте все переменные окружения из Backend сервиса в Worker сервис:
+- `DATABASE_URL`
+- `REDIS_URL` (или `CELERY_BROKER_URL` и `CELERY_RESULT_BACKEND`)
+- `QDRANT_URL`
+- `QDRANT_API_KEY`
+- `OPENROUTER_API_KEY`
+- И все остальные переменные, которые использует Backend
+
+### 5. Проверить работу
+
+1. Загрузите файл через admin panel
+2. Проверьте логи Worker сервиса - должны появиться сообщения о обработке документа
+3. Проверьте логи Backend - должны появиться сообщения о создании Celery задачи
+
+## Структура
+
+- **Backend сервис**: Обрабатывает HTTP запросы, создает Celery задачи
+- **Worker сервис**: Выполняет Celery задачи (обработка файлов) в отдельном процессе
+
+## Мониторинг
+
+Логи Worker показывают:
+- `[Celery] Starting processing document...` - начало обработки
+- `[Celery] Document parsed...` - парсинг завершен
+- `[Celery] Processed chunk X/Y...` - прогресс обработки чанков
+- `[Celery] Processing complete...` - обработка завершена
+
+## Troubleshooting
+
+### Worker не запускается
+
+1. Проверьте, что `REDIS_URL` установлен в переменных окружения Worker
+2. Проверьте логи Worker на наличие ошибок подключения к Redis
+3. Убедитесь, что Redis сервис запущен в Railway
+
+### Задачи не выполняются
+
+1. Проверьте, что Worker подключен к тому же Redis, что и Backend
+2. Проверьте логи Backend - должны быть сообщения `[Upload] Celery task created: ...`
+3. Проверьте логи Worker - должны быть сообщения о получении задач
+
+### Out of Memory в Worker
+
+1. Worker настроен с `--concurrency=1` (одна задача за раз)
+2. Worker перезапускается после 50 задач (`--max-tasks-per-child=50`)
+3. Если проблема сохраняется, можно уменьшить `max-tasks-per-child` до 10-20
+

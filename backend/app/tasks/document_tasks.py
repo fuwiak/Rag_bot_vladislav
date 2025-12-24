@@ -180,16 +180,22 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                     db.add(chunk)
                     
                     # Сохраняем в Qdrant (ограничиваем payload для экономии памяти)
-                    await vector_store.add_point(
-                        collection_name=str(project_id),
-                        point_id=str(chunk.id),
-                        vector=embedding,
-                        payload={
-                            "document_id": str(document_id),
-                            "chunk_index": chunk_index,
-                            "chunk_text": chunk_text[:500]  # Ограничиваем для Qdrant
-                        }
-                    )
+                    try:
+                        point_id = await vector_store.store_vector(
+                            collection_name=f"project_{project_id}",
+                            vector=embedding,
+                            payload={
+                                "document_id": str(document_id),
+                                "chunk_id": str(chunk.id),
+                                "chunk_index": chunk_index,
+                                "chunk_text": chunk_text[:500]  # Ограничиваем для Qdrant
+                            }
+                        )
+                        chunk.qdrant_point_id = point_id
+                        await db.flush()
+                    except Exception as e:
+                        logger.error(f"[Celery] Ошибка сохранения вектора в Qdrant для чанка {chunk_index}: {e}")
+                        # Продолжаем обработку, даже если Qdrant недоступен
                     
                     chunk_memory_after = process.memory_info().rss / 1024 / 1024
                     if chunk_index % 10 == 0:
