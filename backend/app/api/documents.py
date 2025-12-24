@@ -374,8 +374,14 @@ async def upload_documents(
             # Используем asyncio.create_task для полностью асинхронной обработки
             async def process_in_background():
                 try:
-                    # Добавляем задержку чтобы дать время основному запросу завершиться
-                    await asyncio.sleep(0.5)
+                    # Увеличиваем задержку чтобы дать время основному запросу завершиться
+                    # и освободить память перед началом обработки
+                    await asyncio.sleep(2.0)  # Увеличено с 0.5 до 2.0 секунд
+                    
+                    # Явно освобождаем память перед началом обработки
+                    import gc
+                    gc.collect()
+                    
                     await process_document_async_from_file(
                         document.id, 
                         project_id, 
@@ -385,6 +391,9 @@ async def upload_documents(
                     )
                 except Exception as e:
                     logger.error(f"[Upload] Background processing error for document {document.id}: {e}", exc_info=True)
+                    # Освобождаем память даже при ошибке
+                    import gc
+                    gc.collect()
             
             # Запускаем задачу в фоне (не ждем её завершения)
             # Используем asyncio.ensure_future для гарантии выполнения даже если задача не awaited
