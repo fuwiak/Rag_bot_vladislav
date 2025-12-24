@@ -215,24 +215,42 @@ class RAGService:
         # Быстрая генерация с ограниченным размером
         from app.models.llm_model import GlobalModelSettings
         from sqlalchemy import select
+        import logging
+        logger = logging.getLogger(__name__)
         
         settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
         global_settings = settings_result.scalar_one_or_none()
         
+        logger.info(f"[RAG SERVICE FAST] Global settings from DB: primary={global_settings.primary_model_id if global_settings else 'None'}, fallback={global_settings.fallback_model_id if global_settings else 'None'}")
+        
         primary_model = None
         fallback_model = None
         
+        # Приоритет: 1) модель проекта, 2) глобальные настройки из БД, 3) дефолты из .env
         if project.llm_model:
             primary_model = project.llm_model
+            logger.info(f"[RAG SERVICE FAST] Using project model: {primary_model}")
+            if global_settings and global_settings.fallback_model_id:
+                fallback_model = global_settings.fallback_model_id
+                logger.info(f"[RAG SERVICE FAST] Using global fallback from DB: {fallback_model}")
+            else:
+                from app.core.config import settings as app_settings
+                fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                logger.info(f"[RAG SERVICE FAST] Using default fallback from .env: {fallback_model}")
         elif global_settings:
             primary_model = global_settings.primary_model_id
             fallback_model = global_settings.fallback_model_id
+            logger.info(f"[RAG SERVICE FAST] Using global models from DB: primary={primary_model}, fallback={fallback_model}")
         
         from app.core.config import settings as app_settings
         if not primary_model:
             primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+            logger.info(f"[RAG SERVICE FAST] Using default primary from .env: {primary_model}")
         if not fallback_model:
             fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+            logger.info(f"[RAG SERVICE FAST] Using default fallback from .env: {fallback_model}")
+        
+        logger.info(f"[RAG SERVICE FAST] Final models - primary={primary_model}, fallback={fallback_model}")
         
         from app.llm.openrouter_client import OpenRouterClient
         llm_client = OpenRouterClient(
