@@ -48,13 +48,13 @@ class ResponseFormatter:
     def _clean_markdown(self, text: str) -> str:
         """
         Очищает markdown форматирование для Telegram
-        Удаляет или конвертирует markdown синтаксис в простой текст
+        Удаляет markdown синтаксис, оставляя только чистый текст
         
         Args:
             text: Текст с markdown форматированием
         
         Returns:
-            Очищенный текст
+            Очищенный текст без markdown
         """
         if not text:
             return text
@@ -62,16 +62,20 @@ class ResponseFormatter:
         # Удаляем заголовки markdown (###, ##, #)
         text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
         
-        # Удаляем жирный текст markdown (**text** или __text__)
-        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-        text = re.sub(r'__(.+?)__', r'\1', text)
+        # Удаляем жирный текст markdown (**text** или __text__) - убираем звездочки и подчеркивания
+        # Сначала обрабатываем двойные звездочки
+        text = re.sub(r'\*\*([^*]+?)\*\*', r'\1', text)
+        # Затем одиночные звездочки для жирного (если есть)
+        text = re.sub(r'\*([^*\n]+?)\*', r'\1', text)
+        # Двойные подчеркивания
+        text = re.sub(r'__([^_]+?)__', r'\1', text)
         
-        # Удаляем курсив markdown (*text* или _text_, но только если не часть слова)
-        text = re.sub(r'(?<!\*)\*([^*]+?)\*(?!\*)', r'\1', text)
-        text = re.sub(r'(?<!_)_([^_]+?)_(?!_)', r'\1', text)
+        # Удаляем курсив markdown (_text_ или *text*, но аккуратно)
+        # Одиночные подчеркивания (курсив)
+        text = re.sub(r'(?<![_*])_([^_\n]+?)_(?![_*])', r'\1', text)
         
         # Удаляем зачеркнутый текст (~~text~~)
-        text = re.sub(r'~~(.+?)~~', r'\1', text)
+        text = re.sub(r'~~([^~]+?)~~', r'\1', text)
         
         # Удаляем inline code блоки (`code`) - оставляем только текст
         text = re.sub(r'`([^`]+)`', r'\1', text)
@@ -90,6 +94,12 @@ class ResponseFormatter:
         
         # Удаляем горизонтальные линии (---, ***)
         text = re.sub(r'^[-*]{3,}$', '', text, flags=re.MULTILINE)
+        
+        # Удаляем оставшиеся одиночные звездочки (которые могли остаться)
+        text = re.sub(r'\*+', '', text)
+        
+        # Удаляем оставшиеся одиночные подчеркивания (которые могли остаться)
+        text = re.sub(r'_+', '', text)
         
         # Удаляем лишние пустые строки (более 2 подряд)
         text = re.sub(r'\n{3,}', '\n\n', text)
