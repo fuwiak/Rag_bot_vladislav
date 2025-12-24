@@ -14,10 +14,11 @@ class OpenRouterClient:
     """Клиент для OpenRouter API с fallback логикой и цепочкой моделей для русского языка"""
     
     # Дополнительные fallback модели для русского языка (в порядке приоритета)
+    # Эти модели хорошо работают с русским языком
     RUSSIAN_FALLBACK_MODELS = [
         "deepseek/deepseek-chat",  # DeepSeek - отличная поддержка русского
-        "qwen/qwen-2.5-72b-instruct",  # Qwen - хорошая поддержка русского
-        "nex-ai/nex-agi-deepseek-v3.1-nex-n1",  # DeepSeek V3.1 Nex N1 (free)
+        "qwen/qwen-2.5-72b-instruct",  # Qwen 2.5 72B - хорошая поддержка русского
+        "nex-ai/nex-agi-deepseek-v3.1-nex-n1",  # Nex AGI: DeepSeek V3.1 Nex N1 (free)
         "minimax/minimax-m2.1",  # MiniMax M2.1
         "mistralai/mistral-7b-instruct",  # Mistral 7B Instruct (free)
     ]
