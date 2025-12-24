@@ -100,8 +100,103 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
             
             if answer_mode == "general_mode":
                 # Режим общих вопросов - сразу используем LLM без RAG
-                logger.info(f"[QUESTION HANDLER] General mode: skipping RAG, using LLM directly")
-                use_fallback = True
+                logger.info(f"[QUESTION HANDLER] General mode: skipping RAG, using LLM directly for user {user_id}")
+                try:
+                    # Получаем проект для использования его настроек
+                    from app.models.user import User
+                    from app.models.project import Project
+                    from sqlalchemy import select
+                    
+                    user_result = await db.execute(select(User).where(User.id == user_id))
+                    user = user_result.scalar_one_or_none()
+                    
+                    if not user:
+                        raise ValueError("User not found")
+                    
+                    project_result = await db.execute(select(Project).where(Project.id == user.project_id))
+                    project = project_result.scalar_one_or_none()
+                    
+                    if not project:
+                        raise ValueError("Project not found")
+                    
+                    # Определяем модель LLM (приоритет: модель проекта > глобальная настройка из БД > дефолт из .env)
+                    from app.models.llm_model import GlobalModelSettings
+                    settings_result = await db.execute(select(GlobalModelSettings).limit(1))
+                    global_settings = settings_result.scalar_one_or_none()
+                    
+                    primary_model = None
+                    fallback_model = None
+                    
+                    if project.llm_model:
+                        primary_model = project.llm_model
+                        if global_settings and global_settings.fallback_model_id:
+                            fallback_model = global_settings.fallback_model_id
+                        else:
+                            from app.core.config import settings as app_settings
+                            fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                    elif global_settings:
+                        primary_model = global_settings.primary_model_id
+                        fallback_model = global_settings.fallback_model_id
+                    
+                    from app.core.config import settings as app_settings
+                    if not primary_model:
+                        primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                    if not fallback_model:
+                        fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                    
+                    logger.info(f"[QUESTION HANDLER] GENERAL MODE: Using models - primary={primary_model}, fallback={fallback_model}")
+                    
+                    # Получаем историю диалога
+                    conversation_history = await rag_service._get_conversation_history(user_id, limit=10)
+                    
+                    # Создаем простой промпт БЕЗ упоминания документов
+                    messages = []
+                    
+                    # Системный промпт для общих вопросов (без упоминания документов)
+                    system_prompt = "Ты дружелюбный помощник. Отвечай на вопросы пользователя естественно и полезно."
+                    if project.prompt_template and project.prompt_template.strip():
+                        # Используем промпт проекта, но убираем упоминания о документах
+                        system_prompt = project.prompt_template
+                        # Убираем упоминания о документах из промпта
+                        system_prompt = system_prompt.replace("на основе документов", "")
+                        system_prompt = system_prompt.replace("из документов", "")
+                        system_prompt = system_prompt.replace("в документах", "")
+                        system_prompt = system_prompt.replace("загруженных документов", "")
+                        system_prompt = system_prompt.strip()
+                    
+                    messages.append({"role": "system", "content": system_prompt})
+                    
+                    # Добавляем историю диалога
+                    for hist_msg in conversation_history[-5:]:  # Последние 5 сообщений
+                        messages.append(hist_msg)
+                    
+                    # Добавляем текущий вопрос
+                    messages.append({"role": "user", "content": question})
+                    
+                    # Используем LLM напрямую
+                    from app.llm.openrouter_client import OpenRouterClient
+                    llm_client = OpenRouterClient(
+                        model_primary=primary_model,
+                        model_fallback=fallback_model
+                    )
+                    
+                    logger.info(f"[QUESTION HANDLER] GENERAL MODE: Sending request to LLM (no RAG, no documents)")
+                    raw_answer = await llm_client.chat_completion(
+                        messages=messages,
+                        max_tokens=min(project.max_response_length // 4, 1000),
+                        temperature=0.7
+                    )
+                    
+                    answer = raw_answer.strip()
+                    
+                    if not answer:
+                        answer = "Извините, не удалось сгенерировать ответ. Попробуйте переформулировать вопрос."
+                    
+                    logger.info(f"[QUESTION HANDLER] GENERAL MODE: LLM response received, length: {len(answer)}")
+                    
+                except Exception as general_error:
+                    logger.error(f"[QUESTION HANDLER] GENERAL MODE: Error for user {user_id}: {general_error}", exc_info=True)
+                    answer = "Извините, произошла ошибка при обработке вашего вопроса. Попробуйте позже."
             else:
                 # Режим RAG - пытаемся использовать документы
                 # Создаем задачу с таймаутом
