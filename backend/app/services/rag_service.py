@@ -101,7 +101,9 @@ class RAGService:
             strategy = {"use_chunks": True, "use_summaries": True, "use_metadata": True, "use_general_knowledge": True}
             strategy_info = {"documents_metadata": []}
         
+        # Инициализируем переменные в начале (до всех блоков)
             chunk_texts = []
+        similar_chunks = []
         metadata_context = ""
         
         # Определяем стратегию поиска на основе анализа агента
@@ -111,14 +113,16 @@ class RAGService:
         # РАСШИРЕННЫЙ ПОИСК ЧАНКОВ - используем все техники перед fallback
         if strategy.get("use_chunks", True) and collection_exists:
             logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
-            chunk_texts, similar_chunks = await self._advanced_chunk_search(
+            found_chunks, found_similar = await self._advanced_chunk_search(
                 question=question,
                 collection_name=collection_name,
                 project_id=project.id,
                 top_k=top_k,
                 strategy=strategy
             )
-            if chunk_texts:
+            if found_chunks:
+                chunk_texts = found_chunks
+                similar_chunks = found_similar
                 logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} chunks using advanced search techniques")
         
         # Для вопросов о содержании - приоритет summaries (не используем чанки)
@@ -137,7 +141,8 @@ class RAGService:
         if (strategy.get("use_summaries", True) and not chunk_texts) or is_content_question:
             if is_content_question:
                 logger.info(f"[RAG SERVICE] Content question detected, using summaries strategy")
-                # Для вопросов о содержании не используем чанки, только summaries                chunk_texts = []
+                # Для вопросов о содержании не используем чанки, только summaries
+            chunk_texts = []
             else:
                 logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
             
@@ -413,19 +418,19 @@ class RAGService:
                 # Вставляем историю перед финальным вопросом
                 messages = [messages[0]] + recent_history + [messages[1]]
         else:
-            # ВСЕГДА используем промпт проекта, даже если документов нет
-            # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
-            # Построение промпта с контекстом (может быть пустым)
+        # ВСЕГДА используем промпт проекта, даже если документов нет
+        # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+        # Построение промпта с контекстом (может быть пустым)
             # chunks_for_prompt уже определен выше
             
-            messages = self.prompt_builder.build_prompt(
+        messages = self.prompt_builder.build_prompt(
             question=question,
                 chunks=chunks_for_prompt,  # Может быть пустым списком
             prompt_template=project.prompt_template,
             max_length=project.max_response_length,
                 conversation_history=conversation_history,
                 metadata_context=metadata_context  # Добавляем метаданные если есть
-            )
+        )
         
         # Генерация ответа через LLM
         # Получаем глобальные настройки моделей из БД
@@ -481,11 +486,11 @@ class RAGService:
         
         # Генерируем ответ
         try:
-            raw_answer = await llm_client.chat_completion(
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=0.7
-            )
+        raw_answer = await llm_client.chat_completion(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.7
+        )
         
             # Проверяем, не является ли ответ отказом
             answer_text = raw_answer.strip().lower()
@@ -506,25 +511,64 @@ class RAGService:
                     max_tokens=max_tokens
                 )
             else:
-                # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
-                answer = self.response_formatter.format_response(
-                    response=raw_answer,
-                    max_length=project.max_response_length,
+        # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
+        answer = self.response_formatter.format_response(
+            response=raw_answer,
+            max_length=project.max_response_length,
                             chunks=similar_chunks if 'similar_chunks' in locals() else []
                         )
         except Exception as llm_error:
-            logger.warning(f"[RAG SERVICE] LLM error: {llm_error}, trying document summary fallback")
-            # Если ошибка LLM, пытаемся сгенерировать сводку
+            logger.warning(f"[RAG SERVICE] LLM error: {llm_error}, trying aggressive fallback with all techniques")
+            # АГРЕССИВНЫЙ FALLBACK - используем все техники перед отказом
+            answer = None
+            
+            # Fallback 1: Пытаемся получить метаданные и сгенерировать сводку
+            if not metadata_context:
+                try:
+                    from app.services.document_metadata_service import DocumentMetadataService
+                    metadata_service = DocumentMetadataService()
+                    documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
+                    if documents_metadata:
+                        metadata_context = metadata_service.create_metadata_context(documents_metadata)
+                except Exception as meta_error:
+                    logger.warning(f"[RAG SERVICE] Error getting metadata for fallback: {meta_error}")
+            
             if metadata_context:
-                answer = await self._generate_document_summary_fallback(
+                try:
+                    answer = await self._generate_document_summary_fallback(
+                        question=question,
+                        metadata_context=metadata_context,
+                        project=project,
+                        llm_client=llm_client,
+                        max_tokens=max_tokens
+                    )
+                except Exception as fallback_error:
+                    logger.warning(f"[RAG SERVICE] Document summary fallback failed: {fallback_error}")
+            
+            # Fallback 2: Если все еще нет ответа, используем AI агента для генерации ответа
+            if not answer:
+                try:
+                    answer = await self._generate_ai_agent_fallback(
+                        question=question,
+                        project=project,
+                        llm_client=llm_client,
+                        max_tokens=max_tokens,
+                        conversation_history=conversation_history
+                    )
+                except Exception as ai_error:
+                    logger.warning(f"[RAG SERVICE] AI agent fallback failed: {ai_error}")
+            
+            # Fallback 3: Базовый ответ на основе названия проекта
+            if not answer:
+                answer = await self._generate_basic_fallback(
                     question=question,
-                    metadata_context=metadata_context,
-                    project=project,
-                    llm_client=llm_client,
-                    max_tokens=max_tokens
+                    project=project
                 )
-            else:
-                raise
+            
+            # Только в самом крайнем случае возвращаем сообщение об ошибке
+            if not answer:
+                logger.error(f"[RAG SERVICE] All fallback mechanisms failed for question: {question}")
+                answer = "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору."
         
         # Сохранение сообщений в историю
         await self._save_message(user_id, question, "user")
@@ -1123,7 +1167,28 @@ class RAGService:
                     )
             except Exception as e:
                 logger.warning(f"[RAG SERVICE FAST] Error generating summary fallback: {e}")
-            return "В загруженных документах нет информации по этому вопросу."
+            
+            # АГРЕССИВНЫЙ FALLBACK - используем все техники перед отказом
+            logger.warning(f"[RAG SERVICE FAST] All techniques failed, trying aggressive fallback")
+            try:
+                # Пытаемся получить хотя бы метаданные и сгенерировать ответ
+                from app.services.document_metadata_service import DocumentMetadataService
+                metadata_service = DocumentMetadataService()
+                documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
+                if documents_metadata:
+                    metadata_context = metadata_service.create_metadata_context(documents_metadata)
+                    return await self._generate_document_summary_fallback(
+                        question=question,
+                        metadata_context=metadata_context,
+                        project=project,
+                        llm_client=None,
+                        max_tokens=500
+                    )
+            except Exception as e2:
+                logger.warning(f"[RAG SERVICE FAST] Aggressive fallback failed: {e2}")
+            
+            # Только в самом крайнем случае возвращаем базовое сообщение
+            return "К сожалению, не удалось найти информацию в документах. Документы могут быть еще в процессе обработки. Попробуйте задать вопрос позже или уточните ваш запрос."
         
         # Извлечение текстов чанков
         chunk_texts = [chunk["payload"]["chunk_text"] for chunk in similar_chunks[:2]]  # Только 2 чанка
@@ -1408,12 +1473,12 @@ class RAGService:
                 # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
                 try:
                     # Пробуем обычный запрос
-                    result = await self.db.execute(
-                        select(Document)
-                        .where(Document.project_id == project_id)
-                        .limit(10)
-                    )
-                    documents = result.scalars().all()
+                result = await self.db.execute(
+                    select(Document)
+                    .where(Document.project_id == project_id)
+                    .limit(10)
+                )
+                documents = result.scalars().all()
                 except Exception as db_error:
                     # Если ошибка из-за отсутствия поля summary, используем raw SQL
                     error_str = str(db_error).lower()
@@ -1519,7 +1584,7 @@ class RAGService:
                     logger.warning(f"[RAG SERVICE] Error getting metadata for questions: {metadata_error}")
                 
                 if not chunk_texts:
-                    return []
+                return []
             
             # Объединяем чанки в контекст
             context = "\n\n".join(chunk_texts[:10])  # Максимум 10 чанков
