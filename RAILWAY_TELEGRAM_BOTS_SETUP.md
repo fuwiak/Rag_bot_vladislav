@@ -116,7 +116,18 @@ Railway Project
    - Должно быть: `Applying Alembic migrations...`
    - Должно быть: `Running upgrade ... -> 2025_12_24_bot_is_active`
 
-2. **Если ошибка с constraint:**
+2. **Если миграция не применяется автоматически, примените вручную через SQL:**
+   ```sql
+   ALTER TABLE projects ADD COLUMN IF NOT EXISTS bot_is_active VARCHAR(10) DEFAULT 'false' NOT NULL;
+   UPDATE projects SET bot_is_active = 'true' WHERE bot_token IS NOT NULL;
+   ```
+
+3. **Или используйте скрипт:**
+   - В Railway откройте Backend сервис
+   - Перейдите в раздел "Deployments" → "Latest" → "Shell"
+   - Выполните: `cd /app/backend && python apply_migration_manually.py`
+
+4. **Если ошибка с constraint:**
    - Миграция теперь проверяет существование constraint перед удалением
    - Ошибка должна исчезнуть после следующего деплоя
 
