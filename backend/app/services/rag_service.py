@@ -101,8 +101,8 @@ class RAGService:
             strategy = {"use_chunks": True, "use_summaries": True, "use_metadata": True, "use_general_knowledge": True}
             strategy_info = {"documents_metadata": []}
         
-        # Инициализируем переменные в начале (до всех блоков)
-            chunk_texts = []
+        # Инициализируем переменные в начале (до всех блоков) - КРИТИЧНО для избежания UnboundLocalError
+        chunk_texts = []
         similar_chunks = []
         metadata_context = ""
         
