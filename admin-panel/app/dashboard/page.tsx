@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Sidebar from '../components/Sidebar'
+import { cache, cacheKeys } from '../lib/cache'
 
 interface Project {
   id: string
@@ -21,11 +22,23 @@ export default function DashboardPage() {
     fetchProjects()
   }, [router])
 
-  const fetchProjects = async () => {
+  const fetchProjects = async (useCache = true) => {
+    // Показываем кэшированные данные сразу, если есть
+    if (useCache) {
+      const cachedProjects = cache.get<Project[]>(cacheKeys.projects)
+      if (cachedProjects) {
+        setProjects(cachedProjects)
+        setLoading(false)
+        // Обновляем данные в фоне
+        fetchProjects(false)
+        return
+      }
+    }
+
     try {
       const { apiFetch } = await import('../lib/api-helpers')
-      // Добавляем timestamp для предотвращения кэширования
-      const response = await apiFetch(`/api/projects?t=${Date.now()}`, {
+      // Не добавляем timestamp при использовании кэша
+      const response = await apiFetch(`/api/projects`, {
         cache: 'no-store',
         headers: {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -37,13 +50,15 @@ export default function DashboardPage() {
       if (response.ok) {
         const data = await response.json()
         setProjects(data)
+        // Сохраняем в кэш на 2 минуты
+        cache.set(cacheKeys.projects, data, 2 * 60 * 1000)
       } else if (response.status === 401 || response.status === 403) {
         console.error('Authentication error:', response.status)
         // Если нет токена, можно попробовать установить дефолтный токен
         if (typeof window !== 'undefined' && !localStorage.getItem('token')) {
           localStorage.setItem('token', 'dummy-token')
           // Повторяем запрос
-          const retryResponse = await apiFetch(`/api/projects?t=${Date.now()}`, {
+          const retryResponse = await apiFetch(`/api/projects`, {
             cache: 'no-store',
             headers: {
               'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -54,16 +69,27 @@ export default function DashboardPage() {
           if (retryResponse.ok) {
             const data = await retryResponse.json()
             setProjects(data)
+            cache.set(cacheKeys.projects, data, 2 * 60 * 1000)
           }
         }
       } else {
-        // При ошибке (502, 503 и т.д.) показываем пустой список вместо кэша
-        setProjects([])
+        // При ошибке используем кэш, если есть
+        const cachedProjects = cache.get<Project[]>(cacheKeys.projects)
+        if (cachedProjects) {
+          setProjects(cachedProjects)
+        } else {
+          setProjects([])
+        }
       }
     } catch (err) {
       console.error('Error fetching projects:', err)
-      // При ошибке показываем пустой список вместо кэша
-      setProjects([])
+      // При ошибке используем кэш, если есть
+      const cachedProjects = cache.get<Project[]>(cacheKeys.projects)
+      if (cachedProjects) {
+        setProjects(cachedProjects)
+      } else {
+        setProjects([])
+      }
     } finally {
       setLoading(false)
     }

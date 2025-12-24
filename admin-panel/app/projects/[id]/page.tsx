@@ -71,20 +71,38 @@ export default function ProjectDetailPage() {
 
   // Загружаем документы и пользователей только при переключении на соответствующие вкладки
   useEffect(() => {
-    if (activeTab === 'documents' && documents.length === 0 && !loading) {
+    if (activeTab === 'documents') {
       fetchDocuments()
     }
   }, [activeTab])
 
   useEffect(() => {
-    if (activeTab === 'users' && users.length === 0 && !loading) {
+    if (activeTab === 'users') {
       fetchUsers()
     }
   }, [activeTab])
 
   // Загружаем только основные данные проекта
   const fetchProjectBasicData = async () => {
-    setLoading(true)
+    // Показываем кэшированные данные сразу
+    const { cache, cacheKeys } = await import('../../lib/cache')
+    const cachedProject = cache.get(cacheKeys.project(projectId))
+    if (cachedProject) {
+      setProject(cachedProject)
+      setEditData({
+        name: cachedProject.name,
+        description: cachedProject.description || '',
+        access_password: cachedProject.access_password,
+        prompt_template: cachedProject.prompt_template,
+        max_response_length: cachedProject.max_response_length,
+        bot_token: cachedProject.bot_token || '',
+      })
+      setLoading(false)
+      // Обновляем в фоне
+    } else {
+      setLoading(true)
+    }
+
     try {
       const { apiFetch } = await import('../../lib/api-helpers')
       
@@ -93,6 +111,8 @@ export default function ProjectDetailPage() {
       if (projectRes.ok) {
         const projectData = await projectRes.json()
         setProject(projectData)
+        // Сохраняем в кэш на 5 минут
+        cache.set(cacheKeys.project(projectId), projectData, 5 * 60 * 1000)
         // Заполняем форму редактирования
         setEditData({
           name: projectData.name,
@@ -115,6 +135,16 @@ export default function ProjectDetailPage() {
 
   // Lazy loading документов
   const fetchDocuments = async () => {
+    const { cache, cacheKeys } = await import('../../lib/cache')
+    const cacheKey = cacheKeys.projectDocuments(projectId)
+    
+    // Показываем кэшированные данные сразу
+    const cachedDocuments = cache.get(cacheKey)
+    if (cachedDocuments) {
+      setDocuments(cachedDocuments)
+      // Обновляем в фоне
+    }
+
     try {
       const { apiFetch } = await import('../../lib/api-helpers')
       
@@ -123,14 +153,30 @@ export default function ProjectDetailPage() {
       if (documentsRes.ok) {
         const documentsData = await documentsRes.json()
         setDocuments(documentsData)
+        // Сохраняем в кэш на 2 минуты
+        cache.set(cacheKey, documentsData, 2 * 60 * 1000)
       }
     } catch (err) {
       console.error('Ошибка загрузки документов:', err)
+      // При ошибке используем кэш, если есть
+      if (cachedDocuments) {
+        setDocuments(cachedDocuments)
+      }
     }
   }
 
   // Lazy loading пользователей
   const fetchUsers = async () => {
+    const { cache, cacheKeys } = await import('../../lib/cache')
+    const cacheKey = cacheKeys.projectUsers(projectId)
+    
+    // Показываем кэшированные данные сразу
+    const cachedUsers = cache.get(cacheKey)
+    if (cachedUsers) {
+      setUsers(cachedUsers)
+      // Обновляем в фоне
+    }
+
     try {
       const { apiFetch } = await import('../../lib/api-helpers')
       
@@ -139,9 +185,15 @@ export default function ProjectDetailPage() {
       if (usersRes.ok) {
         const usersData = await usersRes.json()
         setUsers(usersData)
+        // Сохраняем в кэш на 2 минуты
+        cache.set(cacheKey, usersData, 2 * 60 * 1000)
       }
     } catch (err) {
       console.error('Ошибка загрузки пользователей:', err)
+      // При ошибке используем кэш, если есть
+      if (cachedUsers) {
+        setUsers(cachedUsers)
+      }
     }
   }
 
