@@ -21,10 +21,13 @@ class BotFactory:
         self.token_to_projects: Dict[str, list] = {}  # bot_token -> [project_id, ...]
     
     async def start_all_bots(self):
-        """Запустить все боты из проектов с настроенными токенами"""
+        """Запустить все боты из проектов с настроенными токенами и bot_is_active='true'"""
         async with AsyncSessionLocal() as db:
             result = await db.execute(
-                select(Project).where(Project.bot_token.isnot(None))
+                select(Project).where(
+                    Project.bot_token.isnot(None),
+                    Project.bot_is_active == "true"
+                )
             )
             projects = result.scalars().all()
             
@@ -40,6 +43,9 @@ class BotFactory:
             # Создаем бота для каждого уникального токена
             for bot_token, project_ids in projects_by_token.items():
                 await self.create_bot_for_token(bot_token, project_ids)
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"Started bot {bot_token[:10]}... for projects: {project_ids}")
     
     async def create_bot_for_token(self, bot_token: str, project_ids: list):
         """

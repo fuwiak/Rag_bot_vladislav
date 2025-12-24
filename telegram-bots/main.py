@@ -47,10 +47,10 @@ class BotService:
             logger.error(f"Database initialization failed: {e}")
             logger.warning("Service will continue, but bots may not work properly")
         
-        # Запуск всех ботов при старте
+        # Запуск всех активных ботов при старте
         try:
             await self.bot_factory.start_all_bots()
-            logger.info("All bots started")
+            logger.info("All active bots started")
         except Exception as e:
             logger.error(f"Failed to start bots: {e}")
         
