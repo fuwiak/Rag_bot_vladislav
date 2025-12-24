@@ -25,13 +25,17 @@ async def process_document_async_from_file(document_id: UUID, project_id: UUID, 
     import os
     import gc
     
+    file_content = None
     try:
         # Читаем файл только когда нужно
         with open(file_path, 'rb') as f:
             file_content = f.read()
         
-        # Освобождаем файл сразу после чтения
-        os.unlink(file_path)
+        # Удаляем временный файл сразу после чтения (освобождаем диск)
+        try:
+            os.unlink(file_path)
+        except Exception as e:
+            logger.warning(f"Не удалось удалить временный файл {file_path}: {e}")
         
         # Вызываем основную функцию обработки
         await process_document_async(document_id, project_id, file_content, filename, file_type)
@@ -45,6 +49,9 @@ async def process_document_async_from_file(document_id: UUID, project_id: UUID, 
             except:
                 pass
     finally:
+        # Освобождаем память
+        if file_content is not None:
+            del file_content
         gc.collect()
 
 
