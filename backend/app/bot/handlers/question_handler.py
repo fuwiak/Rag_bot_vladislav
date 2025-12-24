@@ -126,27 +126,44 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                     if not project:
                         raise ValueError("Project not found")
                     
-                    # Определяем модель LLM (приоритет: модель проекта > глобальная)
+                    # Определяем модель LLM (приоритет: модель проекта > глобальная настройка из БД > дефолт из .env)
                     from app.models.llm_model import GlobalModelSettings
                     settings_result = await db.execute(select(GlobalModelSettings).limit(1))
                     global_settings = settings_result.scalar_one_or_none()
+                    
+                    logger.info(f"[QUESTION HANDLER] FALLBACK: Global settings from DB: primary={global_settings.primary_model_id if global_settings else 'None'}, fallback={global_settings.fallback_model_id if global_settings else 'None'}")
                     
                     primary_model = None
                     fallback_model = None
                     
                     if project.llm_model:
+                        # Приоритет 1: модель проекта
                         primary_model = project.llm_model
+                        logger.info(f"[QUESTION HANDLER] FALLBACK: Using project model: {primary_model}")
+                        # Fallback из глобальных настроек БД
+                        if global_settings and global_settings.fallback_model_id:
+                            fallback_model = global_settings.fallback_model_id
+                            logger.info(f"[QUESTION HANDLER] FALLBACK: Using global fallback from DB: {fallback_model}")
+                        else:
+                            from app.core.config import settings as app_settings
+                            fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                            logger.info(f"[QUESTION HANDLER] FALLBACK: Using default fallback from .env: {fallback_model}")
                     elif global_settings:
+                        # Приоритет 2: глобальные настройки из БД
                         primary_model = global_settings.primary_model_id
                         fallback_model = global_settings.fallback_model_id
+                        logger.info(f"[QUESTION HANDLER] FALLBACK: Using global models from DB: primary={primary_model}, fallback={fallback_model}")
                     
+                    # Приоритет 3: дефолты из .env
                     from app.core.config import settings as app_settings
                     if not primary_model:
                         primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                        logger.info(f"[QUESTION HANDLER] FALLBACK: Using default primary from .env: {primary_model}")
                     if not fallback_model:
                         fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                        logger.info(f"[QUESTION HANDLER] FALLBACK: Using default fallback from .env: {fallback_model}")
                     
-                    logger.info(f"[QUESTION HANDLER] FALLBACK: Using model {primary_model} with project prompt template for user {user_id}")
+                    logger.info(f"[QUESTION HANDLER] FALLBACK: Final models - primary={primary_model}, fallback={fallback_model}")
                     
                     # Получаем историю диалога
                     conversation_history = await rag_service._get_conversation_history(user_id, limit=10)

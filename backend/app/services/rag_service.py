@@ -85,34 +85,50 @@ class RAGService:
         )
         
         # Генерация ответа через LLM
-        # Получаем глобальные настройки моделей
+        # Получаем глобальные настройки моделей из БД
         from app.models.llm_model import GlobalModelSettings
         from sqlalchemy import select
+        import logging
+        logger = logging.getLogger(__name__)
+        
         settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
         global_settings = settings_result.scalar_one_or_none()
         
+        logger.info(f"[RAG SERVICE] Global settings from DB: primary={global_settings.primary_model_id if global_settings else 'None'}, fallback={global_settings.fallback_model_id if global_settings else 'None'}")
+        
         # Определяем primary и fallback модели
+        # Приоритет: 1) модель проекта, 2) глобальные настройки из БД, 3) дефолты из .env
         primary_model = None
         fallback_model = None
         
         if project.llm_model:
             # Если у проекта есть своя модель, используем её как primary
             primary_model = project.llm_model
-            # Fallback берем из глобальных настроек
+            logger.info(f"[RAG SERVICE] Using project model: {primary_model}")
+            # Fallback берем из глобальных настроек БД
             if global_settings and global_settings.fallback_model_id:
                 fallback_model = global_settings.fallback_model_id
+                logger.info(f"[RAG SERVICE] Using global fallback from DB: {fallback_model}")
+            else:
+                # Если в БД нет fallback, используем дефолт из .env
+                from app.core.config import settings as app_settings
+                fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                logger.info(f"[RAG SERVICE] Using default fallback from .env: {fallback_model}")
         else:
-            # Используем глобальные настройки
+            # Используем глобальные настройки из БД
             if global_settings:
                 primary_model = global_settings.primary_model_id
                 fallback_model = global_settings.fallback_model_id
+                logger.info(f"[RAG SERVICE] Using global models from DB: primary={primary_model}, fallback={fallback_model}")
             
             # Если глобальных настроек нет или модели не установлены, используем дефолтные из .env
             from app.core.config import settings as app_settings
             if not primary_model:
                 primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                logger.info(f"[RAG SERVICE] Using default primary from .env: {primary_model}")
             if not fallback_model:
                 fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                logger.info(f"[RAG SERVICE] Using default fallback from .env: {fallback_model}")
         
         # Создаем клиент с моделями
         llm_client = OpenRouterClient(
