@@ -19,9 +19,15 @@ async def get_projects(
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(get_current_admin)
 ):
-    """Получить список всех проектов"""
+    """Получить список всех проектов (оптимизировано - лимит 100, без relationships)"""
+    import gc
+    
     service = ProjectService(db)
     projects = await service.get_all_projects()
+    
+    # Явно освобождаем память после запроса
+    gc.collect()
+    
     return projects
 
 

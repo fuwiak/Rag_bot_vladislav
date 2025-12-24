@@ -17,11 +17,26 @@ class UserService:
         self.db = db
     
     async def get_project_users(self, project_id: UUID) -> List[User]:
-        """Получить всех пользователей проекта"""
+        """Получить всех пользователей проекта (оптимизировано - без загрузки relationships)"""
+        from sqlalchemy.orm import noload
+        import gc
+        
+        # Загружаем пользователей без relationships для экономии памяти
+        # Используем noload чтобы явно не загружать project и messages
+        # Добавляем лимит на количество пользователей (500) для предотвращения out of memory
         result = await self.db.execute(
-            select(User).where(User.project_id == project_id)
+            select(User)
+            .where(User.project_id == project_id)
+            .options(noload(User.project), noload(User.messages))
+            .limit(500)
+            .order_by(User.created_at.desc())
         )
-        return list(result.scalars().all())
+        users = list(result.scalars().all())
+        
+        # Явно освобождаем память
+        gc.collect()
+        
+        return users
     
     async def get_user_by_id(self, user_id: UUID) -> Optional[User]:
         """Получить пользователя по ID"""

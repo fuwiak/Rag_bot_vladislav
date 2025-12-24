@@ -19,15 +19,23 @@ class ProjectService:
         self.collections_manager = CollectionsManager()
     
     async def get_all_projects(self) -> List[Project]:
-        """Получить все проекты (оптимизировано - без загрузки relationships)"""
+        """Получить все проекты (оптимизировано - без загрузки relationships, с лимитом)"""
         from sqlalchemy.orm import noload
+        import gc
         
         # Загружаем проекты без relationships для экономии памяти
         # Используем noload чтобы явно не загружать users и documents
+        # Добавляем лимит на количество проектов (100) для предотвращения out of memory
         result = await self.db.execute(
-            select(Project).options(noload(Project.users), noload(Project.documents))
+            select(Project)
+            .options(noload(Project.users), noload(Project.documents))
+            .limit(100)
+            .order_by(Project.created_at.desc())
         )
         projects = list(result.scalars().all())
+        
+        # Явно освобождаем память
+        gc.collect()
         
         return projects
     

@@ -20,9 +20,15 @@ async def get_project_users(
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(get_current_admin)
 ):
-    """Получить список пользователей проекта"""
+    """Получить список пользователей проекта (оптимизировано - лимит 500, без relationships)"""
+    import gc
+    
     service = UserService(db)
     users = await service.get_project_users(project_id)
+    
+    # Явно освобождаем память после запроса
+    gc.collect()
+    
     return users
 
 
