@@ -3,6 +3,8 @@ AI агент для определения стратегии ответа на
 Анализирует вопрос и решает, какую информацию использовать
 """
 import logging
+import json
+import re
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 
@@ -86,19 +88,20 @@ class RAGAgent:
 }}"""
 
         try:
-            response = await self.llm_client.generate(
-                prompt=analysis_prompt,
-                system_prompt="Ты - эксперт по анализу вопросов. Отвечай только валидным JSON без дополнительного текста.",
+            # Используем chat_completion вместо generate
+            messages = [
+                {"role": "system", "content": "Ты - эксперт по анализу вопросов. Отвечай только валидным JSON без дополнительного текста."},
+                {"role": "user", "content": analysis_prompt}
+            ]
+            
+            response_text = await self.llm_client.chat_completion(
+                messages=messages,
                 temperature=0.3,
                 max_tokens=500
             )
             
-            # Парсим JSON ответ
-            import json
-            import re
-            
             # Извлекаем JSON из ответа (может быть обернут в markdown)
-            json_text = response.content.strip()
+            json_text = response_text.strip()
             # Убираем markdown code blocks если есть
             json_text = re.sub(r'```json\s*', '', json_text)
             json_text = re.sub(r'```\s*', '', json_text)
@@ -117,7 +120,6 @@ class RAGAgent:
         except Exception as e:
             logger.warning(f"[RAG AGENT] Error analyzing question: {e}, using default strategy")
             # Fallback: определяем стратегию по ключевым словам в вопросе
-            import re
             question_lower = question.lower()
             
             # Определяем тип вопроса - приоритет для вопросов о содержании

@@ -154,19 +154,26 @@ class RAGService:
                 logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
         
         # Для вопросов о содержании используем простой промпт из рабочего скрипта
-        if is_content_question and chunk_texts:
-            # Форматируем summaries как в рабочем скрипте
-            context_parts = []
-            for i, doc in enumerate(chunk_texts, 1):
-                if isinstance(doc, dict):
-                    source = doc.get("source", "Документ")
-                    text = doc.get("text", "")
-                    score = doc.get("score", 1.0)
-                    context_parts.append(f"Фрагмент {i} (источник: {source}, релевантность: {score:.2f}):\n{text}")
-                else:
-                    context_parts.append(f"Фрагмент {i}:\n{doc}")
-            
-            context = "\n\n".join(context_parts)
+        if is_content_question:
+            if chunk_texts:
+                # Есть summaries - используем их
+                context_parts = []
+                for i, doc in enumerate(chunk_texts, 1):
+                    if isinstance(doc, dict):
+                        source = doc.get("source", "Документ")
+                        text = doc.get("text", "")
+                        score = doc.get("score", 1.0)
+                        context_parts.append(f"Фрагмент {i} (источник: {source}, релевантность: {score:.2f}):\n{text}")
+                    else:
+                        context_parts.append(f"Фрагмент {i}:\n{doc}")
+                
+                context = "\n\n".join(context_parts)
+            elif metadata_context:
+                # Нет summaries, но есть метаданные - используем их
+                context = f"Метаданные документов (документы еще обрабатываются):\n\n{metadata_context}"
+            else:
+                # Нет ни summaries, ни метаданных
+                context = "Документы еще обрабатываются. Доступна только информация о загруженных файлах."
             
             # Простой промпт из рабочего скрипта
             enhanced_prompt = f"""На основе следующих фрагментов документов ответь на вопрос пользователя.
@@ -190,9 +197,9 @@ class RAGService:
                 # Вставляем историю перед финальным вопросом
                 messages = [messages[0]] + recent_history + [messages[1]]
         else:
-            # ВСЕГДА используем промпт проекта, даже если документов нет
-            # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
-            # Построение промпта с контекстом (может быть пустым)
+        # ВСЕГДА используем промпт проекта, даже если документов нет
+        # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+        # Построение промпта с контекстом (может быть пустым)
             # Преобразуем chunk_texts в строки если они в формате dict
             chunks_for_prompt = []
             for chunk in chunk_texts:
@@ -201,14 +208,14 @@ class RAGService:
                 else:
                     chunks_for_prompt.append(chunk)
             
-            messages = self.prompt_builder.build_prompt(
-                question=question,
+        messages = self.prompt_builder.build_prompt(
+            question=question,
                 chunks=chunks_for_prompt,  # Может быть пустым списком
-                prompt_template=project.prompt_template,
-                max_length=project.max_response_length,
+            prompt_template=project.prompt_template,
+            max_length=project.max_response_length,
                 conversation_history=conversation_history,
                 metadata_context=metadata_context  # Добавляем метаданные если есть
-            )
+        )
         
         # Генерация ответа через LLM
         # Получаем глобальные настройки моделей из БД
@@ -605,12 +612,12 @@ class RAGService:
                 # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
                 try:
                     # Пробуем обычный запрос
-                    result = await self.db.execute(
-                        select(Document)
-                        .where(Document.project_id == project_id)
-                        .limit(10)
-                    )
-                    documents = result.scalars().all()
+                result = await self.db.execute(
+                    select(Document)
+                    .where(Document.project_id == project_id)
+                    .limit(10)
+                )
+                documents = result.scalars().all()
                 except Exception as db_error:
                     # Если ошибка из-за отсутствия поля summary, используем raw SQL
                     error_str = str(db_error).lower()
@@ -687,10 +694,10 @@ class RAGService:
                                 logger.warning(f"Error generating summary for doc {doc.id}: {e}")
                             
                             # Приоритет 3: используем содержимое напрямую
-                            if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
-                                # Берем первые 1000 символов из содержимого
-                                content = doc.content[:1000]
-                                if content.strip():
+                        if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
+                            # Берем первые 1000 символов из содержимого
+                            content = doc.content[:1000]
+                            if content.strip():
                                     chunk_texts.append(f"Документ '{doc.filename}': {content}")
             
             if not chunk_texts:
@@ -716,7 +723,7 @@ class RAGService:
                     logger.warning(f"[RAG SERVICE] Error getting metadata for questions: {metadata_error}")
                 
                 if not chunk_texts:
-                    return []
+                return []
             
             # Объединяем чанки в контекст
             context = "\n\n".join(chunk_texts[:10])  # Максимум 10 чанков
