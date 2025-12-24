@@ -124,24 +124,65 @@ class ProjectService:
         return project
     
     async def delete_project(self, project_id: UUID) -> bool:
-        """Удалить проект"""
+        """Удалить проект и все связанные данные"""
         project = await self.get_project_by_id(project_id)
         
         if not project:
             return False
         
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Удаляем все документы проекта (и их векторы из Qdrant)
+        from app.models.document import Document, DocumentChunk
+        from app.vector_db.vector_store import VectorStore
+        
+        documents_result = await self.db.execute(
+            select(Document).where(Document.project_id == project_id)
+        )
+        documents = documents_result.scalars().all()
+        
+        vector_store = VectorStore()
+        for document in documents:
+            # Удаляем векторы из Qdrant
+            chunks_result = await self.db.execute(
+                select(DocumentChunk).where(DocumentChunk.document_id == document.id)
+            )
+            chunks = chunks_result.scalars().all()
+            
+            for chunk in chunks:
+                if chunk.qdrant_point_id:
+                    try:
+                        await vector_store.delete_vector(
+                            collection_name=f"project_{project_id}",
+                            point_id=chunk.qdrant_point_id
+                        )
+                    except Exception as e:
+                        logger.warning(f"Не удалось удалить вектор {chunk.qdrant_point_id} из Qdrant: {e}")
+            
+            # Удаляем документ (чанки удалятся каскадно)
+            await self.db.delete(document)
+        
+        # Удаляем всех пользователей проекта (сообщения удалятся каскадно)
+        from app.models.user import User
+        users_result = await self.db.execute(
+            select(User).where(User.project_id == project_id)
+        )
+        users = users_result.scalars().all()
+        for user in users:
+            await self.db.delete(user)
+        
         # Удаление коллекции из Qdrant (опционально, не блокируем удаление проекта при ошибке)
         try:
             await self.collections_manager.delete_collection(str(project_id))
         except Exception as e:
-            # Логируем ошибку, но не прерываем удаление проекта
-            import logging
-            logger = logging.getLogger(__name__)
             logger.warning(f"Не удалось удалить коллекцию Qdrant для проекта {project_id}: {e}")
             # Продолжаем удаление проекта даже если коллекция не найдена
         
+        # Удаляем сам проект
         await self.db.delete(project)
         await self.db.commit()
         
+        logger.info(f"Проект {project_id} и все связанные данные успешно удалены")
         return True
 
