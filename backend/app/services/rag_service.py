@@ -64,20 +64,51 @@ class RAGService:
         # Получение истории диалога (минимум 10 сообщений согласно требованиям)
         conversation_history = await self._get_conversation_history(user_id, limit=10)
         
-        # Создание эмбеддинга вопроса
-        question_embedding = await self.embedding_service.create_embedding(question)
+        # Используем AI агента для определения стратегии ответа
+        from app.services.rag_agent import RAGAgent
+        from app.llm.openrouter_client import OpenRouterClient
+        from app.models.llm_model import GlobalModelSettings
+        from sqlalchemy import select
         
-        # Поиск релевантных чанков в Qdrant
+        # Получаем модель для агента
+        settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+        global_settings = settings_result.scalar_one_or_none()
+        
+        primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
+        fallback_model = global_settings.fallback_model_id if global_settings else None
+        
+        if not primary_model:
+            from app.core.config import settings as app_settings
+            primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+            fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
+        
+        agent_llm = OpenRouterClient(
+            model_primary=primary_model,
+            model_fallback=fallback_model
+        )
+        rag_agent = RAGAgent(agent_llm)
+        
+        # Анализируем вопрос и получаем стратегию
+        try:
+            strategy_info = await rag_agent.get_answer_strategy(question, project.id, self.db)
+            strategy = strategy_info["strategy"]
+            logger.info(f"[RAG SERVICE] AI Agent strategy: {strategy.get('question_type')} - {strategy.get('recommendation')}")
+        except Exception as agent_error:
+            logger.warning(f"[RAG SERVICE] AI Agent failed: {agent_error}, using default strategy")
+            strategy = {"use_chunks": True, "use_summaries": True, "use_metadata": True, "use_general_knowledge": True}
+            strategy_info = {"documents_metadata": []}
+        
+        chunk_texts = []
+        metadata_context = ""
+        
+        # Определяем стратегию поиска на основе анализа агента
         collection_name = f"project_{project.id}"
-        logger.info(f"[RAG SERVICE] Searching in collection {collection_name} for project {project.id}")
-        
-        # Проверяем существование коллекции и документов
         collection_exists = await self.vector_store.collection_exists(collection_name)
-        if not collection_exists:
-            logger.warning(f"[RAG SERVICE] Collection {collection_name} does not exist. No documents indexed for this project.")
-            # Пытаемся использовать summaries документов
-            chunk_texts = await self._get_document_summaries(project.id, top_k)
-        else:
+        
+        # Если агент рекомендует использовать чанки и они доступны
+        if strategy.get("use_chunks", True) and collection_exists:
+            logger.info(f"[RAG SERVICE] Using chunks strategy (AI Agent recommendation)")
+            question_embedding = await self.embedding_service.create_embedding(question)
             similar_chunks = await self.vector_store.search_similar(
                 collection_name=collection_name,
                 query_vector=question_embedding,
@@ -85,27 +116,26 @@ class RAGService:
                 score_threshold=0.5
             )
             
-            logger.info(f"[RAG SERVICE] Found {len(similar_chunks)} similar chunks in collection {collection_name}")
-            
-            # Извлечение текстов чанков (может быть пустым)
-            chunk_texts = []
             if similar_chunks and len(similar_chunks) > 0:
                 chunk_texts = [chunk.get("payload", {}).get("chunk_text", "") for chunk in similar_chunks if chunk.get("payload", {}).get("chunk_text")]
-                logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} chunk texts")
-            
-            # Если чанков нет, используем summaries
-            if not chunk_texts:
-                logger.info(f"[RAG SERVICE] No chunks found, trying document summaries")
-                chunk_texts = await self._get_document_summaries(project.id, top_k)
+                logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} chunks from vector search")
         
-        # Если все еще нет контента, используем метаданные документов
-        metadata_context = ""
-        if not chunk_texts:
-            logger.info(f"[RAG SERVICE] No content found, using document metadata for context")
+        # Если агент рекомендует использовать summaries или чанков нет
+        if strategy.get("use_summaries", True) and not chunk_texts:
+            logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
+            chunk_texts = await self._get_document_summaries(project.id, top_k)
+            if chunk_texts:
+                logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
+        
+        # Если агент рекомендует использовать метаданные или контента все еще нет
+        if (strategy.get("use_metadata", True) and not chunk_texts) or strategy.get("question_type") == "содержание":
+            logger.info(f"[RAG SERVICE] Using metadata strategy (AI Agent recommendation)")
             try:
                 from app.services.document_metadata_service import DocumentMetadataService
                 metadata_service = DocumentMetadataService()
-                documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
+                documents_metadata = strategy_info.get("documents_metadata", [])
+                if not documents_metadata:
+                    documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
                 if documents_metadata:
                     metadata_context = metadata_service.create_metadata_context(documents_metadata)
                     logger.info(f"[RAG SERVICE] Created metadata context from {len(documents_metadata)} documents")
