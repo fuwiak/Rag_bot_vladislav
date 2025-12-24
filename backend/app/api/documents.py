@@ -36,9 +36,14 @@ async def process_document_async_from_file(document_id: UUID, project_id: UUID, 
         file_size = os.path.getsize(file_path) / 1024 / 1024
         logger.info(f"[Process] Reading file {file_path}, size: {file_size:.2f}MB")
         
-        # Читаем файл только когда нужно
-        with open(file_path, 'rb') as f:
-            file_content = f.read()
+        # Читаем файл асинхронно в отдельном потоке, чтобы не блокировать event loop
+        def read_file_sync(path):
+            with open(path, 'rb') as f:
+                return f.read()
+        
+        import asyncio
+        loop = asyncio.get_event_loop()
+        file_content = await loop.run_in_executor(None, read_file_sync, file_path)
         
         read_memory = process.memory_info().rss / 1024 / 1024
         logger.info(f"[Process] File read into memory, memory: {read_memory:.2f}MB (delta: {read_memory - start_memory:.2f}MB)")
@@ -51,6 +56,8 @@ async def process_document_async_from_file(document_id: UUID, project_id: UUID, 
             logger.warning(f"[Process] Не удалось удалить временный файл {file_path}: {e}")
         
         # Вызываем основную функцию обработки
+        # Добавляем небольшую задержку, чтобы дать время основному запросу завершиться
+        await asyncio.sleep(0.1)
         await process_document_async(document_id, project_id, file_content, filename, file_type)
         
     except Exception as e:
