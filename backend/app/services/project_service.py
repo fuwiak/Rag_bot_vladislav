@@ -123,12 +123,14 @@ class ProjectService:
                 .options(noload(Project.users), noload(Project.documents))
             )
             project = result.scalar_one_or_none()
+            if project:
+                return project
         except Exception as e:
             # Если поле bot_is_active не существует, используем raw SQL
             logger.warning(f"Field bot_is_active not found in get_project_by_id, using raw query: {e}")
             await self.db.rollback()
             from sqlalchemy import text
-        result = await self.db.execute(
+            result = await self.db.execute(
                 text("""
                     SELECT id, name, description, bot_token, llm_model, access_password, 
                            prompt_template, max_response_length, created_at, updated_at
