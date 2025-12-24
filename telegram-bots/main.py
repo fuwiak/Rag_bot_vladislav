@@ -146,29 +146,26 @@ class BotService:
             if project.bot_token:
                 # Проверяем bot_is_active (может быть строкой "true"/"false" или None)
                 # Если поле не существует в БД, считаем бота активным (для обратной совместимости)
-                try:
-                    bot_is_active = getattr(project, 'bot_is_active', None) or 'false'
-                    # Если поле существует, проверяем его значение
-                    if hasattr(project, 'bot_is_active') and bot_is_active == 'true':
-                        token = project.bot_token
-                        if token not in projects_by_token:
-                            projects_by_token[token] = []
-                        projects_by_token[token].append(str(project.id))
-                    elif hasattr(project, 'bot_is_active'):
-                        # Поле существует, но значение "false"
-                        logger.debug(f"Project {project.id} has bot_token but bot_is_active='false', skipping")
-                    else:
-                        # Поле не существует - считаем бота активным (обратная совместимость)
-                        token = project.bot_token
-                        if token not in projects_by_token:
-                            projects_by_token[token] = []
-                        projects_by_token[token].append(str(project.id))
-                except AttributeError:
-                    # Поле bot_is_active не существует в модели - считаем бота активным
+                bot_is_active = getattr(project, 'bot_is_active', None)
+                
+                # Если поле не установлено или не существует, считаем бота активным
+                # Это нужно для обратной совместимости, пока миграция не применится
+                if bot_is_active is None or not hasattr(project, 'bot_is_active'):
+                    # Поле не существует - считаем бота активным (обратная совместимость)
                     token = project.bot_token
                     if token not in projects_by_token:
                         projects_by_token[token] = []
                     projects_by_token[token].append(str(project.id))
+                    logger.debug(f"Project {project.id} has bot_token, bot_is_active field missing - treating as active")
+                elif bot_is_active == 'true':
+                    # Поле существует и значение "true" - бот активен
+                    token = project.bot_token
+                    if token not in projects_by_token:
+                        projects_by_token[token] = []
+                    projects_by_token[token].append(str(project.id))
+                else:
+                    # Поле существует, но значение "false" - бот неактивен
+                    logger.debug(f"Project {project.id} has bot_token but bot_is_active='false', skipping")
         
         # Получаем текущие активные токены
         active_tokens = set(self.bot_factory.bots.keys())
