@@ -64,6 +64,41 @@ export default function ProjectDetailPage() {
   const [uploading, setUploading] = useState(false)
   const [uploadFiles, setUploadFiles] = useState<File[]>([])
 
+  // Загружаем кэшированные данные сразу при монтировании
+  useEffect(() => {
+    const loadCachedData = async () => {
+      const { cache, cacheKeys } = await import('../../lib/cache')
+      
+      // Загружаем кэшированный проект
+      const cachedProject = cache.get<Project>(cacheKeys.project(projectId))
+      if (cachedProject) {
+        setProject(cachedProject)
+        setEditData({
+          name: cachedProject.name,
+          description: cachedProject.description || '',
+          access_password: cachedProject.access_password,
+          prompt_template: cachedProject.prompt_template,
+          max_response_length: cachedProject.max_response_length,
+          bot_token: cachedProject.bot_token || '',
+        })
+        setLoading(false)
+      }
+      
+      // Загружаем кэшированные документы и пользователей
+      const cachedDocuments = cache.get<Document[]>(cacheKeys.projectDocuments(projectId))
+      if (cachedDocuments) {
+        setDocuments(cachedDocuments)
+      }
+      
+      const cachedUsers = cache.get<User[]>(cacheKeys.projectUsers(projectId))
+      if (cachedUsers) {
+        setUsers(cachedUsers)
+      }
+    }
+    
+    loadCachedData()
+  }, [projectId])
+
   useEffect(() => {
     // Lazy loading: загружаем только основные данные проекта при монтировании
     fetchProjectBasicData()
