@@ -356,13 +356,37 @@ class RAGService:
             from app.models.document import Document
             from app.services.document_summary_service import DocumentSummaryService
             
-            # Получаем документы проекта
-            result = await self.db.execute(
-                select(Document)
-                .where(Document.project_id == project_id)
-                .limit(limit * 2)  # Берем больше, чтобы выбрать те, у которых есть summary
-            )
-            documents = result.scalars().all()
+            # Получаем документы проекта (безопасно, если поле summary отсутствует)
+            try:
+                result = await self.db.execute(
+                    select(Document)
+                    .where(Document.project_id == project_id)
+                    .limit(limit * 2)  # Берем больше, чтобы выбрать те, у которых есть summary
+                )
+                documents = result.scalars().all()
+            except Exception as db_error:
+                # Если ошибка из-за отсутствия поля summary, получаем документы без него
+                if "summary" in str(db_error).lower():
+                    logger.warning(f"[RAG SERVICE] Summary column not found, using content only")
+                    from sqlalchemy import text
+                    result = await self.db.execute(
+                        text("SELECT id, project_id, filename, content, file_type, created_at FROM documents WHERE project_id = :project_id LIMIT :limit"),
+                        {"project_id": project_id, "limit": limit * 2}
+                    )
+                    # Преобразуем результаты в объекты Document вручную
+                    documents = []
+                    for row in result:
+                        doc = Document()
+                        doc.id = row[0]
+                        doc.project_id = row[1]
+                        doc.filename = row[2]
+                        doc.content = row[3]
+                        doc.file_type = row[4]
+                        doc.created_at = row[5]
+                        doc.summary = None  # Поле отсутствует
+                        documents.append(doc)
+                else:
+                    raise
             
             if not documents:
                 return []
@@ -371,22 +395,27 @@ class RAGService:
             summaries = []
             
             for doc in documents[:limit]:
-                # Приоритет 1: используем существующий summary
-                if doc.summary and doc.summary.strip():
-                    summaries.append(f"Документ '{doc.filename}': {doc.summary}")
+                # Приоритет 1: используем существующий summary (проверяем безопасно)
+                doc_summary = getattr(doc, 'summary', None)
+                if doc_summary and doc_summary.strip():
+                    summaries.append(f"Документ '{doc.filename}': {doc_summary}")
                 else:
-                    # Приоритет 2: пытаемся создать summary
+                    # Приоритет 2: пытаемся создать summary (только если поле существует в БД)
                     try:
-                        summary = await summary_service.generate_summary(doc.id)
-                        if summary and summary.strip():
-                            summaries.append(f"Документ '{doc.filename}': {summary}")
+                        # Проверяем, существует ли поле summary в модели
+                        if hasattr(Document, 'summary'):
+                            summary = await summary_service.generate_summary(doc.id)
+                            if summary and summary.strip():
+                                summaries.append(f"Документ '{doc.filename}': {summary}")
+                                continue
                     except Exception as e:
                         logger.warning(f"Error generating summary for doc {doc.id}: {e}")
-                        # Приоритет 3: используем содержимое
-                        if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
-                            content = doc.content[:500]
-                            if content.strip():
-                                summaries.append(f"Документ '{doc.filename}': {content}")
+                    
+                    # Приоритет 3: используем содержимое
+                    if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
+                        content = doc.content[:500]
+                        if content.strip():
+                            summaries.append(f"Документ '{doc.filename}': {content}")
             
             logger.info(f"[RAG SERVICE] Retrieved {len(summaries)} document summaries for project {project_id}")
             return summaries
@@ -448,13 +477,38 @@ class RAGService:
                 from app.models.document import Document, DocumentChunk
                 from app.services.document_summary_service import DocumentSummaryService
                 
-                # Получаем документы проекта
-                result = await self.db.execute(
-                    select(Document)
-                    .where(Document.project_id == project_id)
-                    .limit(10)
-                )
-                documents = result.scalars().all()
+                # Получаем документы проекта (без поля summary, если его нет в БД)
+                try:
+                    result = await self.db.execute(
+                        select(Document)
+                        .where(Document.project_id == project_id)
+                        .limit(10)
+                    )
+                    documents = result.scalars().all()
+                except Exception as db_error:
+                    # Если ошибка из-за отсутствия поля summary, получаем документы без него
+                    if "summary" in str(db_error).lower():
+                        logger.warning(f"[RAG SERVICE] Summary column not found, using content only")
+                        # Используем raw SQL для получения документов без summary
+                        from sqlalchemy import text
+                        result = await self.db.execute(
+                            text("SELECT id, project_id, filename, content, file_type, created_at FROM documents WHERE project_id = :project_id LIMIT 10"),
+                            {"project_id": project_id}
+                        )
+                        # Преобразуем результаты в объекты Document вручную
+                        documents = []
+                        for row in result:
+                            doc = Document()
+                            doc.id = row[0]
+                            doc.project_id = row[1]
+                            doc.filename = row[2]
+                            doc.content = row[3]
+                            doc.file_type = row[4]
+                            doc.created_at = row[5]
+                            doc.summary = None  # Поле отсутствует
+                            documents.append(doc)
+                    else:
+                        raise
                 
                 if not documents:
                     logger.info(f"[RAG SERVICE] No documents found for project {project_id}")
@@ -480,16 +534,19 @@ class RAGService:
                     summary_service = DocumentSummaryService(self.db)
                     
                     for doc in documents[:5]:
-                        # Приоритет 1: используем summary если есть
-                        if doc.summary and doc.summary.strip():
-                            chunk_texts.append(f"Документ '{doc.filename}': {doc.summary}")
+                        # Приоритет 1: используем summary если есть (проверяем безопасно)
+                        doc_summary = getattr(doc, 'summary', None)
+                        if doc_summary and doc_summary.strip():
+                            chunk_texts.append(f"Документ '{doc.filename}': {doc_summary}")
                         else:
-                            # Приоритет 2: пытаемся создать summary
+                            # Приоритет 2: пытаемся создать summary (только если поле существует в БД)
                             try:
-                                summary = await summary_service.generate_summary(doc.id)
-                                if summary and summary.strip():
-                                    chunk_texts.append(f"Документ '{doc.filename}': {summary}")
-                                    continue
+                                # Проверяем, существует ли поле summary в модели
+                                if hasattr(Document, 'summary'):
+                                    summary = await summary_service.generate_summary(doc.id)
+                                    if summary and summary.strip():
+                                        chunk_texts.append(f"Документ '{doc.filename}': {summary}")
+                                        continue
                             except Exception as e:
                                 logger.warning(f"Error generating summary for doc {doc.id}: {e}")
                             

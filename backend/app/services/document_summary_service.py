@@ -43,10 +43,11 @@ class DocumentSummaryService:
                 logger.error(f"Document {document_id} not found")
                 return None
             
-            # Если summary уже есть, возвращаем его
-            if document.summary:
+            # Если summary уже есть, возвращаем его (проверяем безопасно)
+            doc_summary = getattr(document, 'summary', None)
+            if doc_summary and doc_summary.strip():
                 logger.info(f"Document {document_id} already has summary")
-                return document.summary
+                return doc_summary
             
             # Получаем проект для настроек LLM
             project_result = await self.db.execute(
@@ -134,10 +135,13 @@ class DocumentSummaryService:
             if summary.startswith("Summary:") or summary.startswith("Краткое содержание:"):
                 summary = summary.split(":", 1)[1].strip()
             
-            # Сохраняем summary в БД
-            document.summary = summary
-            await self.db.commit()
-            await self.db.refresh(document)
+            # Сохраняем summary в БД (только если поле существует)
+            if hasattr(document, 'summary'):
+                document.summary = summary
+                await self.db.commit()
+                await self.db.refresh(document)
+            else:
+                logger.warning(f"Summary field does not exist in database, cannot save summary for document {document_id}")
             
             logger.info(f"Summary generated for document {document_id}, length: {len(summary)}")
             return summary
