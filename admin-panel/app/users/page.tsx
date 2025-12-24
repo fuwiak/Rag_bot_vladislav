@@ -40,10 +40,9 @@ export default function UsersPage() {
   const [updatingUser, setUpdatingUser] = useState(false)
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) {
-      router.push('/login')
-      return
+    // Автоматически устанавливаем токен, если его нет
+    if (typeof window !== 'undefined' && !localStorage.getItem('token')) {
+      localStorage.setItem('token', 'auto-login-token')
     }
     fetchData()
   }, [router])
@@ -141,7 +140,8 @@ export default function UsersPage() {
 
   const handleLogout = () => {
     localStorage.removeItem('token')
-    router.push('/login')
+    // В режиме без логина просто обновляем страницу
+    window.location.reload()
   }
 
   const handleEditUser = (user: User) => {

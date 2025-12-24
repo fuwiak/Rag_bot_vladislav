@@ -42,8 +42,8 @@ export default function DashboardPage() {
   }
 
   const handleLogout = () => {
-    localStorage.removeItem('token')
-    router.push('/login')
+    // В режиме без логина просто обновляем страницу
+    window.location.reload()
   }
 
   if (loading) {
