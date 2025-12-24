@@ -133,21 +133,21 @@ class RAGService:
                 chunk_texts = found_chunks
                 similar_chunks = found_similar
                 logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} chunks using advanced search techniques")
-        
-        # Для вопросов о содержании - приоритет summaries (не используем чанки)
-        question_type = strategy.get("question_type", "")
-        question_lower = question.lower()
-        is_content_question = (
-            question_type == "содержание" or 
-            any(word in question_lower for word in [
-                "содержание", "содержание документов", "обзор документов", 
-                "summary", "summary of", "summary of each", "summary of each file",
-                "обзор", "обзор файлов", "что в файлах", "список файлов"
-            ])
-        )
-        
-        # Если агент рекомендует использовать summaries или это вопрос о содержании
-        if (strategy.get("use_summaries", True) and not chunk_texts) or is_content_question:
+            
+            # Для вопросов о содержании - приоритет summaries (не используем чанки)
+            question_type = strategy.get("question_type", "")
+            question_lower = question.lower()
+            is_content_question = (
+                question_type == "содержание" or 
+                any(word in question_lower for word in [
+                    "содержание", "содержание документов", "обзор документов", 
+                    "summary", "summary of", "summary of each", "summary of each file",
+                    "обзор", "обзор файлов", "что в файлах", "список файлов"
+                ])
+            )
+            
+            # Если агент рекомендует использовать summaries или это вопрос о содержании
+            if (strategy.get("use_summaries", True) and not chunk_texts) or is_content_question:
             if is_content_question:
                 logger.info(f"[RAG SERVICE] Content question detected, using summaries strategy")
                 # Для вопросов о содержании не используем чанки, только summaries
@@ -159,10 +159,10 @@ class RAGService:
             if summaries:
                 chunk_texts = summaries  # summaries в формате dict с text, source, score
                 logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
-        
-        # ВСЕГДА получаем метаданные для использования в промпте (даже если есть чанки)
-        # Это позволяет отвечать на вопросы о файлах и ключевых словах
-        if not metadata_context:
+            
+            # ВСЕГДА получаем метаданные для использования в промпте (даже если есть чанки)
+            # Это позволяет отвечать на вопросы о файлах и ключевых словах
+            if not metadata_context:
             logger.info(f"[RAG SERVICE] Getting metadata for context")
             try:
                 from app.services.document_metadata_service import DocumentMetadataService
@@ -175,16 +175,16 @@ class RAGService:
                     logger.info(f"[RAG SERVICE] Created metadata context from {len(documents_metadata)} documents")
             except Exception as metadata_error:
                 logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
-        
-        # Логируем стратегию использования метаданных
-        if metadata_context:
+            
+            # Логируем стратегию использования метаданных
+            if metadata_context:
+                if not chunk_texts:
+                    logger.info(f"[RAG SERVICE] Using metadata as primary source (no chunks available)")
+                else:
+                    logger.info(f"[RAG SERVICE] Using metadata as additional context (chunks available)")
+            
+            # Если нет чанков, пытаемся извлечь контент напрямую из документов разными способами
             if not chunk_texts:
-                logger.info(f"[RAG SERVICE] Using metadata as primary source (no chunks available)")
-            else:
-                logger.info(f"[RAG SERVICE] Using metadata as additional context (chunks available)")
-        
-        # Если нет чанков, пытаемся извлечь контент напрямую из документов разными способами
-        if not chunk_texts:
             logger.info(f"[RAG SERVICE] No chunks found, trying to extract content directly from documents using multiple techniques")
             try:
                 from app.models.document import Document, DocumentChunk
