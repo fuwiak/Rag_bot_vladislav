@@ -174,7 +174,7 @@ export default function ProjectDetailPage() {
     const cacheKey = cacheKeys.projectDocuments(projectId)
     
     // Показываем кэшированные данные сразу
-    const cachedDocuments = cache.get(cacheKey)
+    const cachedDocuments = cache.get<Document[]>(cacheKey)
     if (cachedDocuments) {
       setDocuments(cachedDocuments)
       // Обновляем в фоне
@@ -206,7 +206,7 @@ export default function ProjectDetailPage() {
     const cacheKey = cacheKeys.projectUsers(projectId)
     
     // Показываем кэшированные данные сразу
-    const cachedUsers = cache.get(cacheKey)
+    const cachedUsers = cache.get<User[]>(cacheKey)
     if (cachedUsers) {
       setUsers(cachedUsers)
       // Обновляем в фоне
