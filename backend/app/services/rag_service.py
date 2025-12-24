@@ -161,10 +161,79 @@ class RAGService:
             else:
                 logger.info(f"[RAG SERVICE] Using metadata as additional context (chunks available)")
         
+        # Если нет чанков, пытаемся извлечь контент напрямую из документов
+        if not chunk_texts:
+            logger.info(f"[RAG SERVICE] No chunks found, trying to extract content directly from documents")
+            try:
+                from app.models.document import Document
+                from sqlalchemy import select, text
+                
+                # Пытаемся получить документы с контентом
+                try:
+                    result = await self.db.execute(
+                        select(Document)
+                        .where(Document.project_id == project.id)
+                        .where(Document.content.isnot(None))
+                        .where(Document.content != "")
+                        .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                        .limit(10)
+                    )
+                    documents = result.scalars().all()
+                except Exception:
+                    # Fallback на raw SQL
+                    result = await self.db.execute(
+                        text("""
+                            SELECT id, filename, content, file_type 
+                            FROM documents 
+                            WHERE project_id = :project_id 
+                            AND content IS NOT NULL 
+                            AND content != '' 
+                            AND content NOT IN ('Обработка...', 'Обработан')
+                            LIMIT 10
+                        """),
+                        {"project_id": str(project.id)}
+                    )
+                    rows = result.all()
+                    documents = []
+                    for row in rows:
+                        doc = Document()
+                        doc.id = row[0]
+                        doc.filename = row[1]
+                        doc.content = row[2]
+                        doc.file_type = row[3]
+                        documents.append(doc)
+                
+                # Извлекаем контент из документов разными способами
+                for doc in documents:
+                    if doc.content and len(doc.content) > 50:  # Минимум 50 символов
+                        # Способ 1: Первые 2000 символов
+                        content_preview = doc.content[:2000]
+                        if len(doc.content) > 2000:
+                            content_preview += "..."
+                        
+                        # Способ 2: Если вопрос содержит название файла, используем весь доступный контент
+                        if doc.filename.lower() in question.lower():
+                            # Используем больше контента для релевантного файла
+                            content_preview = doc.content[:5000]
+                            if len(doc.content) > 5000:
+                                content_preview += "..."
+                        
+                        chunk_texts.append({
+                            "text": f"Документ '{doc.filename}':\n{content_preview}",
+                        "source": doc.filename,
+                        "score": 0.8 if doc.filename.lower() in question.lower() else 0.5
+                        })
+                        logger.info(f"[RAG SERVICE] Extracted content from document {doc.filename} ({len(content_preview)} chars)")
+                
+                if chunk_texts:
+                    logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content chunks directly from documents")
+            except Exception as extract_error:
+                logger.warning(f"[RAG SERVICE] Error extracting content from documents: {extract_error}")
+        
         # Для вопросов о содержании используем простой промпт из рабочего скрипта
         if is_content_question:
             if chunk_texts:
-                # Есть summaries - используем их
+                # Есть summaries или извлеченный контент - используем их
                 context_parts = []
                 for i, doc in enumerate(chunk_texts, 1):
                     if isinstance(doc, dict):
@@ -176,9 +245,17 @@ class RAGService:
                         context_parts.append(f"Фрагмент {i}:\n{doc}")
                 
                 context = "\n\n".join(context_parts)
+                
+                # Добавляем метаданные для дополнительного контекста
+                if metadata_context:
+                    context += f"\n\nДополнительная информация о документах:\n{metadata_context}"
             elif metadata_context:
                 # Нет summaries, но есть метаданные - используем их
-                context = f"Метаданные документов (документы еще обрабатываются):\n\n{metadata_context}"
+                context = f"""Метаданные документов:
+
+{metadata_context}
+
+ВАЖНО: Используй эту информацию для ответа на вопрос. Если вопрос касается конкретного файла, используй название файла и ключевые слова из метаданных."""
             else:
                 # Нет ни summaries, ни метаданных
                 context = "Документы еще обрабатываются. Доступна только информация о загруженных файлах."
@@ -205,9 +282,9 @@ class RAGService:
                 # Вставляем историю перед финальным вопросом
                 messages = [messages[0]] + recent_history + [messages[1]]
         else:
-        # ВСЕГДА используем промпт проекта, даже если документов нет
-        # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
-        # Построение промпта с контекстом (может быть пустым)
+            # ВСЕГДА используем промпт проекта, даже если документов нет
+            # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+            # Построение промпта с контекстом (может быть пустым)
             # Преобразуем chunk_texts в строки если они в формате dict
             chunks_for_prompt = []
             for chunk in chunk_texts:
@@ -216,14 +293,14 @@ class RAGService:
                 else:
                     chunks_for_prompt.append(chunk)
             
-        messages = self.prompt_builder.build_prompt(
-            question=question,
+            messages = self.prompt_builder.build_prompt(
+                question=question,
                 chunks=chunks_for_prompt,  # Может быть пустым списком
-            prompt_template=project.prompt_template,
-            max_length=project.max_response_length,
+                prompt_template=project.prompt_template,
+                max_length=project.max_response_length,
                 conversation_history=conversation_history,
                 metadata_context=metadata_context  # Добавляем метаданные если есть
-        )
+            )
         
         # Генерация ответа через LLM
         # Получаем глобальные настройки моделей из БД
