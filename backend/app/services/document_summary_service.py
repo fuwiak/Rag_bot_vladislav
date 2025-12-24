@@ -33,11 +33,41 @@ class DocumentSummaryService:
             Summary документа или None при ошибке
         """
         try:
-            # Получаем документ
-            result = await self.db.execute(
-                select(Document).where(Document.id == document_id)
-            )
-            document = result.scalar_one_or_none()
+            # Получаем документ (безопасно, даже если поле summary отсутствует)
+            try:
+                result = await self.db.execute(
+                    select(Document).where(Document.id == document_id)
+                )
+                document = result.scalar_one_or_none()
+            except Exception as db_error:
+                # Если ошибка из-за отсутствия поля summary, используем raw SQL
+                error_str = str(db_error).lower()
+                if "summary" in error_str or "column" in error_str:
+                    logger.warning(f"Summary column not found in DB, using raw SQL query")
+                    from sqlalchemy import text
+                    result = await self.db.execute(
+                        text("SELECT id, project_id, filename, content, file_type, created_at FROM documents WHERE id = :doc_id"),
+                        {"doc_id": str(document_id)}
+                    )
+                    row = result.first()
+                    if not row:
+                        logger.error(f"Document {document_id} not found")
+                        return None
+                    # Создаем объект Document вручную
+                    document = Document()
+                    document.id = row[0]
+                    document.project_id = row[1]
+                    document.filename = row[2]
+                    document.content = row[3] if row[3] else ""
+                    document.file_type = row[4]
+                    document.created_at = row[5]
+                    # Поле summary отсутствует
+                    try:
+                        setattr(document, 'summary', None)
+                    except:
+                        pass
+                else:
+                    raise
             
             if not document:
                 logger.error(f"Document {document_id} not found")
