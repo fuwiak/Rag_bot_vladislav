@@ -135,12 +135,7 @@ class RAGService:
             
             summaries = await self._get_document_summaries(project.id, top_k * 2)  # Берем больше summaries для содержания
             if summaries:
-                # Для вопросов о содержании сохраняем формат с метаданными
-                if is_content_question:
-                    chunk_texts = summaries  # summaries уже в формате dict с text, source, score
-                else:
-                    # Для других вопросов преобразуем в строки
-                    chunk_texts = [s if isinstance(s, str) else s.get("text", str(s)) for s in summaries]
+                chunk_texts = summaries  # summaries в формате dict с text, source, score
                 logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
         
         # Если агент рекомендует использовать метаданные или контента все еще нет
@@ -158,17 +153,62 @@ class RAGService:
             except Exception as metadata_error:
                 logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
         
-        # ВСЕГДА используем промпт проекта, даже если документов нет
-        # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
-        # Построение промпта с контекстом (может быть пустым)
-        messages = self.prompt_builder.build_prompt(
-            question=question,
-            chunks=chunk_texts,  # Может быть пустым списком
-            prompt_template=project.prompt_template,
-            max_length=project.max_response_length,
-            conversation_history=conversation_history,
-            metadata_context=metadata_context  # Добавляем метаданные если есть
-        )
+        # Для вопросов о содержании используем простой промпт из рабочего скрипта
+        if is_content_question and chunk_texts:
+            # Форматируем summaries как в рабочем скрипте
+            context_parts = []
+            for i, doc in enumerate(chunk_texts, 1):
+                if isinstance(doc, dict):
+                    source = doc.get("source", "Документ")
+                    text = doc.get("text", "")
+                    score = doc.get("score", 1.0)
+                    context_parts.append(f"Фрагмент {i} (источник: {source}, релевантность: {score:.2f}):\n{text}")
+                else:
+                    context_parts.append(f"Фрагмент {i}:\n{doc}")
+            
+            context = "\n\n".join(context_parts)
+            
+            # Простой промпт из рабочего скрипта
+            enhanced_prompt = f"""На основе следующих фрагментов документов ответь на вопрос пользователя.
+Если ответа нет в контексте, так и скажи.
+
+КОНТЕКСТ:
+{context}
+
+ВОПРОС: {question}
+
+ОТВЕТ:"""
+            
+            messages = [
+                {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей на основе предоставленных документов. Отвечай на русском языке, будь дружелюбным и информативным."},
+                {"role": "user", "content": enhanced_prompt}
+            ]
+            
+            # Добавляем историю диалога
+            if conversation_history:
+                recent_history = conversation_history[-4:]  # Последние 2 пары вопрос-ответ
+                # Вставляем историю перед финальным вопросом
+                messages = [messages[0]] + recent_history + [messages[1]]
+        else:
+            # ВСЕГДА используем промпт проекта, даже если документов нет
+            # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+            # Построение промпта с контекстом (может быть пустым)
+            # Преобразуем chunk_texts в строки если они в формате dict
+            chunks_for_prompt = []
+            for chunk in chunk_texts:
+                if isinstance(chunk, dict):
+                    chunks_for_prompt.append(chunk.get("text", str(chunk)))
+                else:
+                    chunks_for_prompt.append(chunk)
+            
+            messages = self.prompt_builder.build_prompt(
+                question=question,
+                chunks=chunks_for_prompt,  # Может быть пустым списком
+                prompt_template=project.prompt_template,
+                max_length=project.max_response_length,
+                conversation_history=conversation_history,
+                metadata_context=metadata_context  # Добавляем метаданные если есть
+            )
         
         # Генерация ответа через LLM
         # Получаем глобальные настройки моделей из БД
