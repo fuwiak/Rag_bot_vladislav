@@ -140,12 +140,35 @@ async def handle_contact(message: Message, state: FSMContext, project_id: str = 
         await state.update_data(user_id=str(user.id))
         await state.set_state(AuthStates.authorized)
         
+        # Получаем информацию о проекте для приветствия
+        result = await db.execute(
+            select(Project).where(Project.id == project_id_from_state)
+        )
+        project = result.scalar_one_or_none()
+        
         # Удаление клавиатуры
         from aiogram.types import ReplyKeyboardRemove
+        
+        welcome_authorized = "✅ <b>Авторизация успешна!</b>\n\n"
+        
+        if project:
+            welcome_authorized += f"👋 Добро пожаловать в бот проекта <b>«{project.name}»</b>!\n\n"
+        
+        welcome_authorized += "🤖 <b>Теперь вы можете:</b>\n"
+        welcome_authorized += "• Задавать вопросы о документах проекта\n"
+        welcome_authorized += "• Получать точные ответы на основе загруженных документов\n"
+        welcome_authorized += "• Использовать контекст диалога для уточняющих вопросов\n\n"
+        
+        welcome_authorized += "💡 <b>Советы:</b>\n"
+        welcome_authorized += "• Задавайте конкретные вопросы\n"
+        welcome_authorized += "• Используйте ключевые слова из документов\n"
+        welcome_authorized += "• Бот отвечает только на основе документов проекта\n\n"
+        
+        welcome_authorized += "📚 Используйте команду /help для получения подробной справки.\n\n"
+        welcome_authorized += "❓ <b>Задайте ваш первый вопрос:</b>"
+        
         await message.answer(
-            f"✅ Авторизация успешна!\n\n"
-            f"Теперь вы можете задавать вопросы о документах проекта.\n"
-            f"Используйте /help для справки.",
+            welcome_authorized,
             reply_markup=ReplyKeyboardRemove()
         )
 
