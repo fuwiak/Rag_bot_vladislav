@@ -64,8 +64,8 @@ class RAGService:
         project = None
         
         try:
-        # Получение пользователя и проекта
-        user = await self._get_user(user_id)
+            # Получение пользователя и проекта
+            user = await self._get_user(user_id)
         if not user:
             raise ValueError("Пользователь не найден")
         
@@ -151,7 +151,7 @@ class RAGService:
             if is_content_question:
                 logger.info(f"[RAG SERVICE] Content question detected, using summaries strategy")
                 # Для вопросов о содержании не используем чанки, только summaries
-            chunk_texts = []
+                chunk_texts = []
             else:
                 logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
             
