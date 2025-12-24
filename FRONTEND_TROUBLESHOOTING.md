@@ -100,3 +100,5 @@ W build logach frontend service, sprawdź czy:
 
 
 
+
+
