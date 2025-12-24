@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { mockDataStore } from '../../data'
+import { mockDataStore } from '../../../data'
 
-// GET /api/mock/documents/[projectId] - получить документы проекта
+// GET /api/mock/documents/project/[projectId] - получить документы проекта
 export async function GET(
   request: NextRequest,
   { params }: { params: { projectId: string } }
@@ -18,7 +18,7 @@ export async function GET(
   }
 }
 
-// POST /api/mock/documents/[projectId]/upload - загрузить документы
+// POST /api/mock/documents/project/[projectId]/upload - загрузить документы
 export async function POST(
   request: NextRequest,
   { params }: { params: { projectId: string } }

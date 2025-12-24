@@ -223,7 +223,7 @@ export default function ModelsPage() {
         updateData.fallback_model_id = modelId || null
       }
 
-      const response = await fetch(`${backendUrl}/api/models/global-settings`, {
+      const response = await fetch(getApiUrl('/api/models/global-settings'), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',

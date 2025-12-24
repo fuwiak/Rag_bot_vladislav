@@ -807,7 +807,7 @@ export default function ProjectDetailPage() {
                       formData.append('files', file)
                     })
                     
-                    const response = await fetch(`${backendUrl}/api/documents/${projectId}/upload`, {
+                    const response = await fetch(getApiUrl(`/api/documents/${projectId}/upload`), {
                       method: 'POST',
                       body: formData,
                     })

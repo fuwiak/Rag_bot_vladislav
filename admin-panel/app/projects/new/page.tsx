@@ -38,7 +38,7 @@ export default function NewProjectPage() {
     setLoading(true)
 
     try {
-      const { getApiUrl } = await import('../lib/api-helpers')
+      const { getApiUrl } = await import('../../lib/api-helpers')
       
       const response = await fetch(getApiUrl('/api/projects'), {
         method: 'POST',

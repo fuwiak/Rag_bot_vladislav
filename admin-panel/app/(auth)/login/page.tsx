@@ -185,7 +185,7 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const { getApiUrl } = await import('../lib/api-helpers')
+      const { getApiUrl } = await import('../../lib/api-helpers')
       const response = await fetch(getApiUrl('/api/auth/login'), {
         method: 'POST',
         headers: {

@@ -33,7 +33,30 @@ export function transformEndpoint(endpoint: string): string {
   
   // Убираем /api префикс, если есть
   if (endpoint.startsWith('/api/')) {
-    return endpoint.replace('/api/', '/')
+    let transformed = endpoint.replace('/api/', '/')
+    
+    // Специальная обработка для документов:
+    // /api/documents/{projectId} -> /documents/project/{projectId}
+    // /api/documents/{projectId}/upload -> /documents/project/{projectId}/upload
+    // /api/documents/{id} (DELETE) -> /documents/{id} (остается как есть)
+    if (transformed.startsWith('/documents/')) {
+      const uploadMatch = transformed.match(/^\/documents\/([^\/]+)\/upload$/)
+      if (uploadMatch) {
+        // Путь для загрузки: /documents/{projectId}/upload -> /documents/project/{projectId}/upload
+        transformed = `/documents/project/${uploadMatch[1]}/upload`
+      } else {
+        // Проверяем, это получение документов проекта или удаление конкретного документа
+        const documentsMatch = transformed.match(/^\/documents\/([^\/]+)$/)
+        if (documentsMatch) {
+          // Это путь для получения документов проекта (GET)
+          // В реальном API это /api/documents/{projectId}, в моках /documents/project/{projectId}
+          transformed = `/documents/project/${documentsMatch[1]}`
+        }
+        // Если это /documents/{id} с методом DELETE, оставляем как есть
+      }
+    }
+    
+    return transformed
   }
   
   return endpoint

@@ -40,9 +40,9 @@ export default function UsersPage() {
   const [updatingUser, setUpdatingUser] = useState(false)
 
   useEffect(() => {
-    
+    const token = localStorage.getItem('token')
     if (!token) {
-      
+      router.push('/login')
       return
     }
     fetchData()
@@ -74,7 +74,7 @@ export default function UsersPage() {
       const allUsers: User[] = []
       for (const project of projectsData) {
         try {
-          const usersRes = await fetch(`${backendUrl}/api/users/project/${project.id}`, {
+          const usersRes = await fetch(getApiUrl(`/api/users/project/${project.id}`), {
             headers: { 'Content-Type': 'application/json' },
           })
           if (usersRes.ok) {
@@ -169,7 +169,7 @@ export default function UsersPage() {
       if (editUserProjectId !== editingUser.project_id) updateData.project_id = editUserProjectId
       if (editUserStatus !== editingUser.status) updateData.status = editUserStatus
 
-      const response = await fetch(`${backendUrl}/api/users/${editingUser.id}`, {
+      const response = await fetch(getApiUrl(`/api/users/${editingUser.id}`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
