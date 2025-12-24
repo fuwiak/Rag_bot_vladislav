@@ -192,7 +192,7 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                             }
                         )
                         chunk.qdrant_point_id = point_id
-                        await db.flush()
+                        await db.flush()  # Обновляем qdrant_point_id
                     except Exception as e:
                         logger.error(f"[Celery] Ошибка сохранения вектора в Qdrant для чанка {chunk_index}: {e}")
                         # Продолжаем обработку, даже если Qdrant недоступен
