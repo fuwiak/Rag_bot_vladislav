@@ -18,6 +18,7 @@ class Project(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     bot_token = Column(String(255), nullable=True)  # Не unique - один бот может использоваться в нескольких проектах
+    bot_is_active = Column(String(10), default="false", nullable=False)  # "true" или "false" - активен ли бот
     access_password = Column(String(255), nullable=False)
     prompt_template = Column(Text, nullable=False)
     max_response_length = Column(Integer, default=1000, nullable=False)

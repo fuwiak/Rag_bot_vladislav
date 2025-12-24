@@ -241,9 +241,28 @@ export default function TelegramBotsPage() {
         console.warn('[BOT TOKEN] Bot not found in updated list!')
       }
       
+      // Автоматически активируем бота после добавления токена
+      console.log('[BOT TOKEN] Auto-activating bot after token verification...')
+      try {
+        const startResponse = await apiFetch(`/api/bots/${selectedProjectId}/start`, {
+          method: 'POST',
+        })
+        if (startResponse.ok) {
+          console.log('[BOT TOKEN] Bot auto-activated successfully')
+        } else {
+          console.warn('[BOT TOKEN] Failed to auto-activate bot, but token is saved')
+        }
+      } catch (startErr) {
+        console.warn('[BOT TOKEN] Error auto-activating bot:', startErr)
+      }
+      
+      // Обновляем список еще раз после активации
+      await new Promise(resolve => setTimeout(resolve, 500))
+      await fetchBotsInfo()
+      
       // Показываем сообщение об успехе
       console.log('[BOT TOKEN] Showing success message')
-      alert(`✅ Токен бота успешно сохранен!\n\nБот: ${botData.bot_first_name || botData.bot_username || 'Неизвестно'}\n${botData.bot_url ? `Ссылка: ${botData.bot_url}` : ''}\n\nБот будет автоматически запущен бот-сервисом в течение 20 секунд.`)
+      alert(`✅ Токен бота успешно сохранен и бот активирован!\n\nБот: ${botData.bot_first_name || botData.bot_username || 'Неизвестно'}\n${botData.bot_url ? `Ссылка: ${botData.bot_url}` : ''}\n\nБот будет автоматически запущен бот-сервисом в течение 20 секунд.`)
       console.log('[BOT TOKEN] Token verification completed successfully')
     } catch (err) {
       console.error('[BOT TOKEN] Error verifying token:', err)
@@ -256,6 +275,7 @@ export default function TelegramBotsPage() {
   }
 
   const handleStartBot = async (projectId: string) => {
+    console.log('[START BOT] Starting bot for project:', projectId)
     try {
       const { apiFetch } = await import('../lib/api-helpers')
 
@@ -264,17 +284,27 @@ export default function TelegramBotsPage() {
       })
 
       if (response.ok) {
+        const data = await response.json()
+        console.log('[START BOT] Bot started successfully:', data)
         await fetchBotsInfo()
+        alert(`✅ Бот активирован!\n\n${data.message || 'Бот будет запущен бот-сервисом автоматически в течение 20 секунд.'}`)
       } else {
         const errorData = await response.json()
+        console.error('[START BOT] Error:', errorData)
         alert(errorData.detail || 'Ошибка запуска бота')
       }
     } catch (err) {
-      alert('Ошибка подключения к серверу')
+      console.error('[START BOT] Error:', err)
+      alert('Ошибка подключения к серверу: ' + (err instanceof Error ? err.message : 'Неизвестная ошибка'))
     }
   }
 
   const handleStopBot = async (projectId: string) => {
+    console.log('[STOP BOT] Stopping bot for project:', projectId)
+    if (!confirm('Вы уверены, что хотите остановить бота? Пользователи не смогут отправлять сообщения боту.')) {
+      return
+    }
+    
     try {
       const { apiFetch } = await import('../lib/api-helpers')
 
@@ -283,13 +313,18 @@ export default function TelegramBotsPage() {
       })
 
       if (response.ok) {
+        const data = await response.json()
+        console.log('[STOP BOT] Bot stopped successfully:', data)
         await fetchBotsInfo()
+        alert(`✅ Бот деактивирован!\n\n${data.message || 'Бот будет остановлен бот-сервисом автоматически в течение 20 секунд.'}`)
       } else {
         const errorData = await response.json()
+        console.error('[STOP BOT] Error:', errorData)
         alert(errorData.detail || 'Ошибка остановки бота')
       }
     } catch (err) {
-      alert('Ошибка подключения к серверу')
+      console.error('[STOP BOT] Error:', err)
+      alert('Ошибка подключения к серверу: ' + (err instanceof Error ? err.message : 'Неизвестная ошибка'))
     }
   }
 
@@ -460,15 +495,40 @@ export default function TelegramBotsPage() {
                                 <span>Добавить токен бота</span>
                               </button>
                             ) : (
-                              <button
-                                onClick={() => handleAddBot(bot.project_id)}
-                                className="px-3 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors text-sm flex items-center space-x-2"
-                              >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                </svg>
-                                <span>Редактировать</span>
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => handleAddBot(bot.project_id)}
+                                  className="px-3 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors text-sm flex items-center space-x-2"
+                                >
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                  </svg>
+                                  <span>Редактировать</span>
+                                </button>
+                                {bot.is_active ? (
+                                  <button
+                                    onClick={() => handleStopBot(bot.project_id)}
+                                    className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold transition-colors text-sm flex items-center space-x-2"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                                    </svg>
+                                    <span>Остановить</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleStartBot(bot.project_id)}
+                                    className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-colors text-sm flex items-center space-x-2"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    <span>Запустить</span>
+                                  </button>
+                                )}
+                              </>
                             )}
                           </div>
                         </td>

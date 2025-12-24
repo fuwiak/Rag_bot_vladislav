@@ -30,13 +30,14 @@ class ProjectService:
         try:
             # КРИТИЧНО: Загружаем только нужные поля, не всю модель
             # Это предотвращает загрузку больших полей (prompt_template, access_password) в память
-            # ВАЖНО: Добавляем bot_token и llm_model для страницы управления ботами
+            # ВАЖНО: Добавляем bot_token, bot_is_active и llm_model для страницы управления ботами
             result = await self.db.execute(
                 select(
                     Project.id,
                     Project.name,
                     Project.description,
                     Project.bot_token,
+                    Project.bot_is_active,
                     Project.llm_model,
                     Project.created_at,
                     Project.updated_at
@@ -55,6 +56,7 @@ class ProjectService:
                 # Ограничиваем description до 200 символов сразу при загрузке
                 project.description = (row.description[:200] + "...") if row.description and len(row.description) > 200 else row.description
                 project.bot_token = row.bot_token  # ВАЖНО: Загружаем bot_token для страницы управления ботами
+                project.bot_is_active = row.bot_is_active or "false"  # ВАЖНО: Загружаем bot_is_active для страницы управления ботами
                 project.llm_model = row.llm_model  # ВАЖНО: Загружаем llm_model для страницы управления ботами
                 project.created_at = row.created_at
                 project.updated_at = row.updated_at

@@ -12,6 +12,7 @@ class ProjectBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     bot_token: Optional[str] = None
+    bot_is_active: Optional[str] = Field(default="false")  # "true" или "false"
     access_password: str = Field(..., min_length=4)
     prompt_template: str = Field(..., min_length=10)
     max_response_length: int = Field(default=1000, ge=100, le=10000)
@@ -28,6 +29,7 @@ class ProjectUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
     bot_token: Optional[str] = None
+    bot_is_active: Optional[str] = Field(None)  # "true" или "false"
     access_password: Optional[str] = Field(None, min_length=4)
     prompt_template: Optional[str] = Field(None, min_length=10)
     max_response_length: Optional[int] = Field(None, ge=100, le=10000)

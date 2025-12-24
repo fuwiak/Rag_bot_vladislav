@@ -114,23 +114,29 @@ class BotService:
     
     async def _update_bots(self, projects):
         """Обновить боты на основе текущего состояния проектов"""
-        # Группируем проекты по bot_token
+        # Группируем проекты по bot_token, учитывая bot_is_active
         projects_by_token = {}
         for project in projects:
             if project.bot_token:
-                token = project.bot_token
-                if token not in projects_by_token:
-                    projects_by_token[token] = []
-                projects_by_token[token].append(str(project.id))
+                # Проверяем bot_is_active (может быть строкой "true"/"false" или None)
+                bot_is_active = getattr(project, 'bot_is_active', None) or 'false'
+                if bot_is_active == 'true':
+                    token = project.bot_token
+                    if token not in projects_by_token:
+                        projects_by_token[token] = []
+                    projects_by_token[token].append(str(project.id))
+                else:
+                    # Если bot_is_active == "false", не добавляем проект в список активных
+                    logger.debug(f"Project {project.id} has bot_token but bot_is_active='false', skipping")
         
         # Получаем текущие активные токены
         active_tokens = set(self.bot_factory.bots.keys())
         new_tokens = set(projects_by_token.keys())
         
-        # Останавливаем боты, которых больше нет
+        # Останавливаем боты, которых больше нет в активных
         tokens_to_remove = active_tokens - new_tokens
         for token in tokens_to_remove:
-            logger.info(f"Stopping bot with token {token[:10]}...")
+            logger.info(f"Stopping bot with token {token[:10]}... (no longer active)")
             if token in self.bot_factory.bots:
                 try:
                     await self.bot_factory.bots[token].session.close()
@@ -146,6 +152,7 @@ class BotService:
         for bot_token, project_ids in projects_by_token.items():
             try:
                 await self.bot_factory.create_bot_for_token(bot_token, project_ids)
+                logger.info(f"Bot {bot_token[:10]}... is active for projects: {project_ids}")
             except Exception as e:
                 logger.error(f"Error creating/updating bot {bot_token[:10]}: {e}")
 

@@ -27,7 +27,8 @@ class BotInfoResponse(BaseModel):
     bot_username: Optional[str] = None
     bot_url: Optional[str] = None
     bot_first_name: Optional[str] = None
-    is_active: bool = False
+    is_active: bool = False  # Вычисляется из bot_token и bot_is_active
+    bot_is_active: Optional[str] = "false"  # Статус из БД
     users_count: int = 0
     llm_model: Optional[str] = None
     description: Optional[str] = None
@@ -89,11 +90,11 @@ async def get_all_bots_info(
             documents_counts = {}
         
         for project in projects:
-            # Бот считается активным, если есть токен
-            # Бот-сервис автоматически подхватит изменения
-            is_active = project.bot_token is not None
+            # Бот считается активным, если есть токен И bot_is_active == "true"
+            bot_is_active_str = getattr(project, 'bot_is_active', 'false') or 'false'
+            is_active = project.bot_token is not None and bot_is_active_str == "true"
             
-            logger.info(f"[GET BOTS INFO] Project {project.id} ({project.name}): bot_token={'SET' if project.bot_token else 'NULL'}, llm_model={project.llm_model}")
+            logger.info(f"[GET BOTS INFO] Project {project.id} ({project.name}): bot_token={'SET' if project.bot_token else 'NULL'}, bot_is_active={bot_is_active_str}, llm_model={project.llm_model}")
             
             bot_info = BotInfoResponse(
                 project_id=project.id,
@@ -101,6 +102,7 @@ async def get_all_bots_info(
                 bot_token=project.bot_token,
                 users_count=users_counts.get(project.id, 0),
                 is_active=is_active,
+                bot_is_active=bot_is_active_str,
                 llm_model=project.llm_model,
                 description=project.description,
                 documents_count=documents_counts.get(project.id, 0)
@@ -231,28 +233,48 @@ async def start_bot(
 ):
     """Запустить бота для проекта
     
-    Бот-сервис автоматически подхватит изменения в БД и запустит бота.
-    Этот endpoint просто проверяет, что у проекта есть токен.
+    Устанавливает bot_is_active="true" в БД. Бот-сервис автоматически подхватит изменения
+    и запустит бота при следующей проверке БД (обычно в течение 20 секунд).
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[START BOT] Starting bot for project {project_id}")
+    
     service = ProjectService(db)
     project = await service.get_project_by_id(project_id)
     
     if not project:
+        logger.error(f"[START BOT] Project {project_id} not found")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Проект не найден"
         )
     
     if not project.bot_token:
+        logger.error(f"[START BOT] Project {project_id} has no bot_token")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Токен бота не настроен для этого проекта"
         )
     
-    # Бот-сервис автоматически подхватит изменения при следующей проверке БД
-    # Просто возвращаем успех - бот будет запущен бот-сервисом
+    # Устанавливаем bot_is_active="true"
+    from app.schemas.project import ProjectUpdate
+    project_update = ProjectUpdate(bot_is_active="true")
+    updated_project = await service.update_project(project_id, project_update)
+    
+    if not updated_project:
+        logger.error(f"[START BOT] Failed to update project {project_id}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Не удалось обновить статус бота"
+        )
+    
+    logger.info(f"[START BOT] Bot activated for project {project_id}. bot_is_active={updated_project.bot_is_active}")
+    
     return {
-        "message": "Бот будет запущен бот-сервисом автоматически. Обычно это происходит в течение 20 секунд."
+        "message": "Бот активирован. Бот-сервис автоматически запустит бота в течение 20 секунд.",
+        "bot_is_active": updated_project.bot_is_active
     }
 
 
@@ -265,24 +287,41 @@ async def stop_bot(
 ):
     """Остановить бота для проекта
     
-    Удаляет токен бота из проекта. Бот-сервис автоматически подхватит изменения
-    и остановит бота при следующей проверке БД.
+    Устанавливает bot_is_active="false" в БД. Бот-сервис автоматически подхватит изменения
+    и остановит бота при следующей проверке БД (обычно в течение 20 секунд).
+    Токен бота остается в БД, но бот не будет работать.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[STOP BOT] Stopping bot for project {project_id}")
+    
     service = ProjectService(db)
     project = await service.get_project_by_id(project_id)
     
     if not project:
+        logger.error(f"[STOP BOT] Project {project_id} not found")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Проект не найден"
         )
     
-    # Удаляем токен бота - бот-сервис остановит бота при следующей проверке
+    # Устанавливаем bot_is_active="false" (токен остается в БД)
     from app.schemas.project import ProjectUpdate
-    project_update = ProjectUpdate(bot_token=None)
-    await service.update_project(project_id, project_update)
+    project_update = ProjectUpdate(bot_is_active="false")
+    updated_project = await service.update_project(project_id, project_update)
+    
+    if not updated_project:
+        logger.error(f"[STOP BOT] Failed to update project {project_id}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Не удалось обновить статус бота"
+        )
+    
+    logger.info(f"[STOP BOT] Bot deactivated for project {project_id}. bot_is_active={updated_project.bot_is_active}")
     
     return {
-        "message": "Токен бота удален. Бот будет остановлен бот-сервисом автоматически. Обычно это происходит в течение 20 секунд."
+        "message": "Бот деактивирован. Бот-сервис автоматически остановит бота в течение 20 секунд.",
+        "bot_is_active": updated_project.bot_is_active
     }
 
