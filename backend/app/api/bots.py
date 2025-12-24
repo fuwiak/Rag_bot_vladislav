@@ -45,10 +45,12 @@ async def get_all_bots_info(
     import logging
     
     logger = logging.getLogger(__name__)
+    logger.info("[GET BOTS INFO] Starting to fetch all bots info")
     
     try:
         service = ProjectService(db)
         projects = await service.get_all_projects()
+        logger.info(f"[GET BOTS INFO] Found {len(projects)} projects")
         
         # Боты управляются отдельным сервисом telegram-bots
         # Считаем бота активным, если у проекта есть bot_token
@@ -91,6 +93,8 @@ async def get_all_bots_info(
             # Бот-сервис автоматически подхватит изменения
             is_active = project.bot_token is not None
             
+            logger.info(f"[GET BOTS INFO] Project {project.id} ({project.name}): bot_token={'SET' if project.bot_token else 'NULL'}, llm_model={project.llm_model}")
+            
             bot_info = BotInfoResponse(
                 project_id=project.id,
                 project_name=project.name,
@@ -101,6 +105,8 @@ async def get_all_bots_info(
                 description=project.description,
                 documents_count=documents_counts.get(project.id, 0)
             )
+            
+            logger.info(f"[GET BOTS INFO] BotInfo created for {project.id}: bot_token={'SET' if bot_info.bot_token else 'NULL'}")
             
             # КРИТИЧНО: НЕ делаем запросы к Telegram API в списке
             # Это может вызвать out of memory при большом количестве ботов
