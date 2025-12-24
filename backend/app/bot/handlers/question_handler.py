@@ -17,37 +17,49 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     from aiogram.filters import Command
     logger = logging.getLogger(__name__)
     
+    logger.info(f"[QUESTION HANDLER] ===== HANDLER CALLED =====")
+    logger.info(f"[QUESTION HANDLER] Message text: {message.text[:100] if message.text else 'None'}")
+    logger.info(f"[QUESTION HANDLER] Message from user: {message.from_user.id}, username: {message.from_user.username}")
+    
     # Проверка авторизации
     current_state = await state.get_state()
-    logger.info(f"[QUESTION HANDLER] Current state: {current_state}, Message text: {message.text[:50] if message.text else 'None'}")
+    logger.info(f"[QUESTION HANDLER] Current state: {current_state}, AuthStates.authorized: {AuthStates.authorized}")
     
     if current_state != AuthStates.authorized:
+        logger.warning(f"[QUESTION HANDLER] User not authorized! State: {current_state}, expected: {AuthStates.authorized}")
         await message.answer("Пожалуйста, сначала авторизуйтесь через /start")
         return
     
     # Проверяем, что это не команда (команды должны обрабатываться отдельными обработчиками)
     if message.text and message.text.startswith('/'):
         # Это команда, пропускаем обработку
-        logger.debug(f"[QUESTION HANDLER] Skipping command: {message.text}")
+        logger.info(f"[QUESTION HANDLER] Skipping command: {message.text}")
         return
     
     # Получение user_id из состояния
     data = await state.get_data()
+    logger.info(f"[QUESTION HANDLER] State data: {data}")
     user_id_str = data.get("user_id")
     
     if not user_id_str:
-        logger.warning(f"[QUESTION HANDLER] User ID not found in state data: {data}")
+        logger.error(f"[QUESTION HANDLER] ❌ User ID not found in state data: {data}")
         await message.answer("Ошибка: пользователь не найден. Используйте /start")
         return
     
-    user_id = UUID(user_id_str)
+    try:
+        user_id = UUID(user_id_str)
+    except ValueError as e:
+        logger.error(f"[QUESTION HANDLER] ❌ Invalid user_id format: {user_id_str}, error: {e}")
+        await message.answer("Ошибка: неверный формат ID пользователя. Используйте /start")
+        return
+    
     question = message.text
     
     if not question or not question.strip():
         logger.warning(f"[QUESTION HANDLER] Empty question from user {user_id}")
         return
     
-    logger.info(f"[QUESTION HANDLER] Processing question for user {user_id}: {question[:100]}")
+    logger.info(f"[QUESTION HANDLER] ✅ Processing question for user {user_id}: {question[:100]}")
     
     # Отправка сообщения о том, что идет обработка
     processing_msg = await message.answer("⏳ Обрабатываю ваш вопрос...")
@@ -267,8 +279,12 @@ def register_question_handlers(dp: Dispatcher, project_id: str):
     Фильтр AuthStates.authorized гарантирует, что обработчик
     сработает только для авторизованных пользователей.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Регистрируем обработчик для текстовых сообщений авторизованных пользователей
     # F.text фильтрует только текстовые сообщения
     # Проверяем, что это не команда внутри обработчика, так как ~F.command может не работать правильно
     dp.message.register(handle_question, AuthStates.authorized, F.text)
+    logger.info(f"[REGISTER HANDLERS] Question handler registered for project {project_id}")
 
