@@ -169,6 +169,13 @@ async def verify_bot_token(
     )
     users_count = result.scalar() or 0
     
+    # Получаем количество документов для проекта
+    from app.models.document import Document
+    docs_result = await db.execute(
+        select(func.count(Document.id)).where(Document.project_id == project.id)
+    )
+    documents_count = docs_result.scalar() or 0
+    
     # Получаем информацию о боте
     bot_info = BotInfoResponse(
         project_id=project.id,
@@ -177,7 +184,10 @@ async def verify_bot_token(
         bot_username=bot_user.username,
         bot_first_name=bot_user.first_name,
         users_count=users_count,
-        is_active=False
+        is_active=False,
+        llm_model=project.llm_model,
+        description=project.description,
+        documents_count=documents_count
     )
     
     if bot_user.username:

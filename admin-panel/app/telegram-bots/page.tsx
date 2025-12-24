@@ -119,32 +119,53 @@ export default function TelegramBotsPage() {
       })
 
       if (!tokenResponse.ok) {
-        const errorData = await tokenResponse.json()
+        const errorData = await tokenResponse.json().catch(() => ({ detail: 'Ошибка проверки токена' }))
         setError(errorData.detail || 'Ошибка проверки токена')
         setSubmitting(false)
         return
       }
 
-      // Обновляем модель LLM если выбрана
-      if (selectedModelId !== undefined) {
-        const modelUrl = selectedModelId 
-          ? `/api/models/project/${selectedProjectId}?model_id=${encodeURIComponent(selectedModelId)}`
-          : `/api/models/project/${selectedProjectId}`
-        const modelResponse = await apiFetch(modelUrl, {
-          method: 'PATCH',
-        })
-        if (!modelResponse.ok) {
-          console.warn('Failed to assign model:', await modelResponse.json())
-          // Не блокируем успех, если модель не удалось установить
+      // Получаем данные о боте из ответа
+      const botData = await tokenResponse.json()
+      console.log('Bot verified successfully:', botData)
+
+      // Обновляем модель LLM если выбрана (или если нужно сбросить)
+      if (selectedModelId !== undefined && selectedModelId !== null) {
+        try {
+          const modelUrl = selectedModelId 
+            ? `/api/models/project/${selectedProjectId}?model_id=${encodeURIComponent(selectedModelId)}`
+            : `/api/models/project/${selectedProjectId}`
+          const modelResponse = await apiFetch(modelUrl, {
+            method: 'PATCH',
+          })
+          if (!modelResponse.ok) {
+            const modelError = await modelResponse.json().catch(() => ({ detail: 'Ошибка установки модели' }))
+            console.warn('Failed to assign model:', modelError)
+            // Показываем предупреждение, но не блокируем успех
+            setError(`Токен сохранен, но не удалось установить модель: ${modelError.detail || 'Неизвестная ошибка'}`)
+          }
+        } catch (modelErr) {
+          console.warn('Error assigning model:', modelErr)
+          // Не блокируем успех
         }
       }
 
+      // Закрываем модальное окно и обновляем список
       setShowTokenModal(false)
       setNewBotToken('')
       setSelectedModelId('')
+      setSelectedProject(null)
+      
+      // Обновляем список ботов
       await fetchBotsInfo()
+      
+      // Показываем сообщение об успехе
+      if (!error) {
+        alert(`✅ Токен бота успешно сохранен!\n\nБот: ${botData.bot_first_name || botData.bot_username || 'Неизвестно'}\n${botData.bot_url ? `Ссылка: ${botData.bot_url}` : ''}\n\nБот будет автоматически запущен бот-сервисом в течение 20 секунд.`)
+      }
     } catch (err) {
-      setError('Ошибка подключения к серверу')
+      console.error('Error verifying token:', err)
+      setError('Ошибка подключения к серверу: ' + (err instanceof Error ? err.message : 'Неизвестная ошибка'))
     } finally {
       setSubmitting(false)
     }
