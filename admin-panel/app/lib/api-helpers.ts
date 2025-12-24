@@ -31,8 +31,8 @@ async function loadConfig(): Promise<{ backendUrl: string; useMockApi: boolean }
         // Убираем trailing slash
         const backendUrl = (config.backendUrl || '').replace(/\/+$/, '')
         
-        // Проверяем, что получили валидный URL (не localhost)
-        if (backendUrl && backendUrl !== 'http://localhost:8000' && !backendUrl.includes('localhost')) {
+        // Проверяем, что получили валидный URL
+        if (backendUrl && backendUrl !== 'https://ragbotvladislav-backend.up.railway.app' && !backendUrl.includes('localhost')) {
           configCache = {
             backendUrl,
             useMockApi: config.useMockApi === true || config.useMockApi === 'true',
@@ -48,7 +48,7 @@ async function loadConfig(): Promise<{ backendUrl: string; useMockApi: boolean }
     // Fallback к переменным окружения или дефолтным значениям
     const backendUrl = (typeof window !== 'undefined' 
       ? (window as any).__NEXT_DATA__?.env?.NEXT_PUBLIC_BACKEND_URL
-      : null) || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+      : null) || process.env.NEXT_PUBLIC_BACKEND_URL || 'https://ragbotvladislav-backend.up.railway.app'
     
     const useMockApi = (typeof window !== 'undefined'
       ? (window as any).__NEXT_DATA__?.env?.NEXT_PUBLIC_USE_MOCK_API === 'true'
@@ -88,12 +88,12 @@ export async function getBackendUrl(): Promise<string> {
     USE_MOCK_API = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
   }
   
-  // Если переменные не найдены или это localhost, загружаем из API route (runtime конфигурация)
+  // Если переменные не найдены, загружаем из API route (runtime конфигурация)
   // Это критично для Railway, где переменные могут не встроиться в сборку
-  if (!API_BASE_URL || API_BASE_URL === 'http://localhost:8000' || API_BASE_URL.includes('localhost')) {
+  if (!API_BASE_URL || API_BASE_URL.includes('localhost')) {
     try {
       const config = await loadConfig()
-      if (config.backendUrl && config.backendUrl !== 'http://localhost:8000' && !config.backendUrl.includes('localhost')) {
+      if (config.backendUrl && !config.backendUrl.includes('localhost')) {
         API_BASE_URL = config.backendUrl
         USE_MOCK_API = config.useMockApi
       }
@@ -104,7 +104,7 @@ export async function getBackendUrl(): Promise<string> {
   
   // Убеждаемся, что у нас есть URL
   if (!API_BASE_URL) {
-    API_BASE_URL = 'http://localhost:8000'
+    API_BASE_URL = 'https://ragbotvladislav-backend.up.railway.app'
   }
   
   // Убираем trailing slash
@@ -144,7 +144,7 @@ export function getBackendUrlSync(): string {
     API_BASE_URL = nextData?.env?.NEXT_PUBLIC_BACKEND_URL
   }
   
-  API_BASE_URL = API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+  API_BASE_URL = API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'https://ragbotvladislav-backend.up.railway.app'
   API_BASE_URL = API_BASE_URL.replace(/\/+$/, '')
   
   const USE_MOCK_API = (typeof window !== 'undefined'

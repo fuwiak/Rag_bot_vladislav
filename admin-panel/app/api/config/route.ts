@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server'
 export async function GET() {
   // Получаем переменные окружения с сервера
   // На сервере они всегда доступны, даже если не встроились в клиентский код
-  let backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || 'http://localhost:8000'
+  let backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || 'https://ragbotvladislav-backend.up.railway.app'
   const useMockApi = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
   
   // Убираем trailing slash

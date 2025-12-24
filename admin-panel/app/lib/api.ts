@@ -1,6 +1,6 @@
 // API клиент с поддержкой моков
 const USE_MOCK_API = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
-const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://ragbotvladislav-backend.up.railway.app'
 
 /**
  * Получить базовый URL для API запросов

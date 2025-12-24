@@ -48,7 +48,7 @@ NEXT_PUBLIC_USE_MOCK_API=true
 import { getApiUrl } from '../lib/api-helpers'
 
 // Вместо:
-// const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+// const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://ragbotvladislav-backend.up.railway.app'
 // fetch(`${backendUrl}/api/projects`)
 
 // Используйте:

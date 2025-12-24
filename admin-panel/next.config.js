@@ -7,7 +7,7 @@ const nextConfig = {
   // Railway will provide this via environment variables
   env: {
     // Явно указываем переменные для встраивания в код
-    NEXT_PUBLIC_BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || 'http://localhost:8000',
+    NEXT_PUBLIC_BACKEND_URL: process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || 'https://ragbotvladislav-backend.up.railway.app',
     NEXT_PUBLIC_USE_MOCK_API: process.env.NEXT_PUBLIC_USE_MOCK_API || 'false',
   },
   // Ensure proper routing in production
