@@ -99,8 +99,8 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                 logger.warning(f"[QUESTION HANDLER] Failed to save question to history: {e}")
             
             if answer_mode == "general_mode":
-                # Режим общих вопросов - сразу используем LLM без RAG
-                logger.info(f"[QUESTION HANDLER] General mode: skipping RAG, using LLM directly for user {user_id}")
+                # Режим общих вопросов - используем RAGChain с use_rag=False для правильного выбора модели
+                logger.info(f"[QUESTION HANDLER] General mode: using RAGChain with use_rag=False for user {user_id}")
                 try:
                     # Получаем проект для использования его настроек
                     from app.models.user import User
@@ -119,40 +119,60 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                     if not project:
                         raise ValueError("Project not found")
                     
-                    # Определяем модель LLM (приоритет: модель проекта > глобальная настройка из БД > дефолт из .env)
+                    # Определяем модель LLM (та же логика, что и в rag_service.py)
+                    # Приоритет: 1) модель проекта, 2) глобальные настройки из БД, 3) дефолты из .env
                     from app.models.llm_model import GlobalModelSettings
                     settings_result = await db.execute(select(GlobalModelSettings).limit(1))
                     global_settings = settings_result.scalar_one_or_none()
+                    
+                    logger.info(f"[QUESTION HANDLER] GENERAL MODE: Global settings from DB: primary={global_settings.primary_model_id if global_settings else 'None'}, fallback={global_settings.fallback_model_id if global_settings else 'None'}")
                     
                     primary_model = None
                     fallback_model = None
                     
                     if project.llm_model:
+                        # Приоритет 1: модель проекта
                         primary_model = project.llm_model
+                        logger.info(f"[QUESTION HANDLER] GENERAL MODE: Using project model: {primary_model}")
+                        # Fallback из глобальных настроек БД
                         if global_settings and global_settings.fallback_model_id:
                             fallback_model = global_settings.fallback_model_id
+                            logger.info(f"[QUESTION HANDLER] GENERAL MODE: Using global fallback from DB: {fallback_model}")
                         else:
                             from app.core.config import settings as app_settings
                             fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                            logger.info(f"[QUESTION HANDLER] GENERAL MODE: Using default fallback from .env: {fallback_model}")
                     elif global_settings:
+                        # Приоритет 2: глобальные настройки из БД
                         primary_model = global_settings.primary_model_id
                         fallback_model = global_settings.fallback_model_id
+                        logger.info(f"[QUESTION HANDLER] GENERAL MODE: Using global models from DB: primary={primary_model}, fallback={fallback_model}")
                     
+                    # Приоритет 3: дефолты из .env
                     from app.core.config import settings as app_settings
                     if not primary_model:
                         primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                        logger.info(f"[QUESTION HANDLER] GENERAL MODE: Using default primary from .env: {primary_model}")
                     if not fallback_model:
                         fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                        logger.info(f"[QUESTION HANDLER] GENERAL MODE: Using default fallback from .env: {fallback_model}")
                     
-                    logger.info(f"[QUESTION HANDLER] GENERAL MODE: Using models - primary={primary_model}, fallback={fallback_model}")
+                    logger.info(f"[QUESTION HANDLER] GENERAL MODE: Final models - primary={primary_model}, fallback={fallback_model}")
                     
-                    # Получаем историю диалога
-                    conversation_history = await rag_service._get_conversation_history(user_id, limit=10)
+                    # Используем RAGChain с правильно настроенным LLMClient (та же логика, что в веб-интерфейсе)
+                    from app.rag.llm_client import LLMClient
+                    from app.rag.rag_chain import RAGChain
                     
-                    # Создаем простой промпт БЕЗ упоминания документов
-                    messages = []
+                    # Создаем LLMClient с выбранными моделями
+                    llm_client = LLMClient(
+                        primary_model=primary_model,
+                        fallback_chain=[{"model": fallback_model}] if fallback_model else None
+                    )
                     
-                    # Системный промпт для общих вопросов (без упоминания документов)
+                    # Создаем RAGChain с этим клиентом (но не используем RAG поиск)
+                    rag_chain = RAGChain(llm_client=llm_client)
+                    
+                    # Обновляем системный промпт для общих вопросов (без упоминания документов)
                     system_prompt = "Ты дружелюбный помощник. Отвечай на вопросы пользователя естественно и полезно."
                     if project.prompt_template and project.prompt_template.strip():
                         # Используем промпт проекта, но убираем упоминания о документах
@@ -164,35 +184,28 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                         system_prompt = system_prompt.replace("загруженных документов", "")
                         system_prompt = system_prompt.strip()
                     
-                    messages.append({"role": "system", "content": system_prompt})
+                    # Временно обновляем системный промпт RAGChain
+                    original_system_prompt = rag_chain.system_prompt
+                    rag_chain.system_prompt = system_prompt
                     
-                    # Добавляем историю диалога
-                    for hist_msg in conversation_history[-5:]:  # Последние 5 сообщений
-                        messages.append(hist_msg)
-                    
-                    # Добавляем текущий вопрос
-                    messages.append({"role": "user", "content": question})
-                    
-                    # Используем LLM напрямую
-                    from app.llm.openrouter_client import OpenRouterClient
-                    llm_client = OpenRouterClient(
-                        model_primary=primary_model,
-                        model_fallback=fallback_model
-                    )
-                    
-                    logger.info(f"[QUESTION HANDLER] GENERAL MODE: Sending request to LLM (no RAG, no documents)")
-                    raw_answer = await llm_client.chat_completion(
-                        messages=messages,
-                        max_tokens=min(project.max_response_length // 4, 1000),
-                        temperature=0.7
-                    )
-                    
-                    answer = raw_answer.strip()
-                    
-                    if not answer:
-                        answer = "Извините, не удалось сгенерировать ответ. Попробуйте переформулировать вопрос."
-                    
-                    logger.info(f"[QUESTION HANDLER] GENERAL MODE: LLM response received, length: {len(answer)}")
+                    try:
+                        # Используем RAGChain с use_rag=False (не ищем в документах, но используем правильную модель)
+                        logger.info(f"[QUESTION HANDLER] GENERAL MODE: Sending request via RAGChain (no RAG search, using selected model)")
+                        result = await rag_chain.query(
+                            user_query=question,
+                            use_rag=False,  # Не используем RAG поиск
+                            project_id=str(project.id)
+                        )
+                        
+                        answer = result.get("answer", "").strip()
+                        
+                        if not answer:
+                            answer = "Извините, не удалось сгенерировать ответ. Попробуйте переформулировать вопрос."
+                        
+                        logger.info(f"[QUESTION HANDLER] GENERAL MODE: Response received via RAGChain, length: {len(answer)}, model: {result.get('model', 'unknown')}")
+                    finally:
+                        # Восстанавливаем оригинальный системный промпт
+                        rag_chain.system_prompt = original_system_prompt
                     
                 except Exception as general_error:
                     logger.error(f"[QUESTION HANDLER] GENERAL MODE: Error for user {user_id}: {general_error}", exc_info=True)
