@@ -5,11 +5,24 @@
  * Получить базовый URL для API запросов
  */
 export function getBackendUrl(): string {
+  // В браузере переменные окружения доступны через window.__ENV__ или process.env
+  // Next.js встраивает NEXT_PUBLIC_* переменные в код во время сборки
   const USE_MOCK_API = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
+  
+  // Получаем URL из переменной окружения
+  // В браузере это будет встроено в код при сборке
+  // На сервере это будет из process.env
   let API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
   
   // Убираем trailing slash, если есть
   API_BASE_URL = API_BASE_URL.replace(/\/+$/, '')
+  
+  // Отладочная информация (только в development)
+  if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+    console.log('[API Helpers] Backend URL:', API_BASE_URL)
+    console.log('[API Helpers] Use Mock API:', USE_MOCK_API)
+    console.log('[API Helpers] NEXT_PUBLIC_BACKEND_URL:', process.env.NEXT_PUBLIC_BACKEND_URL)
+  }
   
   if (USE_MOCK_API) {
     // В режиме моков используем локальные Next.js API routes
