@@ -59,6 +59,7 @@ from app.core.database import AsyncSessionLocal\n\
 async def apply_manual():\n\
     async with AsyncSessionLocal() as db:\n\
         try:\n\
+            # Проверяем и добавляем bot_is_active если нужно\n\
             result = await db.execute(text(\"\"\"\n\
                 SELECT column_name FROM information_schema.columns \n\
                 WHERE table_name = '\''projects'\'' AND column_name = '\''bot_is_active'\''\n\
@@ -72,9 +73,41 @@ async def apply_manual():\n\
                     UPDATE projects SET bot_is_active = '\''true'\'' WHERE bot_token IS NOT NULL\n\
                 \"\"\"))\n\
                 await db.commit()\n\
-                print(\"✅ Manual migration applied successfully!\")\n\
+                print(\"✅ Column bot_is_active added\")\n\
             else:\n\
                 print(\"Column bot_is_active already exists\")\n\
+            \n\
+            # Проверяем и добавляем summary если нужно\n\
+            result = await db.execute(text(\"\"\"\n\
+                SELECT column_name FROM information_schema.columns \n\
+                WHERE table_name = '\''documents'\'' AND column_name = '\''summary'\''\n\
+            \"\"\"))\n\
+            if result.first() is None:\n\
+                await db.execute(text(\"\"\"\n\
+                    ALTER TABLE documents \n\
+                    ADD COLUMN summary TEXT\n\
+                \"\"\"))\n\
+                await db.commit()\n\
+                print(\"✅ Column summary added\")\n\
+            else:\n\
+                print(\"Column summary already exists\")\n\
+            \n\
+            # Проверяем и добавляем telegram_id если нужно\n\
+            result = await db.execute(text(\"\"\"\n\
+                SELECT column_name FROM information_schema.columns \n\
+                WHERE table_name = '\''users'\'' AND column_name = '\''telegram_id'\''\n\
+            \"\"\"))\n\
+            if result.first() is None:\n\
+                await db.execute(text(\"\"\"\n\
+                    ALTER TABLE users \n\
+                    ADD COLUMN telegram_id VARCHAR(50)\n\
+                \"\"\"))\n\
+                await db.commit()\n\
+                print(\"✅ Column telegram_id added\")\n\
+            else:\n\
+                print(\"Column telegram_id already exists\")\n\
+            \n\
+            print(\"✅ All manual migrations applied successfully!\")\n\
         except Exception as e:\n\
             print(f\"Manual migration error: {e}\")\n\
             await db.rollback()\n\
