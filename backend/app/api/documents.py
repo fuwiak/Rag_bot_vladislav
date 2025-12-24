@@ -20,6 +20,7 @@ router = APIRouter()
 async def process_document_async(document_id: UUID, project_id: UUID, file_content: bytes, filename: str, file_type: str):
     """Асинхронная обработка документа (парсинг, эмбеддинги, сохранение в Qdrant)"""
     import asyncio
+    import gc  # Для принудительной очистки памяти
     try:
         async with AsyncSessionLocal() as db:
             # Парсинг и разбивка на чанки
