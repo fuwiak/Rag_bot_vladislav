@@ -33,12 +33,9 @@ export default function TelegramBotsPage() {
   const fetchBotsInfo = async () => {
     try {
       setError('')
-      const { getApiUrl } = await import('../lib/api-helpers')
+      const { apiFetch } = await import('../lib/api-helpers')
 
-      const apiUrl = await getApiUrl('/api/bots/info')
-      const response = await fetch(apiUrl, {
-        headers: { 'Content-Type': 'application/json' },
-      })
+      const response = await apiFetch('/api/bots/info')
 
       if (response.ok) {
         const data = await response.json()
@@ -80,16 +77,10 @@ export default function TelegramBotsPage() {
     setError('')
 
     try {
-      const { getApiUrl } = await import('../lib/api-helpers')
-      const token = localStorage.getItem('token')
-      const apiUrl = await getApiUrl(`/api/bots/${selectedProjectId}/verify`)
+      const { apiFetch } = await import('../lib/api-helpers')
 
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch(`/api/bots/${selectedProjectId}/verify`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ bot_token: newBotToken.trim() }),
       })
 
@@ -110,12 +101,10 @@ export default function TelegramBotsPage() {
 
   const handleStartBot = async (projectId: string) => {
     try {
-      const { getApiUrl } = await import('../lib/api-helpers')
-      const apiUrl = await getApiUrl(`/api/bots/${projectId}/start`)
+      const { apiFetch } = await import('../lib/api-helpers')
 
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch(`/api/bots/${projectId}/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
       })
 
       if (response.ok) {
@@ -131,12 +120,10 @@ export default function TelegramBotsPage() {
 
   const handleStopBot = async (projectId: string) => {
     try {
-      const { getApiUrl } = await import('../lib/api-helpers')
-      const apiUrl = await getApiUrl(`/api/bots/${projectId}/stop`)
+      const { apiFetch } = await import('../lib/api-helpers')
 
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch(`/api/bots/${projectId}/stop`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
       })
 
       if (response.ok) {

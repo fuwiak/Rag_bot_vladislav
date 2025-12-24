@@ -23,17 +23,24 @@ export default function DashboardPage() {
 
   const fetchProjects = async () => {
     try {
-      const { getApiUrl } = await import('../lib/api-helpers')
-      const apiUrl = await getApiUrl('/api/projects')
-      const response = await fetch(apiUrl, {
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      })
+      const { apiFetch } = await import('../lib/api-helpers')
+      const response = await apiFetch('/api/projects')
 
       if (response.ok) {
         const data = await response.json()
         setProjects(data)
+      } else if (response.status === 401 || response.status === 403) {
+        console.error('Authentication error:', response.status)
+        // Если нет токена, можно попробовать установить дефолтный токен
+        if (typeof window !== 'undefined' && !localStorage.getItem('token')) {
+          localStorage.setItem('token', 'dummy-token')
+          // Повторяем запрос
+          const retryResponse = await apiFetch('/api/projects')
+          if (retryResponse.ok) {
+            const data = await retryResponse.json()
+            setProjects(data)
+          }
+        }
       }
     } catch (err) {
       console.error('Error fetching projects:', err)

@@ -227,3 +227,37 @@ export function getApiUrlSync(endpoint: string): string {
   return `${baseUrl}${transformedEndpoint}`
 }
 
+/**
+ * Выполнить API запрос с автоматическим добавлением токена авторизации
+ * Используйте эту функцию вместо прямого fetch для всех API запросов
+ */
+export async function apiFetch(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<Response> {
+  const apiUrl = await getApiUrl(endpoint)
+  
+  // Получаем токен из localStorage (только в браузере)
+  let token: string | null = null
+  if (typeof window !== 'undefined') {
+    token = localStorage.getItem('token')
+  }
+  
+  // Формируем заголовки
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> || {}),
+  }
+  
+  // Добавляем токен авторизации, если он есть
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  
+  // Выполняем запрос
+  return fetch(apiUrl, {
+    ...options,
+    headers,
+  })
+}
+
