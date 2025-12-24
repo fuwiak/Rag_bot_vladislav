@@ -1,28 +1,84 @@
 // Вспомогательные функции для работы с API
 // Поддерживают переключение между реальным API и моками
 
+// Кэш для конфигурации (загружается один раз)
+let configCache: { backendUrl: string; useMockApi: boolean } | null = null
+let configPromise: Promise<{ backendUrl: string; useMockApi: boolean }> | null = null
+
+/**
+ * Загрузить конфигурацию из API route (fallback если переменные не встроились)
+ */
+async function loadConfig(): Promise<{ backendUrl: string; useMockApi: boolean }> {
+  if (configCache) {
+    return configCache
+  }
+  
+  if (configPromise) {
+    return configPromise
+  }
+  
+  configPromise = (async () => {
+    try {
+      const response = await fetch('/api/config')
+      if (response.ok) {
+        const config = await response.json()
+        configCache = config
+        return config
+      }
+    } catch (err) {
+      console.warn('[API Helpers] Failed to load config from API route:', err)
+    }
+    
+    // Fallback к переменным окружения или дефолтным значениям
+    const backendUrl = (typeof window !== 'undefined' 
+      ? (window as any).__NEXT_DATA__?.env?.NEXT_PUBLIC_BACKEND_URL
+      : null) || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+    
+    const useMockApi = (typeof window !== 'undefined'
+      ? (window as any).__NEXT_DATA__?.env?.NEXT_PUBLIC_USE_MOCK_API === 'true'
+      : false) || process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
+    
+    return {
+      backendUrl: backendUrl.replace(/\/+$/, ''),
+      useMockApi,
+    }
+  })()
+  
+  return configPromise
+}
+
 /**
  * Получить базовый URL для API запросов
  */
-export function getBackendUrl(): string {
-  // В браузере переменные окружения доступны через window.__ENV__ или process.env
-  // Next.js встраивает NEXT_PUBLIC_* переменные в код во время сборки
-  const USE_MOCK_API = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
+export async function getBackendUrl(): Promise<string> {
+  // Сначала пробуем получить из встроенных переменных Next.js
+  let API_BASE_URL: string | undefined
+  let USE_MOCK_API: boolean | undefined
   
-  // Получаем URL из переменной окружения
-  // В браузере это будет встроено в код при сборке
-  // На сервере это будет из process.env
-  let API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-  
-  // Убираем trailing slash, если есть
-  API_BASE_URL = API_BASE_URL.replace(/\/+$/, '')
-  
-  // Отладочная информация (только в development)
-  if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
-    console.log('[API Helpers] Backend URL:', API_BASE_URL)
-    console.log('[API Helpers] Use Mock API:', USE_MOCK_API)
-    console.log('[API Helpers] NEXT_PUBLIC_BACKEND_URL:', process.env.NEXT_PUBLIC_BACKEND_URL)
+  if (typeof window !== 'undefined') {
+    // В браузере переменные доступны через __NEXT_DATA__ или встроены в код
+    const nextData = (window as any).__NEXT_DATA__
+    API_BASE_URL = nextData?.env?.NEXT_PUBLIC_BACKEND_URL
+    USE_MOCK_API = nextData?.env?.NEXT_PUBLIC_USE_MOCK_API === 'true'
   }
+  
+  // Если не нашли, используем process.env (для SSR или если встроено)
+  if (!API_BASE_URL) {
+    API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL
+  }
+  if (USE_MOCK_API === undefined) {
+    USE_MOCK_API = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
+  }
+  
+  // Если переменные не найдены, загружаем из API route (runtime конфигурация)
+  if (!API_BASE_URL || API_BASE_URL === 'http://localhost:8000') {
+    const config = await loadConfig()
+    API_BASE_URL = config.backendUrl
+    USE_MOCK_API = config.useMockApi
+  }
+  
+  // Убираем trailing slash
+  API_BASE_URL = API_BASE_URL.replace(/\/+$/, '')
   
   if (USE_MOCK_API) {
     // В режиме моков используем локальные Next.js API routes
@@ -34,14 +90,55 @@ export function getBackendUrl(): string {
       ? `${process.env.NEXT_PUBLIC_APP_URL}/api/mock`
       : 'http://localhost:3000/api/mock'
   }
+  
+  return API_BASE_URL
+}
+
+/**
+ * Синхронная версия (использует кэш или дефолтные значения)
+ * Используйте только если уверены, что конфигурация уже загружена
+ */
+export function getBackendUrlSync(): string {
+  if (configCache) {
+    if (configCache.useMockApi && typeof window !== 'undefined') {
+      return '/api/mock'
+    }
+    return configCache.backendUrl
+  }
+  
+  // Пробуем получить из встроенных переменных
+  let API_BASE_URL: string | undefined
+  
+  if (typeof window !== 'undefined') {
+    const nextData = (window as any).__NEXT_DATA__
+    API_BASE_URL = nextData?.env?.NEXT_PUBLIC_BACKEND_URL
+  }
+  
+  API_BASE_URL = API_BASE_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
+  API_BASE_URL = API_BASE_URL.replace(/\/+$/, '')
+  
+  const USE_MOCK_API = (typeof window !== 'undefined'
+    ? (window as any).__NEXT_DATA__?.env?.NEXT_PUBLIC_USE_MOCK_API === 'true'
+    : false) || process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
+  
+  if (USE_MOCK_API && typeof window !== 'undefined') {
+    return '/api/mock'
+  }
+  
   return API_BASE_URL
 }
 
 /**
  * Преобразовать endpoint для моков
  */
-export function transformEndpoint(endpoint: string): string {
-  const USE_MOCK_API = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
+export function transformEndpoint(endpoint: string, useMockApi?: boolean): string {
+  // Если useMockApi передан явно, используем его, иначе проверяем переменную окружения
+  let USE_MOCK_API: boolean
+  if (useMockApi !== undefined) {
+    USE_MOCK_API = useMockApi
+  } else {
+    USE_MOCK_API = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
+  }
   
   if (!USE_MOCK_API) {
     return endpoint
@@ -79,11 +176,23 @@ export function transformEndpoint(endpoint: string): string {
 }
 
 /**
- * Получить полный URL для API запроса
+ * Получить полный URL для API запроса (асинхронная версия)
  * Используйте эту функцию вместо прямого использования process.env.NEXT_PUBLIC_BACKEND_URL
  */
-export function getApiUrl(endpoint: string): string {
-  const baseUrl = getBackendUrl()
+export async function getApiUrl(endpoint: string): Promise<string> {
+  const baseUrl = await getBackendUrl()
+  // Определяем, используем ли моки, на основе baseUrl
+  const useMockApi = baseUrl.includes('/api/mock')
+  const transformedEndpoint = transformEndpoint(endpoint, useMockApi)
+  return `${baseUrl}${transformedEndpoint}`
+}
+
+/**
+ * Получить полный URL для API запроса (синхронная версия)
+ * Используйте только если уверены, что конфигурация уже загружена
+ */
+export function getApiUrlSync(endpoint: string): string {
+  const baseUrl = getBackendUrlSync()
   const transformedEndpoint = transformEndpoint(endpoint)
   return `${baseUrl}${transformedEndpoint}`
 }

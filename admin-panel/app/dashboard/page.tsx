@@ -24,7 +24,8 @@ export default function DashboardPage() {
   const fetchProjects = async () => {
     try {
       const { getApiUrl } = await import('../lib/api-helpers')
-      const response = await fetch(getApiUrl('/api/projects'), {
+      const apiUrl = await getApiUrl('/api/projects')
+      const response = await fetch(apiUrl, {
         headers: {
           'Content-Type': 'application/json',
         },

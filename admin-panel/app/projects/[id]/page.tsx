@@ -88,7 +88,8 @@ export default function ProjectDetailPage() {
     try {
       const { getApiUrl } = await import('../../lib/api-helpers')
 
-      const projectRes = await fetch(getApiUrl(`/api/projects/${projectId}`), {
+      const projectUrl = await getApiUrl(`/api/projects/${projectId}`)
+      const projectRes = await fetch(projectUrl, {
         headers: { 'Content-Type': 'application/json' },
       })
 
@@ -120,7 +121,8 @@ export default function ProjectDetailPage() {
     try {
       const { getApiUrl } = await import('../../lib/api-helpers')
 
-      const documentsRes = await fetch(getApiUrl(`/api/documents/${projectId}`), {
+      const documentsUrl = await getApiUrl(`/api/documents/${projectId}`)
+      const documentsRes = await fetch(documentsUrl, {
         headers: { 'Content-Type': 'application/json' },
       })
 
@@ -138,7 +140,8 @@ export default function ProjectDetailPage() {
     try {
       const { getApiUrl } = await import('../../lib/api-helpers')
 
-      const usersRes = await fetch(getApiUrl(`/api/users/project/${projectId}`), {
+      const usersUrl = await getApiUrl(`/api/users/project/${projectId}`)
+      const usersRes = await fetch(usersUrl, {
         headers: { 'Content-Type': 'application/json' },
       })
 
@@ -168,7 +171,8 @@ export default function ProjectDetailPage() {
     try {
       const { getApiUrl } = await import('../../lib/api-helpers')
 
-      const response = await fetch(getApiUrl(`/api/projects/${projectId}`), {
+      const apiUrl = await getApiUrl(`/api/projects/${projectId}`)
+      const response = await fetch(apiUrl, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
       })
@@ -212,7 +216,8 @@ export default function ProjectDetailPage() {
     try {
       const { getApiUrl } = await import('../../lib/api-helpers')
 
-      const response = await fetch(getApiUrl(`/api/projects/${projectId}`), {
+      const apiUrl = await getApiUrl(`/api/projects/${projectId}`)
+      const response = await fetch(apiUrl, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -619,7 +624,8 @@ export default function ProjectDetailPage() {
                           try {
                             const { getApiUrl } = await import('../../lib/api-helpers')
                             
-                            const response = await fetch(getApiUrl(`/api/documents/${doc.id}`), {
+                            const apiUrl = await getApiUrl(`/api/documents/${doc.id}`)
+                            const response = await fetch(apiUrl, {
                               method: 'DELETE',
                               headers: { 'Content-Type': 'application/json' },
                             })
@@ -693,7 +699,8 @@ export default function ProjectDetailPage() {
                             try {
                               const { getApiUrl } = await import('../../lib/api-helpers')
                               
-                              const response = await fetch(getApiUrl(`/api/users/${user.id}/status`), {
+                              const apiUrl = await getApiUrl(`/api/users/${user.id}/status`)
+                              const response = await fetch(apiUrl, {
                                 method: 'PATCH',
                                 headers: {
                                   'Content-Type': 'application/json',
@@ -723,7 +730,8 @@ export default function ProjectDetailPage() {
                               try {
                                 const { getApiUrl } = await import('../../lib/api-helpers')
                                 
-                                const response = await fetch(getApiUrl(`/api/users/${user.id}`), {
+                                const deleteUrl = await getApiUrl(`/api/users/${user.id}`)
+                                const response = await fetch(deleteUrl, {
                                   method: 'DELETE',
                                   headers: { 'Content-Type': 'application/json' },
                                 })
@@ -807,7 +815,8 @@ export default function ProjectDetailPage() {
                       formData.append('files', file)
                     })
                     
-                    const response = await fetch(getApiUrl(`/api/documents/${projectId}/upload`), {
+                    const apiUrl = await getApiUrl(`/api/documents/${projectId}/upload`)
+                    const response = await fetch(apiUrl, {
                       method: 'POST',
                       body: formData,
                     })
@@ -855,7 +864,8 @@ export default function ProjectDetailPage() {
               try {
                 const { getApiUrl } = await import('../../lib/api-helpers')
                 
-                const response = await fetch(getApiUrl(`/api/users/project/${projectId}`), {
+                const apiUrl = await getApiUrl(`/api/users/project/${projectId}`)
+                const response = await fetch(apiUrl, {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',

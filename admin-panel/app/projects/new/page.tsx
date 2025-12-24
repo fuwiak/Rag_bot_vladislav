@@ -40,7 +40,8 @@ export default function NewProjectPage() {
     try {
       const { getApiUrl } = await import('../../lib/api-helpers')
       
-      const response = await fetch(getApiUrl('/api/projects'), {
+      const apiUrl = await getApiUrl('/api/projects')
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

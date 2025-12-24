@@ -60,14 +60,20 @@ export default function ModelsPage() {
       const { getApiUrl } = await import('../lib/api-helpers')
 
       // Загружаем модели, проекты и глобальные настройки параллельно
+      const [modelsUrl, projectsUrl, settingsUrl] = await Promise.all([
+        getApiUrl('/api/models/available'),
+        getApiUrl('/api/projects'),
+        getApiUrl('/api/models/global-settings'),
+      ])
+      
       const [modelsRes, projectsRes, settingsRes] = await Promise.all([
-        fetch(getApiUrl('/api/models/available'), {
+        fetch(modelsUrl, {
           headers: { 'Content-Type': 'application/json' },
         }),
-        fetch(getApiUrl('/api/projects'), {
+        fetch(projectsUrl, {
           headers: { 'Content-Type': 'application/json' },
         }),
-        fetch(getApiUrl('/api/models/global-settings'), {
+        fetch(settingsUrl, {
           headers: { 'Content-Type': 'application/json' },
         }),
       ])
@@ -96,7 +102,7 @@ export default function ModelsPage() {
         if (!settingsData.primary_model_id && !settingsData.fallback_model_id) {
           // Если настроек нет, устанавливаем дефолтные
           const { getApiUrl } = await import('../lib/api-helpers')
-          const apiUrl = getApiUrl('/api/models/global-settings')
+          const apiUrl = await getApiUrl('/api/models/global-settings')
           
           fetch(apiUrl, {
             method: 'PATCH',
@@ -154,7 +160,8 @@ export default function ModelsPage() {
     try {
       const { getApiUrl } = await import('../lib/api-helpers')
 
-      const response = await fetch(getApiUrl(`/api/models/project/${selectedProject}?model_id=${encodeURIComponent(selectedModel)}`), {
+      const apiUrl = await getApiUrl(`/api/models/project/${selectedProject}?model_id=${encodeURIComponent(selectedModel)}`)
+      const response = await fetch(apiUrl, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -186,8 +193,9 @@ export default function ModelsPage() {
 
     try {
       const { getApiUrl } = await import('../lib/api-helpers')
+      const apiUrl = await getApiUrl(`/api/models/available?search=${encodeURIComponent(query)}`)
       
-      const response = await fetch(getApiUrl(`/api/models/available?search=${encodeURIComponent(query)}`), {
+      const response = await fetch(apiUrl, {
         headers: { 'Content-Type': 'application/json' },
       })
 
@@ -224,7 +232,8 @@ export default function ModelsPage() {
         updateData.fallback_model_id = modelId || null
       }
 
-      const response = await fetch(getApiUrl('/api/models/global-settings'), {
+      const apiUrl = await getApiUrl('/api/models/global-settings')
+      const response = await fetch(apiUrl, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -255,8 +264,9 @@ export default function ModelsPage() {
     setAddingCustom(true)
     try {
       const { getApiUrl } = await import('../lib/api-helpers')
+      const apiUrl = await getApiUrl('/api/models/custom')
 
-      const response = await fetch(getApiUrl('/api/models/custom'), {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -303,8 +313,9 @@ export default function ModelsPage() {
 
     try {
       const { getApiUrl } = await import('../lib/api-helpers')
+      const apiUrl = await getApiUrl('/api/models/test')
 
-      const response = await fetch(getApiUrl('/api/models/test'), {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

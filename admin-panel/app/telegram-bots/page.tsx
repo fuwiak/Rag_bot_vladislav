@@ -35,7 +35,8 @@ export default function TelegramBotsPage() {
       setError('')
       const { getApiUrl } = await import('../lib/api-helpers')
 
-      const response = await fetch(getApiUrl('/api/bots/info'), {
+      const apiUrl = await getApiUrl('/api/bots/info')
+      const response = await fetch(apiUrl, {
         headers: { 'Content-Type': 'application/json' },
       })
 
@@ -51,7 +52,7 @@ export default function TelegramBotsPage() {
       if (errorMessage.includes('Failed to fetch')) {
         // Получаем реальный URL, который используется
         const { getBackendUrl } = await import('../lib/api-helpers')
-        const backendUrl = getBackendUrl()
+        const backendUrl = await getBackendUrl()
         setError(`Ошибка подключения к серверу. Проверьте, что backend запущен и доступен по адресу: ${backendUrl}. Также убедитесь, что переменная NEXT_PUBLIC_BACKEND_URL установлена в Railway.`)
       } else {
         setError('Ошибка загрузки данных: ' + errorMessage)
@@ -81,8 +82,9 @@ export default function TelegramBotsPage() {
     try {
       const { getApiUrl } = await import('../lib/api-helpers')
       const token = localStorage.getItem('token')
+      const apiUrl = await getApiUrl(`/api/bots/${selectedProjectId}/verify`)
 
-      const response = await fetch(getApiUrl(`/api/bots/${selectedProjectId}/verify`), {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -109,8 +111,9 @@ export default function TelegramBotsPage() {
   const handleStartBot = async (projectId: string) => {
     try {
       const { getApiUrl } = await import('../lib/api-helpers')
+      const apiUrl = await getApiUrl(`/api/bots/${projectId}/start`)
 
-      const response = await fetch(getApiUrl(`/api/bots/${projectId}/start`), {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })
@@ -129,8 +132,9 @@ export default function TelegramBotsPage() {
   const handleStopBot = async (projectId: string) => {
     try {
       const { getApiUrl } = await import('../lib/api-helpers')
+      const apiUrl = await getApiUrl(`/api/bots/${projectId}/stop`)
 
-      const response = await fetch(getApiUrl(`/api/bots/${projectId}/stop`), {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })

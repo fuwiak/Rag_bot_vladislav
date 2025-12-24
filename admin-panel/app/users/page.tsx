@@ -53,7 +53,8 @@ export default function UsersPage() {
       const { getApiUrl } = await import('../lib/api-helpers')
 
       // Загружаем все проекты
-      const projectsRes = await fetch(getApiUrl('/api/projects'), {
+      const projectsUrl = await getApiUrl('/api/projects')
+      const projectsRes = await fetch(projectsUrl, {
         headers: { 'Content-Type': 'application/json' },
       })
 
@@ -73,7 +74,8 @@ export default function UsersPage() {
       const allUsers: User[] = []
       for (const project of projectsData) {
         try {
-          const usersRes = await fetch(getApiUrl(`/api/users/project/${project.id}`), {
+          const usersUrl = await getApiUrl(`/api/users/project/${project.id}`)
+          const usersRes = await fetch(usersUrl, {
             headers: { 'Content-Type': 'application/json' },
           })
           if (usersRes.ok) {
@@ -102,7 +104,8 @@ export default function UsersPage() {
     try {
       const { getApiUrl } = await import('../lib/api-helpers')
       
-      const response = await fetch(getApiUrl(`/api/users/${userId}`), {
+      const apiUrl = await getApiUrl(`/api/users/${userId}`)
+      const response = await fetch(apiUrl, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
       })
@@ -121,7 +124,8 @@ export default function UsersPage() {
     try {
       const { getApiUrl } = await import('../lib/api-helpers')
       
-      const response = await fetch(getApiUrl(`/api/users/${userId}/status`), {
+      const apiUrl = await getApiUrl(`/api/users/${userId}/status`)
+      const response = await fetch(apiUrl, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -169,7 +173,8 @@ export default function UsersPage() {
       if (editUserProjectId !== editingUser.project_id) updateData.project_id = editUserProjectId
       if (editUserStatus !== editingUser.status) updateData.status = editUserStatus
 
-      const response = await fetch(getApiUrl(`/api/users/${editingUser.id}`), {
+      const apiUrl = await getApiUrl(`/api/users/${editingUser.id}`)
+      const response = await fetch(apiUrl, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -379,7 +384,8 @@ export default function UsersPage() {
               try {
                 const { getApiUrl } = await import('../lib/api-helpers')
                 
-                const response = await fetch(getApiUrl(`/api/users/project/${newUserProjectId}`), {
+                const apiUrl = await getApiUrl(`/api/users/project/${newUserProjectId}`)
+                const response = await fetch(apiUrl, {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
