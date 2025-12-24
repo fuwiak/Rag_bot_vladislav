@@ -48,8 +48,17 @@ export default function NewProjectPage() {
       if (response.ok) {
         router.push('/dashboard')
       } else {
-        const errorData = await response.json()
-        setError(errorData.detail || 'Ошибка создания проекта')
+        const errorData = await response.json().catch(() => ({}))
+        // Обработка ошибок валидации Pydantic (422)
+        if (response.status === 422 && errorData.detail) {
+          const validationErrors = Array.isArray(errorData.detail) 
+            ? errorData.detail.map((err: any) => `${err.loc?.join('.')}: ${err.msg}`).join(', ')
+            : errorData.detail
+          setError(`Ошибка валидации: ${validationErrors}`)
+        } else {
+          setError(errorData.detail || errorData.message || 'Ошибка создания проекта')
+        }
+        console.error('Error creating project:', errorData)
       }
     } catch (err) {
       setError('Ошибка подключения к серверу')
@@ -168,7 +177,7 @@ export default function NewProjectPage() {
                 min={100}
                 max={10000}
                 value={formData.max_response_length}
-                onChange={(e) => setFormData({...formData, max_response_length: parseInt(e.target.value)})}
+                onChange={(e) => setFormData({...formData, max_response_length: parseInt(e.target.value) || 1000})}
                 className="block w-full border border-fb-gray-dark rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-fb-blue focus:border-transparent text-fb-text"
               />
             </div>
