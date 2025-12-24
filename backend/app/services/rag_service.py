@@ -530,6 +530,149 @@ class RAGService:
         
         return answer
     
+    async def _generate_document_summary_fallback(
+        self,
+        question: str,
+        metadata_context: str,
+        project,
+        llm_client=None,
+        max_tokens: int = 1000
+    ) -> str:
+        """
+        Генерирует сводку документов на основе метаданных как fallback,
+        когда RAG не находит релевантной информации
+        
+        Args:
+            question: Вопрос пользователя
+            metadata_context: Контекст из метаданных документов
+            project: Объект проекта
+            llm_client: Клиент LLM (если None, создается новый)
+            max_tokens: Максимальное количество токенов
+            
+        Returns:
+            Сводка документов на основе метаданных
+        """
+        try:
+            # Создаем клиент LLM если не передан
+            if llm_client is None:
+                from app.llm.openrouter_client import OpenRouterClient
+                from app.models.llm_model import GlobalModelSettings
+                from sqlalchemy import select
+                
+                settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+                global_settings = settings_result.scalar_one_or_none()
+                
+                primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
+                fallback_model = global_settings.fallback_model_id if global_settings else None
+                
+                if not primary_model:
+                    from app.core.config import settings as app_settings
+                    primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                    fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
+                
+                llm_client = OpenRouterClient(
+                    model_primary=primary_model,
+                    model_fallback=fallback_model
+                )
+            
+            # Пытаемся извлечь дополнительный контент из документов
+            additional_content = ""
+            try:
+                from app.models.document import Document
+                from sqlalchemy import select, text
+                
+                try:
+                    result = await self.db.execute(
+                        select(Document)
+                        .where(Document.project_id == project.id)
+                        .where(Document.content.isnot(None))
+                        .where(Document.content != "")
+                        .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                        .limit(5)
+                    )
+                    documents = result.scalars().all()
+                except Exception:
+                    result = await self.db.execute(
+                        text("""
+                            SELECT filename, content 
+                            FROM documents 
+                            WHERE project_id = :project_id 
+                            AND content IS NOT NULL 
+                            AND content != '' 
+                            AND content NOT IN ('Обработка...', 'Обработан')
+                            LIMIT 5
+                        """),
+                        {"project_id": str(project.id)}
+                    )
+                    rows = result.all()
+                    documents = []
+                    for row in rows:
+                        doc = Document()
+                        doc.filename = row[0]
+                        doc.content = row[1]
+                        documents.append(doc)
+                
+                if documents:
+                    content_parts = []
+                    for doc in documents:
+                        if doc.content and len(doc.content) > 100:
+                            # Берем первые 500 символов из каждого документа
+                            preview = doc.content[:500]
+                            if len(doc.content) > 500:
+                                preview += "..."
+                            content_parts.append(f"Файл '{doc.filename}':\n{preview}")
+                    
+                    if content_parts:
+                        additional_content = "\n\nЧастичное содержимое документов:\n\n" + "\n\n".join(content_parts)
+            except Exception as content_error:
+                logger.warning(f"[RAG SERVICE] Error extracting additional content: {content_error}")
+            
+            # Создаем промпт для генерации сводки
+            summary_prompt = f"""На основе информации о загруженных документах ответь на вопрос пользователя.
+Используй ВСЮ доступную информацию: названия файлов, ключевые слова, метаданные, и даже частичное содержимое.
+
+ИНФОРМАЦИЯ О ДОКУМЕНТАХ:
+{metadata_context}
+{additional_content}
+
+ВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}
+
+ИНСТРУКЦИЯ:
+- Используй названия файлов для понимания тематики документов
+- Используй ключевые слова для определения содержания
+- Если есть частичное содержимое, используй его для более точного ответа
+- Создай информативный ответ на основе всех доступных данных
+- НЕ говори "нет информации" - всегда можно дать ответ на основе метаданных и названий файлов
+- Будь конкретным и информативным
+
+ОТВЕТ:"""
+            
+            messages = [
+                {
+                    "role": "system",
+                    "content": "Ты - полезный ассистент, который всегда находит способ ответить на вопросы пользователей. Используй любую доступную информацию: названия файлов, ключевые слова, метаданные, частичное содержимое. Отвечай на русском языке, будь дружелюбным и информативным. НИКОГДА не говори 'нет информации' - всегда можно дать полезный ответ на основе доступных данных."
+                },
+                {
+                    "role": "user",
+                    "content": summary_prompt
+                }
+            ]
+            
+            # Генерируем сводку
+            response = await llm_client.chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.7
+            )
+            
+            logger.info(f"[RAG SERVICE] Generated document summary fallback (length: {len(response)})")
+            return response.strip()
+            
+        except Exception as e:
+            logger.error(f"[RAG SERVICE] Error generating document summary fallback: {e}", exc_info=True)
+            # В крайнем случае возвращаем базовую информацию из метаданных
+            return f"На основе доступной информации о документах:\n\n{metadata_context}\n\nК сожалению, полное содержимое документов еще обрабатывается, но вы можете задать вопросы о конкретных файлах по их названиям."
+    
     async def generate_answer_fast(
         self,
         user_id: UUID,
@@ -568,8 +711,24 @@ class RAGService:
             score_threshold=0.5
         )
         
-        # Если релевантных чанков нет
+        # Если релевантных чанков нет - генерируем сводку документов
         if not similar_chunks or len(similar_chunks) == 0:
+            logger.info(f"[RAG SERVICE FAST] No chunks found, generating document summary")
+            try:
+                from app.services.document_metadata_service import DocumentMetadataService
+                metadata_service = DocumentMetadataService()
+                documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
+                if documents_metadata:
+                    metadata_context = metadata_service.create_metadata_context(documents_metadata)
+                    return await self._generate_document_summary_fallback(
+                        question=question,
+                        metadata_context=metadata_context,
+                        project=project,
+                        llm_client=None,  # Будет создан внутри
+                        max_tokens=500
+                    )
+            except Exception as e:
+                logger.warning(f"[RAG SERVICE FAST] Error generating summary fallback: {e}")
             return "В загруженных документах нет информации по этому вопросу."
         
         # Извлечение текстов чанков
