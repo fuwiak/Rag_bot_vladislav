@@ -72,55 +72,59 @@ class RAGService:
             project = await self._get_project(user.project_id)
             if not project:
                 raise ValueError("Проект не найден")
-        
-        # Получение истории диалога (минимум 10 сообщений согласно требованиям)
-        conversation_history = await self._get_conversation_history(user_id, limit=10)
-        
-        # Используем AI агента для определения стратегии ответа
-        from app.services.rag_agent import RAGAgent
-        from app.llm.openrouter_client import OpenRouterClient
-        from app.models.llm_model import GlobalModelSettings
-        from sqlalchemy import select
-        
-        # Получаем модель для агента
-        settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
-        global_settings = settings_result.scalar_one_or_none()
-        
-        primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
-        fallback_model = global_settings.fallback_model_id if global_settings else None
-        
-        if not primary_model:
-            from app.core.config import settings as app_settings
-            primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
-            fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
-        
-        agent_llm = OpenRouterClient(
-            model_primary=primary_model,
-            model_fallback=fallback_model
-        )
-        rag_agent = RAGAgent(agent_llm)
-        
-        # Анализируем вопрос и получаем стратегию
-        try:
-            strategy_info = await rag_agent.get_answer_strategy(question, project.id, self.db)
-            strategy = strategy_info["strategy"]
-            logger.info(f"[RAG SERVICE] AI Agent strategy: {strategy.get('question_type')} - {strategy.get('recommendation')}")
-        except Exception as agent_error:
-            logger.warning(f"[RAG SERVICE] AI Agent failed: {agent_error}, using default strategy")
-            strategy = {"use_chunks": True, "use_summaries": True, "use_metadata": True, "use_general_knowledge": True}
-            strategy_info = {"documents_metadata": []}
-        
-        # Инициализируем переменные в начале (до всех блоков) - КРИТИЧНО для избежания UnboundLocalError
-            chunk_texts = []
-        similar_chunks = []
-        metadata_context = ""
-        
-        # Определяем стратегию поиска на основе анализа агента
-        collection_name = f"project_{project.id}"
-        collection_exists = await self.vector_store.collection_exists(collection_name)
-        
-        # РАСШИРЕННЫЙ ПОИСК ЧАНКОВ - используем все техники перед fallback
-        if strategy.get("use_chunks", True) and collection_exists:
+            
+            # Получение истории диалога (минимум 10 сообщений согласно требованиям)
+            conversation_history = await self._get_conversation_history(user_id, limit=10)
+            
+            # Используем AI агента для определения стратегии ответа
+            from app.services.rag_agent import RAGAgent
+            from app.llm.openrouter_client import OpenRouterClient
+            from app.models.llm_model import GlobalModelSettings
+            from sqlalchemy import select
+            
+            # Получаем модель для агента
+            settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+            global_settings = settings_result.scalar_one_or_none()
+            
+            primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
+            fallback_model = global_settings.fallback_model_id if global_settings else None
+            
+            if not primary_model:
+                from app.core.config import settings as app_settings
+                primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
+            
+            agent_llm = OpenRouterClient(
+                model_primary=primary_model,
+                model_fallback=fallback_model
+            )
+            rag_agent = RAGAgent(agent_llm)
+            
+            # Анализируем вопрос и получаем стратегию
+            try:
+                strategy_info = await rag_agent.get_answer_strategy(question, project.id, self.db)
+                strategy = strategy_info["strategy"]
+                logger.info(f"[RAG SERVICE] AI Agent strategy: {strategy.get('question_type')} - {strategy.get('recommendation')}")
+            except Exception as agent_error:
+                logger.warning(f"[RAG SERVICE] AI Agent failed: {agent_error}, using default strategy")
+                strategy = {"use_chunks": True, "use_summaries": True, "use_metadata": True, "use_general_knowledge": True}
+                strategy_info = {"documents_metadata": []}
+            
+            # Инициализируем переменные в начале (до всех блоков) - КРИТИЧНО для избежания UnboundLocalError
+            # chunk_texts уже инициализирована в начале функции, но переинициализируем для безопасности
+            if 'chunk_texts' not in locals() or chunk_texts is None:
+                chunk_texts = []
+            if 'similar_chunks' not in locals() or similar_chunks is None:
+                similar_chunks = []
+            if 'metadata_context' not in locals() or metadata_context is None:
+                metadata_context = ""
+            
+            # Определяем стратегию поиска на основе анализа агента
+            collection_name = f"project_{project.id}"
+            collection_exists = await self.vector_store.collection_exists(collection_name)
+            
+            # РАСШИРЕННЫЙ ПОИСК ЧАНКОВ - используем все техники перед fallback
+            if strategy.get("use_chunks", True) and collection_exists:
             logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
             found_chunks, found_similar = await self._advanced_chunk_search(
                 question=question,
