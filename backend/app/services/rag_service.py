@@ -100,18 +100,13 @@ class RAGService:
         
         chunk_texts = []
         metadata_context = ""
-        similar_chunks = []  # Инициализируем для использования в format_response
         
         # Определяем стратегию поиска на основе анализа агента
         collection_name = f"project_{project.id}"
         collection_exists = await self.vector_store.collection_exists(collection_name)
         
-        # Для вопросов о содержании - приоритет summaries
-        question_lower = question.lower()
-        is_content_question = any(word in question_lower for word in ["содержание", "содержание", "обзор", "что в", "что есть", "список", "перечисли"])
-        
-        # Если агент рекомендует использовать чанки и они доступны (но не для вопросов о содержании)
-        if strategy.get("use_chunks", True) and collection_exists and not is_content_question:
+        # Если агент рекомендует использовать чанки и они доступны
+        if strategy.get("use_chunks", True) and collection_exists:
             logger.info(f"[RAG SERVICE] Using chunks strategy (AI Agent recommendation)")
             question_embedding = await self.embedding_service.create_embedding(question)
             similar_chunks = await self.vector_store.search_similar(
@@ -125,15 +120,26 @@ class RAGService:
                 chunk_texts = [chunk.get("payload", {}).get("chunk_text", "") for chunk in similar_chunks if chunk.get("payload", {}).get("chunk_text")]
                 logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} chunks from vector search")
         
-        # Если вопрос о содержании или агент рекомендует использовать summaries
-        if is_content_question or (strategy.get("use_summaries", True) and not chunk_texts):
-            logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation or content question)")
-            chunk_texts = await self._get_document_summaries(project.id, top_k)
-            if chunk_texts:
+        # Для вопросов о содержании - приоритет summaries (не используем чанки)
+        question_type = strategy.get("question_type", "")
+        is_content_question = question_type == "содержание" or any(word in question.lower() for word in ["содержание", "содержание документов", "обзор документов"])
+        
+        # Если агент рекомендует использовать summaries или это вопрос о содержании
+        if (strategy.get("use_summaries", True) and not chunk_texts) or is_content_question:
+            if is_content_question:
+                logger.info(f"[RAG SERVICE] Content question detected, using summaries strategy")
+                # Для вопросов о содержании не используем чанки, только summaries
+                chunk_texts = []
+            else:
+                logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
+            
+            summaries = await self._get_document_summaries(project.id, top_k * 2)  # Берем больше summaries для содержания
+            if summaries:
+                chunk_texts = summaries
                 logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
         
         # Если агент рекомендует использовать метаданные или контента все еще нет
-        if (strategy.get("use_metadata", True) and not chunk_texts) or (is_content_question and not chunk_texts):
+        if (strategy.get("use_metadata", True) and not chunk_texts) or strategy.get("question_type") == "содержание":
             logger.info(f"[RAG SERVICE] Using metadata strategy (AI Agent recommendation)")
             try:
                 from app.services.document_metadata_service import DocumentMetadataService
@@ -455,28 +461,41 @@ class RAGService:
             summary_service = DocumentSummaryService(self.db)
             summaries = []
             
-            for doc in documents[:limit]:
-                # Приоритет 1: используем существующий summary (проверяем безопасно)
-                doc_summary = getattr(doc, 'summary', None)
-                if doc_summary and doc_summary.strip():
-                    summaries.append(f"Документ '{doc.filename}': {doc_summary}")
-                else:
-                    # Приоритет 2: пытаемся создать summary (только если поле существует в БД)
-                    try:
-                        # Проверяем, существует ли поле summary в модели
-                        if hasattr(Document, 'summary'):
-                            summary = await summary_service.generate_summary(doc.id)
-                            if summary and summary.strip():
-                                summaries.append(f"Документ '{doc.filename}': {summary}")
-                                continue
-                    except Exception as e:
-                        logger.warning(f"Error generating summary for doc {doc.id}: {e}")
-                    
-                    # Приоритет 3: используем содержимое
-                    if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
-                        content = doc.content[:500]
-                        if content.strip():
-                            summaries.append(f"Документ '{doc.filename}': {content}")
+                    for doc in documents[:limit]:
+                        # Приоритет 1: используем существующий summary (проверяем безопасно)
+                        doc_summary = getattr(doc, 'summary', None)
+                        if doc_summary and doc_summary.strip():
+                            # Форматируем как в рабочем скрипте: "Фрагмент X (источник: filename): summary"
+                            summaries.append({
+                                "text": doc_summary,
+                                "source": doc.filename,
+                                "score": 1.0
+                            })
+                        else:
+                            # Приоритет 2: пытаемся создать summary (только если поле существует в БД)
+                            try:
+                                # Проверяем, существует ли поле summary в модели
+                                if hasattr(Document, 'summary'):
+                                    summary = await summary_service.generate_summary(doc.id)
+                                    if summary and summary.strip():
+                                        summaries.append({
+                                            "text": summary,
+                                            "source": doc.filename,
+                                            "score": 1.0
+                                        })
+                                        continue
+                            except Exception as e:
+                                logger.warning(f"Error generating summary for doc {doc.id}: {e}")
+                            
+                            # Приоритет 3: используем содержимое (первые 500 символов)
+                            if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
+                                content = doc.content[:500]
+                                if content.strip():
+                                    summaries.append({
+                                        "text": content,
+                                        "source": doc.filename,
+                                        "score": 0.8
+                                    })
             
             logger.info(f"[RAG SERVICE] Retrieved {len(summaries)} document summaries for project {project_id}")
             return summaries

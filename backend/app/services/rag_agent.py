@@ -1,36 +1,12 @@
 """
 AI агент для определения стратегии ответа на вопрос
 Анализирует вопрос и решает, какую информацию использовать
-Использует легкий BERT для русского языка для улучшения анализа
 """
 import logging
-import re
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
-
-# Пробуем загрузить легкий BERT для русского языка через spaCy (опционально)
-try:
-    import spacy
-    SPACY_AVAILABLE = True
-    try:
-        # Пробуем загрузить русскую модель spaCy (легкая)
-        nlp_ru = spacy.load("ru_core_news_sm")
-        logger.info("[RAG AGENT] Loaded Russian spaCy model for keyword extraction")
-    except OSError:
-        # Если русской модели нет, пробуем английскую
-        try:
-            nlp_ru = spacy.load("en_core_web_sm")
-            logger.info("[RAG AGENT] Loaded English spaCy model (Russian not available)")
-        except OSError:
-            nlp_ru = None
-            SPACY_AVAILABLE = False
-            logger.warning("[RAG AGENT] spaCy models not available, using simple extraction")
-except ImportError:
-    SPACY_AVAILABLE = False
-    nlp_ru = None
-    logger.warning("[RAG AGENT] spaCy not installed, using simple extraction")
 
 
 class RAGAgent:
@@ -38,43 +14,6 @@ class RAGAgent:
     
     def __init__(self, llm_client):
         self.llm_client = llm_client
-        self.nlp = nlp_ru if SPACY_AVAILABLE and nlp_ru else None
-    
-    def extract_keywords_with_spacy(self, text: str, max_keywords: int = 5) -> List[str]:
-        """
-        Извлекает ключевые слова из текста используя spaCy (если доступен)
-        
-        Args:
-            text: Текст для анализа
-            max_keywords: Максимальное количество ключевых слов
-        
-        Returns:
-            Список ключевых слов
-        """
-        if not self.nlp:
-            return []
-        
-        try:
-            doc = self.nlp(text[:500])  # Ограничиваем длину для скорости
-            
-            keywords = []
-            # Извлекаем именованные сущности (NER)
-            for ent in doc.ents:
-                if ent.label_ in ["ORG", "PERSON", "PRODUCT", "EVENT", "WORK_OF_ART"]:
-                    keywords.append(ent.text.lower())
-            
-            # Извлекаем существительные и прилагательные (важные слова)
-            for token in doc:
-                if token.pos_ in ["NOUN", "ADJ"] and not token.is_stop and len(token.text) > 2:
-                    keywords.append(token.lemma_.lower())
-            
-            # Убираем дубликаты и возвращаем
-            unique_keywords = list(dict.fromkeys(keywords))[:max_keywords]
-            return unique_keywords
-            
-        except Exception as e:
-            logger.debug(f"[RAG AGENT] spaCy keyword extraction failed: {e}")
-            return []
     
     async def analyze_question(
         self,
@@ -178,33 +117,33 @@ class RAGAgent:
         except Exception as e:
             logger.warning(f"[RAG AGENT] Error analyzing question: {e}, using default strategy")
             # Fallback: определяем стратегию по ключевым словам в вопросе
+            import re
             question_lower = question.lower()
             
-            # Определяем тип вопроса
-            if any(word in question_lower for word in ["содержание", "содержание", "обзор", "что в", "что есть", "список"]):
+            # Определяем тип вопроса - приоритет для вопросов о содержании
+            content_keywords = ["содержание", "содержание документов", "обзор", "что в", "что есть", "список", "перечисли", "какие документы", "о чем"]
+            if any(keyword in question_lower for keyword in content_keywords):
                 question_type = "содержание"
-                use_summaries = True
+                use_chunks = False  # Для содержания не используем чанки
+                use_summaries = True  # Приоритет summaries
                 use_metadata = True
             elif any(word in question_lower for word in ["как", "почему", "что такое", "объясни"]):
                 question_type = "конкретный_вопрос"
                 use_chunks = has_chunks
                 use_summaries = True
+                use_metadata = False
             else:
                 question_type = "поиск"
                 use_chunks = has_chunks
                 use_summaries = True
                 use_metadata = True
             
-            # Извлекаем ключевые слова из вопроса
-            # Сначала пробуем spaCy (если доступен)
-            keywords = self.extract_keywords_with_spacy(question, max_keywords=5)
-            
-            # Если spaCy не дал результатов, используем простой способ
-            if not keywords:
-                # Убираем стоп-слова
-                stop_words = {"что", "как", "почему", "где", "когда", "кто", "в", "на", "с", "по", "для", "о", "об", "документ", "документы"}
-                words = re.findall(r'\b\w+\b', question_lower)
-                keywords = [w for w in words if w not in stop_words and len(w) > 2][:5]
+            # Извлекаем ключевые слова из вопроса (простой способ)
+            keywords = []
+            # Убираем стоп-слова
+            stop_words = {"что", "как", "почему", "где", "когда", "кто", "в", "на", "с", "по", "для", "о", "об", "документ", "документы"}
+            words = re.findall(r'\b\w+\b', question_lower)
+            keywords = [w for w in words if w not in stop_words and len(w) > 2][:5]
             
             return {
                 "question_type": question_type,
