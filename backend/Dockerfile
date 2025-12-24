@@ -35,10 +35,14 @@ COPY --from=builder /root/.local /root/.local
 # Build context - root проекта, копируем из backend/
 COPY backend/ .
 
-# Создание entrypoint скрипта
+# Создание entrypoint скрипта с применением миграций
 RUN echo '#!/bin/bash\n\
 set -e\n\
-alembic upgrade head 2>/dev/null || true\n\
+echo "Waiting for database..."\n\
+python -c "import asyncio, sys; sys.path.insert(0, '\''/app'\''); from app.core.database import wait_for_db; asyncio.run(wait_for_db(max_retries=10, retry_interval=2))"\n\
+echo "Applying Alembic migrations..."\n\
+cd /app && alembic upgrade head || echo "Warning: Migration failed, but continuing..."\n\
+echo "Starting application..."\n\
 exec "$@"' > /entrypoint.sh && \
     chmod +x /entrypoint.sh
 
