@@ -224,6 +224,9 @@ async def handle_text_before_auth(message: Message, state: FSMContext):
 
 def register_auth_handlers(dp: Dispatcher, project_id: str):
     """Регистрация обработчиков авторизации"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Команда /start уже обрабатывается в commands.py
     # Обработка пароля
     dp.message.register(handle_password, AuthStates.waiting_password, F.text)
@@ -231,7 +234,16 @@ def register_auth_handlers(dp: Dispatcher, project_id: str):
     # Обработка контакта или телефона
     dp.message.register(handle_contact, AuthStates.waiting_phone, F.contact | F.text)
     
-    # Обработка текста до авторизации (для всех состояний, кроме authorized и waiting_password/waiting_phone)
-    # Регистрируем без фильтра состояния, проверка будет внутри обработчика
-    dp.message.register(handle_text_before_auth, F.text)
+    # ВАЖНО: НЕ регистрируем handle_text_before_auth для авторизованных пользователей!
+    # Вместо этого регистрируем его только для состояний, когда пользователь НЕ авторизован
+    # Это предотвращает перехват сообщений авторизованных пользователей
+    # Используем фильтр состояния, чтобы он не срабатывал для authorized
+    from aiogram.filters import StateFilter
+    from aiogram.fsm.state import State
+    
+    # Регистрируем handle_text_before_auth только для состояний, когда пользователь НЕ авторизован
+    # Это означает, что он будет срабатывать только если состояние None или waiting_password/waiting_phone
+    # НО НЕ для authorized - для этого есть question_handler
+    dp.message.register(handle_text_before_auth, ~StateFilter(AuthStates.authorized), F.text)
+    logger.info(f"[REGISTER HANDLERS] Auth handlers registered for project {project_id} (handle_text_before_auth excluded for authorized users)")
 
