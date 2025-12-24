@@ -34,29 +34,20 @@ class RAGChain:
         else:
             self.llm_client = llm_client
         
-        # Параметры RAG
+        # Параметры RAG (по умолчанию более низкий порог для лучшего поиска)
         self.top_k = top_k
-        self.min_score = min_score
+        self.min_score = min_score if min_score is not None else 0.2  # Более низкий порог по умолчанию
         
         # Параметры hybrid search
         self.search_strategy = search_strategy
         self.dense_weight = dense_weight
         self.bm25_weight = bm25_weight
         
-        # Системный промпт для RAG (общий, без упоминания Kaspersky)
-        self.system_prompt = """Ты - полезный ассистент, который отвечает на вопросы пользователей на основе предоставленных документов.
-
-Твоя задача - отвечать на вопросы пользователей:
-1. Используя предоставленный контекст из документов (если он есть)
-2. На общие вопросы (используя свои знания, если контекст не предоставлен)
-
-Правила:
-1. Если предоставлен контекст - отвечай на основе контекста
-2. Если контекста нет или он не релевантен - можешь использовать свои общие знания
-3. Если в контексте нет информации - честно скажи об этом
-4. Отвечай на русском языке
-5. Будь дружелюбным и профессиональным
-6. Если используешь контекст из документов - в конце ответа укажи источники информации"""
+        # Системный промпт для RAG (упрощенный, как в рабочем скрипте)
+        self.system_prompt = """Ты - полезный ассистент, который отвечает на вопросы пользователей.
+Отвечай на основе предоставленного контекста, если он есть.
+Если в контексте нет информации, честно скажи об этом.
+Отвечай на русском языке, будь дружелюбным и информативным."""
     
     async def query(
         self,
@@ -101,13 +92,13 @@ class RAGChain:
             
             logger.info(f"Found {len(context_docs)} relevant documents")
             
-            # Если нет результатов, пробуем с низким порогом
+            # Если нет результатов, пробуем с еще более низким порогом (как в рабочем скрипте)
             if len(context_docs) == 0 and use_rag:
-                logger.warning("⚠️ No documents found, retrying with lower threshold...")
+                logger.warning("⚠️ No documents found, retrying with very low threshold...")
                 context_docs = await self.qdrant_loader.search(
                     query=user_query,
                     top_k=top_k * 2,
-                    score_threshold=0.2,  # Очень низкий порог
+                    score_threshold=0.0,  # Минимальный порог для поиска любых релевантных документов
                     search_strategy=self.search_strategy,
                     dense_weight=self.dense_weight,
                     bm25_weight=self.bm25_weight,
@@ -123,17 +114,19 @@ class RAGChain:
                     sources.append(url)
                     seen_urls.add(url)
         
-        # Шаг 2: Формируем промпт с контекстом
+        # Шаг 2: Формируем промпт с контекстом (как в рабочем скрипте)
         if context_docs:
             context_text = self._format_context(context_docs)
-            enhanced_prompt = f"""Контекст из документов:
+            # Используем простой и эффективный промпт из рабочего скрипта
+            enhanced_prompt = f"""На основе следующих фрагментов документов ответь на вопрос пользователя.
+Если ответа нет в контексте, так и скажи.
 
+КОНТЕКСТ:
 {context_text}
 
-Вопрос пользователя: {user_query}
+ВОПРОС: {user_query}
 
-Ответь на вопрос, используя предоставленный контекст. Если в контексте нет информации,
-честно скажи об этом."""
+ОТВЕТ:"""
         else:
             # Если нет контекста, но это общий вопрос - отвечаем на основе знаний
             if use_rag:
@@ -168,6 +161,7 @@ class RAGChain:
     def _format_context(self, documents: List[Dict[str, Any]]) -> str:
         """
         Форматирует найденные документы в контекст для промпта.
+        Использует формат из рабочего скрипта для лучшей работы RAG.
         
         Args:
             documents: Список найденных документов
@@ -179,17 +173,16 @@ class RAGChain:
         
         for i, doc in enumerate(documents, 1):
             text = doc.get("text", "") or doc.get("chunk_text", "")
-            source_url = doc.get("source_url", "")
+            source_url = doc.get("source_url", "") or doc.get("source", "") or doc.get("filename", "")
             score = doc.get("score", 0.0)
             
-            context_part = f"[Документ {i}] (релевантность: {score:.2f})\n"
-            if source_url:
-                context_part += f"Источник: {source_url}\n"
-            context_part += f"{text}\n"
+            # Формат из рабочего скрипта: "Фрагмент {i+1} (источник: {source}, релевантность: {score:.2f}):\n{text}"
+            source_name = source_url if source_url else f"Документ {i}"
+            context_part = f"Фрагмент {i} (источник: {source_name}, релевантность: {score:.2f}):\n{text}"
             
             context_parts.append(context_part)
         
-        return "\n---\n".join(context_parts)
+        return "\n\n".join(context_parts)
     
     async def close(self):
         """Закрывает ресурсы"""
