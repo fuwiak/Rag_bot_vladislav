@@ -55,6 +55,15 @@ class RAGService:
         Returns:
             Ответ на вопрос
         """
+        # КРИТИЧНО: Инициализируем все переменные в самом начале функции для избежания UnboundLocalError
+        chunk_texts = []
+        similar_chunks = []
+        metadata_context = ""
+        answer = None
+        user = None
+        project = None
+        
+        try:
         # Получение пользователя и проекта
         user = await self._get_user(user_id)
         if not user:
@@ -102,7 +111,7 @@ class RAGService:
             strategy_info = {"documents_metadata": []}
         
         # Инициализируем переменные в начале (до всех блоков) - КРИТИЧНО для избежания UnboundLocalError
-        chunk_texts = []
+            chunk_texts = []
         similar_chunks = []
         metadata_context = ""
         
@@ -142,7 +151,7 @@ class RAGService:
             if is_content_question:
                 logger.info(f"[RAG SERVICE] Content question detected, using summaries strategy")
                 # Для вопросов о содержании не используем чанки, только summaries
-                chunk_texts = []
+            chunk_texts = []
             else:
                 logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
             
@@ -424,14 +433,14 @@ class RAGService:
         # Построение промпта с контекстом (может быть пустым)
             # chunks_for_prompt уже определен выше
             
-                messages = self.prompt_builder.build_prompt(
-                    question=question,
+        messages = self.prompt_builder.build_prompt(
+            question=question,
                         chunks=chunks_for_prompt,  # Может быть пустым списком
-                    prompt_template=project.prompt_template,
-                    max_length=project.max_response_length,
+            prompt_template=project.prompt_template,
+            max_length=project.max_response_length,
                         conversation_history=conversation_history,
                         metadata_context=metadata_context  # Добавляем метаданные если есть
-                )
+        )
         
         # Генерация ответа через LLM
         # Получаем глобальные настройки моделей из БД
@@ -487,11 +496,11 @@ class RAGService:
         
         # Генерируем ответ
         try:
-            raw_answer = await llm_client.chat_completion(
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=0.7
-            )
+        raw_answer = await llm_client.chat_completion(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.7
+        )
         
             # Проверяем, не является ли ответ отказом
             answer_text = raw_answer.strip().lower()
@@ -512,10 +521,10 @@ class RAGService:
                     max_tokens=max_tokens
                 )
             else:
-                # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
-                answer = self.response_formatter.format_response(
-                    response=raw_answer,
-                    max_length=project.max_response_length,
+        # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
+        answer = self.response_formatter.format_response(
+            response=raw_answer,
+            max_length=project.max_response_length,
                             chunks=similar_chunks if 'similar_chunks' in locals() else []
                         )
         except Exception as llm_error:
@@ -1359,7 +1368,7 @@ class RAGService:
             
             # Только в самом крайнем случае возвращаем финальное сообщение
             if not answer:
-                return "В загруженных документах нет информации по этому вопросу."
+            return "В загруженных документах нет информации по этому вопросу."
             
             return answer
         
@@ -1938,12 +1947,12 @@ class RAGService:
                 # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
                 try:
                     # Пробуем обычный запрос
-                    result = await self.db.execute(
-                        select(Document)
-                        .where(Document.project_id == project_id)
-                        .limit(10)
-                    )
-                    documents = result.scalars().all()
+                result = await self.db.execute(
+                    select(Document)
+                    .where(Document.project_id == project_id)
+                    .limit(10)
+                )
+                documents = result.scalars().all()
                 except Exception as db_error:
                     # Если ошибка из-за отсутствия поля summary, используем raw SQL
                     error_str = str(db_error).lower()
@@ -2049,7 +2058,7 @@ class RAGService:
                     logger.warning(f"[RAG SERVICE] Error getting metadata for questions: {metadata_error}")
                 
                 if not chunk_texts:
-                    return []
+                return []
             
             # Объединяем чанки в контекст
             context = "\n\n".join(chunk_texts[:10])  # Максимум 10 чанков
