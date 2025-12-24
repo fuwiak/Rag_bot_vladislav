@@ -1,6 +1,7 @@
 """
 Форматирование ответов от LLM
 """
+import re
 from typing import List, Dict, Optional
 
 
@@ -24,6 +25,9 @@ class ResponseFormatter:
         Returns:
             Отформатированный ответ
         """
+        # Очищаем markdown форматирование для Telegram
+        response = self._clean_markdown(response)
+        
         # Обрезка по длине если необходимо (оставляем место для цитат)
         max_response_length = max_length - 200  # Резерв для цитат
         if len(response) > max_response_length:
@@ -40,6 +44,61 @@ class ResponseFormatter:
             response = response[:max_length].rsplit('.', 1)[0] + "..."
         
         return response.strip()
+    
+    def _clean_markdown(self, text: str) -> str:
+        """
+        Очищает markdown форматирование для Telegram
+        Удаляет или конвертирует markdown синтаксис в простой текст
+        
+        Args:
+            text: Текст с markdown форматированием
+        
+        Returns:
+            Очищенный текст
+        """
+        if not text:
+            return text
+        
+        # Удаляем заголовки markdown (###, ##, #)
+        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+        
+        # Удаляем жирный текст markdown (**text** или __text__)
+        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+        text = re.sub(r'__(.+?)__', r'\1', text)
+        
+        # Удаляем курсив markdown (*text* или _text_, но только если не часть слова)
+        text = re.sub(r'(?<!\*)\*([^*]+?)\*(?!\*)', r'\1', text)
+        text = re.sub(r'(?<!_)_([^_]+?)_(?!_)', r'\1', text)
+        
+        # Удаляем зачеркнутый текст (~~text~~)
+        text = re.sub(r'~~(.+?)~~', r'\1', text)
+        
+        # Удаляем inline code блоки (`code`) - оставляем только текст
+        text = re.sub(r'`([^`]+)`', r'\1', text)
+        
+        # Удаляем code blocks (```code```)
+        text = re.sub(r'```[\s\S]*?```', '', text)
+        
+        # Удаляем ссылки markdown [text](url) - оставляем только текст
+        text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+        
+        # Удаляем списки markdown (-, *, +) - заменяем на простые списки
+        text = re.sub(r'^[\s]*[-*+]\s+', '• ', text, flags=re.MULTILINE)
+        
+        # Удаляем нумерованные списки (1., 2., etc) - оставляем только текст
+        text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
+        
+        # Удаляем горизонтальные линии (---, ***)
+        text = re.sub(r'^[-*]{3,}$', '', text, flags=re.MULTILINE)
+        
+        # Удаляем лишние пустые строки (более 2 подряд)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        # Убираем пробелы в начале и конце строк
+        lines = [line.strip() for line in text.split('\n')]
+        text = '\n'.join(lines)
+        
+        return text.strip()
     
     def _extract_sources(self, chunks: List[Dict[str, any]]) -> str:
         """
