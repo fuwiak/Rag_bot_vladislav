@@ -9,8 +9,9 @@ from pydantic_settings import BaseSettings
 from pydantic import field_validator
 from typing import List, Union
 
-# Проверка, запущен ли pytest
+# Проверка, запущен ли pytest или alembic
 IS_TESTING = 'pytest' in sys.modules or 'PYTEST_CURRENT_TEST' in os.environ
+IS_ALEMBIC = 'alembic' in sys.modules or any('alembic' in arg for arg in sys.argv)
 
 
 def resolve_env_vars_in_string(value: str) -> str:
