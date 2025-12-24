@@ -43,4 +43,15 @@ class ProjectResponse(ProjectBase):
     class Config:
         from_attributes = True
 
+class ProjectListResponse(BaseModel):
+    """Упрощенная схема для списка проектов (без больших полей)"""
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
 

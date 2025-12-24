@@ -7,7 +7,7 @@ from typing import List
 from uuid import UUID
 
 from app.core.database import get_db
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse
+from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectListResponse
 from app.services.project_service import ProjectService
 from app.api.dependencies import get_current_admin
 

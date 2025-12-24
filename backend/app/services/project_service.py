@@ -39,11 +39,18 @@ class ProjectService:
             projects = list(result.scalars().all())
             
             # Ограничиваем размер больших полей для экономии памяти
+            # Это критично для предотвращения out of memory
             for project in projects:
-                if project.description and len(project.description) > 500:
-                    project.description = project.description[:500] + "..."
-                if project.prompt_template and len(project.prompt_template) > 1000:
-                    project.prompt_template = project.prompt_template[:1000] + "..."
+                # Ограничиваем description до 200 символов
+                if project.description and len(project.description) > 200:
+                    project.description = project.description[:200] + "..."
+                # НЕ загружаем prompt_template в списке - это очень большое поле
+                # Устанавливаем минимальное значение для экономии памяти
+                if project.prompt_template:
+                    project.prompt_template = ""  # Не загружаем в списке
+                # Не загружаем access_password в списке
+                if project.access_password:
+                    project.access_password = ""  # Не загружаем в списке
             
             # Явно освобождаем память
             gc.collect()
