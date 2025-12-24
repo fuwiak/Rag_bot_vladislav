@@ -19,11 +19,27 @@ async function loadConfig(): Promise<{ backendUrl: string; useMockApi: boolean }
   
   configPromise = (async () => {
     try {
-      const response = await fetch('/api/config')
+      // Загружаем конфигурацию из API route (читает переменные на сервере)
+      const response = await fetch('/api/config', {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+        },
+      })
       if (response.ok) {
         const config = await response.json()
-        configCache = config
-        return config
+        // Убираем trailing slash
+        const backendUrl = (config.backendUrl || '').replace(/\/+$/, '')
+        
+        // Проверяем, что получили валидный URL (не localhost)
+        if (backendUrl && backendUrl !== 'http://localhost:8000' && !backendUrl.includes('localhost')) {
+          configCache = {
+            backendUrl,
+            useMockApi: config.useMockApi === true || config.useMockApi === 'true',
+          }
+          console.log('[API Helpers] Config loaded from API route:', configCache)
+          return configCache
+        }
       }
     } catch (err) {
       console.warn('[API Helpers] Failed to load config from API route:', err)
@@ -38,10 +54,12 @@ async function loadConfig(): Promise<{ backendUrl: string; useMockApi: boolean }
       ? (window as any).__NEXT_DATA__?.env?.NEXT_PUBLIC_USE_MOCK_API === 'true'
       : false) || process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
     
-    return {
+    const fallbackConfig = {
       backendUrl: backendUrl.replace(/\/+$/, ''),
       useMockApi,
     }
+    console.warn('[API Helpers] Using fallback config:', fallbackConfig)
+    return fallbackConfig
   })()
   
   return configPromise
@@ -70,11 +88,23 @@ export async function getBackendUrl(): Promise<string> {
     USE_MOCK_API = process.env.NEXT_PUBLIC_USE_MOCK_API === 'true'
   }
   
-  // Если переменные не найдены, загружаем из API route (runtime конфигурация)
-  if (!API_BASE_URL || API_BASE_URL === 'http://localhost:8000') {
-    const config = await loadConfig()
-    API_BASE_URL = config.backendUrl
-    USE_MOCK_API = config.useMockApi
+  // Если переменные не найдены или это localhost, загружаем из API route (runtime конфигурация)
+  // Это критично для Railway, где переменные могут не встроиться в сборку
+  if (!API_BASE_URL || API_BASE_URL === 'http://localhost:8000' || API_BASE_URL.includes('localhost')) {
+    try {
+      const config = await loadConfig()
+      if (config.backendUrl && config.backendUrl !== 'http://localhost:8000' && !config.backendUrl.includes('localhost')) {
+        API_BASE_URL = config.backendUrl
+        USE_MOCK_API = config.useMockApi
+      }
+    } catch (err) {
+      console.warn('[API Helpers] Failed to load config from API route:', err)
+    }
+  }
+  
+  // Убеждаемся, что у нас есть URL
+  if (!API_BASE_URL) {
+    API_BASE_URL = 'http://localhost:8000'
   }
   
   // Убираем trailing slash
