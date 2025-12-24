@@ -63,10 +63,28 @@ export default function NewProjectPage() {
         body: JSON.stringify(dataToSend),
       })
 
-      if (response.ok) {
+      // Проверяем статус ответа
+      if (response.ok || response.status === 201) {
+        // Проект успешно создан
         router.push('/dashboard')
-      } else {
-        const errorData = await response.json().catch(() => ({}))
+        return
+      }
+
+      // Если ошибка CORS или сетевые проблемы, но проект мог быть создан
+      if (response.status === 0 || response.status >= 500) {
+        // Проверяем, может быть проект все равно создался
+        // Показываем предупреждение, но не блокируем
+        console.warn('Network error, but project might have been created. Status:', response.status)
+        // Пробуем перейти на dashboard - если проект создан, он там будет
+        setTimeout(() => {
+          router.push('/dashboard')
+        }, 1000)
+        return
+      }
+
+      // Обработка других ошибок
+      try {
+        const errorData = await response.json()
         // Обработка ошибок валидации Pydantic (422)
         if (response.status === 422 && errorData.detail) {
           const validationErrors = Array.isArray(errorData.detail) 
@@ -77,6 +95,10 @@ export default function NewProjectPage() {
           setError(errorData.detail || errorData.message || 'Ошибка создания проекта')
         }
         console.error('Error creating project:', errorData)
+      } catch (err) {
+        // Если не удалось распарсить JSON, показываем общую ошибку
+        setError(`Ошибка создания проекта (статус: ${response.status})`)
+        console.error('Error parsing error response:', err)
       }
     } catch (err) {
       setError('Ошибка подключения к серверу')

@@ -42,8 +42,15 @@ class ProjectService:
         await self.db.commit()
         await self.db.refresh(project)
         
-        # Создание коллекции в Qdrant для проекта
-        await self.collections_manager.create_collection(str(project.id))
+        # Создание коллекции в Qdrant для проекта (не блокируем создание проекта при ошибке)
+        try:
+            await self.collections_manager.create_collection(str(project.id))
+        except Exception as e:
+            # Логируем ошибку, но не прерываем создание проекта
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to create Qdrant collection for project {project.id}: {e}")
+            # Проект уже создан в БД, продолжаем
         
         return project
     
