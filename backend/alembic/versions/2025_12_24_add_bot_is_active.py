@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '2025_12_24_bot_is_active'
-down_revision = '2025_12_13_1637'
+down_revision = '6b1a79c454ff'  # Используем правильный revision ID из предыдущей миграции
 branch_labels = None
 depends_on = None
 
