@@ -38,6 +38,13 @@ class ProjectService:
             )
             projects = list(result.scalars().all())
             
+            # Ограничиваем размер больших полей для экономии памяти
+            for project in projects:
+                if project.description and len(project.description) > 500:
+                    project.description = project.description[:500] + "..."
+                if project.prompt_template and len(project.prompt_template) > 1000:
+                    project.prompt_template = project.prompt_template[:1000] + "..."
+            
             # Явно освобождаем память
             gc.collect()
             
