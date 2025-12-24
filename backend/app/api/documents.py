@@ -177,6 +177,8 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
         logger.error(f"Критическая ошибка при обработке документа {document_id}: {e}", exc_info=True)
         # Пробуем обновить статус документа на ошибку
         try:
+            from sqlalchemy import select
+            from app.models.document import Document
             async with AsyncSessionLocal() as db:
                 result = await db.execute(select(Document).where(Document.id == document_id))
                 document = result.scalar_one_or_none()
