@@ -11,7 +11,16 @@ logger = logging.getLogger(__name__)
 
 
 class OpenRouterClient:
-    """Клиент для OpenRouter API с fallback логикой"""
+    """Клиент для OpenRouter API с fallback логикой и цепочкой моделей для русского языка"""
+    
+    # Дополнительные fallback модели для русского языка (в порядке приоритета)
+    RUSSIAN_FALLBACK_MODELS = [
+        "deepseek/deepseek-chat",  # DeepSeek - отличная поддержка русского
+        "qwen/qwen-2.5-72b-instruct",  # Qwen - хорошая поддержка русского
+        "nex-ai/nex-agi-deepseek-v3.1-nex-n1",  # DeepSeek V3.1 Nex N1 (free)
+        "minimax/minimax-m2.1",  # MiniMax M2.1
+        "mistralai/mistral-7b-instruct",  # Mistral 7B Instruct (free)
+    ]
     
     def __init__(self, model_primary: str = None, model_fallback: str = None):
         self.api_key = settings.OPENROUTER_API_KEY
@@ -21,6 +30,19 @@ class OpenRouterClient:
         self.timeout_primary = settings.OPENROUTER_TIMEOUT_PRIMARY
         self.timeout_fallback = settings.OPENROUTER_TIMEOUT_FALLBACK
         self.app_url = settings.APP_URL
+        
+        # Формируем полную цепочку моделей: primary -> fallback -> русские модели
+        self.model_chain = []
+        if self.model_primary:
+            self.model_chain.append(self.model_primary)
+        if self.model_fallback and self.model_fallback != self.model_primary:
+            self.model_chain.append(self.model_fallback)
+        # Добавляем русские модели, исключая уже добавленные
+        for model in self.RUSSIAN_FALLBACK_MODELS:
+            if model not in self.model_chain:
+                self.model_chain.append(model)
+        
+        logger.info(f"[OpenRouterClient] Model chain: {self.model_chain}")
     
     async def chat_completion(
         self,
@@ -29,7 +51,7 @@ class OpenRouterClient:
         temperature: float = 0.7
     ) -> str:
         """
-        Генерация ответа через LLM с fallback
+        Генерация ответа через LLM с цепочкой fallback моделей
         
         Args:
             messages: Список сообщений в формате [{"role": "user", "content": "..."}]
@@ -40,36 +62,39 @@ class OpenRouterClient:
             Сгенерированный текст
         
         Raises:
-            Exception: Если обе модели не сработали
+            Exception: Если все модели в цепочке не сработали
         """
-        # Попытка с основной моделью
-        try:
-            response = await self._make_request(
-                model=self.model_primary,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                timeout=self.timeout_primary
-            )
-            return response
-        except Exception as e:
-            logger.warning(f"Ошибка при использовании основной модели {self.model_primary}: {e}")
-            logger.info(f"Переключение на fallback модель {self.model_fallback}")
-            
-            # Fallback на резервную модель
+        last_error = None
+        
+        # Пробуем каждую модель в цепочке
+        for idx, model in enumerate(self.model_chain):
             try:
+                timeout = self.timeout_primary if idx == 0 else self.timeout_fallback
+                logger.info(f"[OpenRouterClient] Trying model {idx + 1}/{len(self.model_chain)}: {model}")
+                
                 response = await self._make_request(
-                    model=self.model_fallback,
+                    model=model,
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    timeout=self.timeout_fallback
+                    timeout=timeout
                 )
-                logger.info("Успешно использована fallback модель")
+                
+                if idx > 0:
+                    logger.info(f"[OpenRouterClient] Successfully used fallback model {idx}: {model}")
                 return response
-            except Exception as e2:
-                logger.error(f"Ошибка при использовании fallback модели {self.model_fallback}: {e2}")
-                raise Exception(f"Обе модели не сработали. Основная: {e}, Fallback: {e2}")
+                
+            except Exception as e:
+                last_error = e
+                logger.warning(f"[OpenRouterClient] Model {model} failed: {e}")
+                if idx < len(self.model_chain) - 1:
+                    logger.info(f"[OpenRouterClient] Trying next model in chain...")
+                continue
+        
+        # Если все модели не сработали
+        error_msg = f"Все модели в цепочке не сработали. Последняя ошибка: {last_error}"
+        logger.error(f"[OpenRouterClient] {error_msg}")
+        raise Exception(error_msg)
     
     async def _make_request(
         self,
