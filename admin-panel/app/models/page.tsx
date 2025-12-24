@@ -284,9 +284,9 @@ export default function ModelsPage() {
       const { apiFetch } = await import('../lib/api-helpers')
 
       const requestData = {
-        model_id: testModelId,
-        messages: newMessages,
-        temperature: 0.7,
+          model_id: testModelId,
+          messages: newMessages,
+          temperature: 0.7,
       }
       
       console.log('Sending test request:', JSON.stringify(requestData, null, 2))

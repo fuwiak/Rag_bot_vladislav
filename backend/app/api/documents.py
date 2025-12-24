@@ -24,18 +24,31 @@ async def process_document_async_from_file(document_id: UUID, project_id: UUID, 
     """
     import os
     import gc
+    import psutil
+    
+    process = psutil.Process(os.getpid())
+    start_memory = process.memory_info().rss / 1024 / 1024
+    logger.info(f"[Process] Starting processing document {document_id} ({filename}), memory: {start_memory:.2f}MB")
     
     file_content = None
     try:
+        # Проверяем размер файла
+        file_size = os.path.getsize(file_path) / 1024 / 1024
+        logger.info(f"[Process] Reading file {file_path}, size: {file_size:.2f}MB")
+        
         # Читаем файл только когда нужно
         with open(file_path, 'rb') as f:
             file_content = f.read()
         
+        read_memory = process.memory_info().rss / 1024 / 1024
+        logger.info(f"[Process] File read into memory, memory: {read_memory:.2f}MB (delta: {read_memory - start_memory:.2f}MB)")
+        
         # Удаляем временный файл сразу после чтения (освобождаем диск)
         try:
             os.unlink(file_path)
+            logger.info(f"[Process] Temp file deleted: {file_path}")
         except Exception as e:
-            logger.warning(f"Не удалось удалить временный файл {file_path}: {e}")
+            logger.warning(f"[Process] Не удалось удалить временный файл {file_path}: {e}")
         
         # Вызываем основную функцию обработки
         await process_document_async(document_id, project_id, file_content, filename, file_type)
@@ -179,11 +192,14 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                             # Продолжаем обработку следующих чанков
                             continue
                     
-                    await db.commit()
-                    logger.info(f"Обработано {batch_end} из {len(chunks)} чанков документа {document_id}")
-                    
+                await db.commit()
+                
+                # Логируем память после каждого батча
+                batch_memory = process.memory_info().rss / 1024 / 1024
+                logger.info(f"[Process] Batch {batch_end}/{len(chunks)} processed, memory: {batch_memory:.2f}MB")
+                
                 except Exception as e:
-                    logger.error(f"Критическая ошибка при обработке батча {batch_start}-{batch_end}: {e}")
+                    logger.error(f"[Process] Критическая ошибка при обработке батча {batch_start}-{batch_end}: {e}")
                     # Пробуем откатить транзакцию и продолжить
                     try:
                         await db.rollback()
@@ -201,7 +217,8 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                 # Пауза между батчами для освобождения памяти и неблокирующей обработки
                 await asyncio.sleep(0.1)
             
-            logger.info(f"Документ {document_id} ({filename}) успешно обработан: {len(chunks)} чанков")
+            final_memory = process.memory_info().rss / 1024 / 1024
+            logger.info(f"[Process] Документ {document_id} ({filename}) успешно обработан: {len(chunks)} чанков, final memory: {final_memory:.2f}MB")
             
             # Обновляем статус документа на успешную обработку
             result = await db.execute(select(Document).where(Document.id == document_id))
@@ -244,15 +261,23 @@ async def upload_documents(
     current_admin = Depends(get_current_admin)
 ):
     """Загрузить документы в проект"""
+    import psutil
+    import os
     from app.core.config import settings
     
     # Максимальный размер файла: 50MB (можно настроить через переменную окружения)
     MAX_FILE_SIZE = getattr(settings, 'MAX_DOCUMENT_SIZE', 50 * 1024 * 1024)  # 50MB по умолчанию
     
+    # Логируем начальное состояние памяти
+    process = psutil.Process(os.getpid())
+    initial_memory = process.memory_info().rss / 1024 / 1024  # MB
+    logger.info(f"[Upload] Starting upload for project {project_id}, files: {len(files)}, initial memory: {initial_memory:.2f}MB")
+    
     service = DocumentService(db)
     
     documents = []
-    for file in files:
+    for file_index, file in enumerate(files):
+        logger.info(f"[Upload] Processing file {file_index + 1}/{len(files)}: {file.filename}")
         # Валидация формата файла
         if not file.filename.endswith(('.txt', '.docx', '.pdf')):
             raise HTTPException(
@@ -273,18 +298,27 @@ async def upload_documents(
         
         file_type = file.filename.split('.')[-1].lower()
         
+        # Логируем размер файла
+        file_size_mb = 0
+        if hasattr(file, 'size') and file.size:
+            file_size_mb = file.size / 1024 / 1024
+        logger.info(f"[Upload] File {file.filename}: type={file_type}, size={file_size_mb:.2f}MB")
+        
         # Читаем файл по частям для проверки размера (streaming)
         import tempfile
-        import os
         import shutil
         
         # Создаем временный файл для хранения содержимого
         # Это позволяет не держать весь файл в памяти
         temp_file = None
+        temp_path = None
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_type}') as temp_file:
                 temp_path = temp_file.name
                 total_size = 0
+                chunk_count = 0
+                
+                logger.info(f"[Upload] Writing file to temp: {temp_path}")
                 
                 # Читаем файл по частям и записываем во временный файл
                 while True:
@@ -292,10 +326,12 @@ async def upload_documents(
                     if not chunk:
                         break
                     total_size += len(chunk)
+                    chunk_count += 1
                     
                     # Проверяем размер во время чтения
                     if total_size > MAX_FILE_SIZE:
                         os.unlink(temp_path)
+                        logger.error(f"[Upload] File {file.filename} too large: {total_size / 1024 / 1024:.2f}MB")
                         raise HTTPException(
                             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                             detail=f"Файл {file.filename} слишком большой ({total_size / 1024 / 1024:.2f}MB). Максимальный размер: {MAX_FILE_SIZE / 1024 / 1024:.2f}MB"
@@ -305,6 +341,12 @@ async def upload_documents(
                 
                 temp_file.flush()
                 temp_file.close()
+                
+                logger.info(f"[Upload] File written to temp: {total_size / 1024 / 1024:.2f}MB, {chunk_count} chunks")
+                
+                # Проверяем память после записи
+                current_memory = process.memory_info().rss / 1024 / 1024
+                logger.info(f"[Upload] Memory after writing file: {current_memory:.2f}MB (delta: {current_memory - initial_memory:.2f}MB)")
             
             # Создаем документ в БД сразу (временно с placeholder content)
             from app.models.document import Document
@@ -322,6 +364,7 @@ async def upload_documents(
             
             # Запускаем обработку через BackgroundTasks (выполнится после отправки ответа)
             # Передаем путь к временному файлу вместо содержимого в памяти
+            logger.info(f"[Upload] Scheduling background processing for document {document.id}, temp_file: {temp_path}")
             background_tasks.add_task(
                 process_document_async_from_file,
                 document.id, 
@@ -349,6 +392,10 @@ async def upload_documents(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Ошибка при загрузке файла: {str(e)}"
             )
+    
+    # Логируем финальное состояние памяти
+    final_memory = process.memory_info().rss / 1024 / 1024
+    logger.info(f"[Upload] Upload complete: {len(documents)} documents created, final memory: {final_memory:.2f}MB (delta: {final_memory - initial_memory:.2f}MB)")
     
     # Возвращаем документы сразу (обработка будет происходить в фоне)
     return documents

@@ -87,7 +87,7 @@ export default function ProjectDetailPage() {
     setLoading(true)
     try {
       const { apiFetch } = await import('../../lib/api-helpers')
-
+      
       const projectRes = await apiFetch(`/api/projects/${projectId}`)
 
       if (projectRes.ok) {
@@ -117,7 +117,7 @@ export default function ProjectDetailPage() {
   const fetchDocuments = async () => {
     try {
       const { apiFetch } = await import('../../lib/api-helpers')
-
+      
       const documentsRes = await apiFetch(`/api/documents/${projectId}`)
 
       if (documentsRes.ok) {
@@ -133,7 +133,7 @@ export default function ProjectDetailPage() {
   const fetchUsers = async () => {
     try {
       const { apiFetch } = await import('../../lib/api-helpers')
-
+      
       const usersRes = await apiFetch(`/api/users/project/${projectId}`)
 
       if (usersRes.ok) {
@@ -161,7 +161,7 @@ export default function ProjectDetailPage() {
 
     try {
       const { apiFetch } = await import('../../lib/api-helpers')
-
+      
       const response = await apiFetch(`/api/projects/${projectId}`, {
         method: 'DELETE',
       })
@@ -204,7 +204,7 @@ export default function ProjectDetailPage() {
 
     try {
       const { apiFetch } = await import('../../lib/api-helpers')
-
+      
       const response = await apiFetch(`/api/projects/${projectId}`, {
         method: 'PUT',
         body: JSON.stringify(editData),
@@ -282,7 +282,7 @@ export default function ProjectDetailPage() {
         </div>
       </nav>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 ml-64 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 ml-64 py-8">
           <div className="mb-4">
             <Link href="/dashboard" className="inline-flex items-center text-fb-blue hover:text-fb-blue-dark mb-4 font-medium">
               <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -342,11 +342,11 @@ export default function ProjectDetailPage() {
                   </button>
                 </>
               )}
-            </div>
           </div>
+        </div>
 
-          {/* Tabs */}
-          <div className="bg-white rounded-lg shadow-sm mb-4">
+        {/* Tabs */}
+        <div className="bg-white rounded-lg shadow-sm mb-4">
           <div className="border-b border-fb-gray-dark">
             <nav className="flex -mb-px">
               <button
@@ -381,10 +381,10 @@ export default function ProjectDetailPage() {
               </button>
             </nav>
           </div>
-          </div>
+        </div>
 
-          {/* Content */}
-          <div className="bg-white rounded-lg shadow-sm p-6">
+        {/* Content */}
+        <div className="bg-white rounded-lg shadow-sm p-6">
           {activeTab === 'info' && (
             <div className="space-y-4">
               {error && (
@@ -735,7 +735,7 @@ export default function ProjectDetailPage() {
               )}
             </div>
           )}
-          </div>
+        </div>
       </div>
 
       {/* Modal для загрузки документов */}
@@ -789,26 +789,69 @@ export default function ProjectDetailPage() {
                   try {
                     const { apiFetch } = await import('../../lib/api-helpers')
                     
+                    console.log('[Upload] Starting upload:', {
+                      projectId,
+                      fileCount: uploadFiles.length,
+                      fileNames: uploadFiles.map(f => f.name),
+                      fileSizes: uploadFiles.map(f => `${(f.size / 1024).toFixed(2)}KB`)
+                    })
+                    
                     const formData = new FormData()
-                    uploadFiles.forEach(file => {
+                    uploadFiles.forEach((file, index) => {
+                      console.log(`[Upload] Adding file ${index + 1}:`, {
+                        name: file.name,
+                        size: `${(file.size / 1024).toFixed(2)}KB`,
+                        type: file.type
+                      })
                       formData.append('files', file)
                     })
                     
+                    const startTime = Date.now()
                     const response = await apiFetch(`/api/documents/${projectId}/upload`, {
                       method: 'POST',
                       body: formData,
                     })
+                    const uploadTime = Date.now() - startTime
+                    
+                    console.log('[Upload] Response received:', {
+                      status: response.status,
+                      statusText: response.statusText,
+                      uploadTime: `${uploadTime}ms`,
+                      headers: Object.fromEntries(response.headers.entries())
+                    })
                     
                     if (response.ok) {
+                      const responseData = await response.json().catch(() => [])
+                      console.log('[Upload] Upload successful:', {
+                        documentsReturned: Array.isArray(responseData) ? responseData.length : 0,
+                        responseData
+                      })
+                      
+                      // Обновляем список документов сразу, даже если обработка идет в фоне
                       setShowUploadModal(false)
                       setUploadFiles([])
-                      fetchDocuments()
+                      
+                      // Добавляем загруженные документы в список сразу
+                      if (Array.isArray(responseData) && responseData.length > 0) {
+                        setDocuments(prev => [...prev, ...responseData])
+                        console.log('[Upload] Documents added to list, new count:', documents.length + responseData.length)
+                      }
+                      
+                      // Обновляем список через небольшую задержку, чтобы получить актуальные данные
+                      setTimeout(() => {
+                        fetchDocuments()
+                      }, 500)
                     } else {
                       const errorData = await response.json().catch(() => ({ detail: 'Ошибка загрузки документов' }))
+                      console.error('[Upload] Upload failed:', {
+                        status: response.status,
+                        errorData
+                      })
                       alert(errorData.detail || 'Ошибка загрузки документов')
                     }
                   } catch (err) {
-                    alert('Ошибка подключения к серверу')
+                    console.error('[Upload] Upload error:', err)
+                    alert(`Ошибка подключения к серверу: ${err instanceof Error ? err.message : 'Неизвестная ошибка'}`)
                   } finally {
                     setUploading(false)
                   }

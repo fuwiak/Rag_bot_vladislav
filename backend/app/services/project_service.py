@@ -81,8 +81,15 @@ class ProjectService:
         if not project:
             return False
         
-        # Удаление коллекции из Qdrant
-        await self.collections_manager.delete_collection(str(project_id))
+        # Удаление коллекции из Qdrant (опционально, не блокируем удаление проекта при ошибке)
+        try:
+            await self.collections_manager.delete_collection(str(project_id))
+        except Exception as e:
+            # Логируем ошибку, но не прерываем удаление проекта
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Не удалось удалить коллекцию Qdrant для проекта {project_id}: {e}")
+            # Продолжаем удаление проекта даже если коллекция не найдена
         
         await self.db.delete(project)
         await self.db.commit()

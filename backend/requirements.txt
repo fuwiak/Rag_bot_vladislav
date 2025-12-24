@@ -36,6 +36,7 @@ qdrant-client==1.7.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 python-dateutil==2.8.2
+psutil==5.9.6  # For memory monitoring
 
 # Testing
 pytest==7.4.3
