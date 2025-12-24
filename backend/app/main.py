@@ -92,7 +92,16 @@ app = FastAPI(
 # Логируем CORS origins для отладки
 cors_origins = settings.CORS_ORIGINS
 if not isinstance(cors_origins, list):
-    cors_origins = [cors_origins] if cors_origins else []
+    if isinstance(cors_origins, str):
+        # Разбиваем строку по запятой
+        cors_origins = [origin.strip() for origin in cors_origins.split(',') if origin.strip()]
+    else:
+        cors_origins = [cors_origins] if cors_origins else []
+
+# Добавляем дефолтные origins если список пустой
+if not cors_origins:
+    cors_origins = ["https://ragbotvladislav-test.up.railway.app", "http://localhost:3000"]
+
 logging.info(f"CORS origins configured: {cors_origins}")
 
 app.add_middleware(

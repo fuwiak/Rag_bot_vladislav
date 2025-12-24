@@ -116,13 +116,15 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                 logger.error(f"Документ {document_id} не найден для обработки")
                 return
             
-            # Обновляем content в документе - сохраняем только первые 1000 символов для экономии памяти
-            document.content = text[:1000] + "..." if len(text) > 1000 else text
+            # Обновляем content в документе - сохраняем только первые 500 символов для экономии памяти
+            # Это критично для предотвращения out of memory
+            document.content = text[:500] + "..." if len(text) > 500 else text
             await db.commit()
             await db.refresh(document)
             
             # Освобождаем file_content сразу после парсинга
-            del file_content
+            if 'file_content' in locals():
+                del file_content
             gc.collect()
             
             parse_memory = process.memory_info().rss / 1024 / 1024
@@ -165,10 +167,10 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                         # Пропускаем этот чанк, но продолжаем обработку
                         continue
                     
-                    # Сохранение чанка в БД
+                    # Сохранение чанка в БД - сохраняем только первые 1000 символов для экономии памяти
                     chunk = DocumentChunk(
                         document_id=document.id,
-                        chunk_text=chunk_text,
+                        chunk_text=chunk_text[:1000] if len(chunk_text) > 1000 else chunk_text,
                         chunk_index=chunk_index
                     )
                     db.add(chunk)
