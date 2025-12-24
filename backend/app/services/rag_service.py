@@ -481,11 +481,11 @@ class RAGService:
         
         # Генерируем ответ
         try:
-        raw_answer = await llm_client.chat_completion(
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=0.7
-        )
+            raw_answer = await llm_client.chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.7
+            )
         
             # Проверяем, не является ли ответ отказом
             answer_text = raw_answer.strip().lower()
