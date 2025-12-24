@@ -5,6 +5,7 @@ from typing import List, Dict, Optional
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
+import logging
 
 from app.models.project import Project
 from app.models.user import User
@@ -14,6 +15,8 @@ from app.services.embedding_service import EmbeddingService
 from app.llm.openrouter_client import OpenRouterClient
 from app.llm.prompt_builder import PromptBuilder
 from app.llm.response_formatter import ResponseFormatter
+
+logger = logging.getLogger(__name__)
 
 
 class RAGService:
