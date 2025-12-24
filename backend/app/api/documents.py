@@ -365,42 +365,21 @@ async def upload_documents(
             
             documents.append(document)
             
-            # Запускаем обработку в фоне через asyncio.create_task
-            # Это позволяет обработке выполняться полностью асинхронно, не блокируя ответ
-            import asyncio
-            logger.info(f"[Upload] Scheduling async background processing for document {document.id}, temp_file: {temp_path}")
+            # Запускаем обработку через Celery в отдельном воркере
+            # Это предотвращает out of memory, так как обработка происходит в отдельном процессе
+            from app.tasks.document_tasks import process_document_task
+            logger.info(f"[Upload] Scheduling Celery task for document {document.id}, temp_file: {temp_path}")
             
-            # Создаем задачу, которая будет выполняться независимо от основного запроса
-            # Используем asyncio.create_task для полностью асинхронной обработки
-            async def process_in_background():
-                try:
-                    # КРИТИЧНО: Увеличиваем задержку до 10 секунд чтобы дать время
-                    # основному запросу завершиться и освободить память перед началом обработки
-                    # Это предотвращает одновременную загрузку памяти от фоновой обработки
-                    # и запросов к другим endpoints (bots/info, users/project, etc.)
-                    await asyncio.sleep(10.0)  # Увеличено до 10 секунд
-                    
-                    # Явно освобождаем память перед началом обработки
-                    import gc
-                    gc.collect()
-                    
-                    await process_document_async_from_file(
-                        document.id, 
-                        project_id, 
-                        temp_path,
-                        file.filename,
-                        file_type
-                    )
-                except Exception as e:
-                    logger.error(f"[Upload] Background processing error for document {document.id}: {e}", exc_info=True)
-                    # Освобождаем память даже при ошибке
-                    import gc
-                    gc.collect()
-            
-            # Запускаем задачу в фоне (не ждем её завершения)
-            # Используем asyncio.ensure_future для гарантии выполнения даже если задача не awaited
-            task = asyncio.create_task(process_in_background())
-            # Не ждем завершения задачи - она выполнится в фоне
+            # Отправляем задачу в Celery очередь
+            # Задача будет выполнена в отдельном воркере, не блокируя основной процесс
+            task_result = process_document_task.delay(
+                str(document.id),
+                str(project_id),
+                temp_path,
+                file.filename,
+                file_type
+            )
+            logger.info(f"[Upload] Celery task created: {task_result.id} for document {document.id}")
         except HTTPException:
             # Если ошибка размера, удаляем временный файл если был создан
             if temp_file and os.path.exists(temp_path):

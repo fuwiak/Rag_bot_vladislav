@@ -91,6 +91,33 @@ class Settings(BaseSettings):
     APP_URL: str = "http://localhost:3000"
     BACKEND_URL: str = "http://localhost:8000"
     
+    # Redis for Celery broker (Railway provides REDIS_URL)
+    REDIS_URL: str = "redis://localhost:6379/0"
+    
+    # Celery configuration
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
+    
+    @field_validator('CELERY_BROKER_URL', mode='before')
+    @classmethod
+    def resolve_celery_broker_url(cls, v):
+        """Resolve CELERY_BROKER_URL from REDIS_URL if not set"""
+        if isinstance(v, str) and v:
+            return resolve_env_vars_in_string(v)
+        # Fallback to REDIS_URL if CELERY_BROKER_URL is not set
+        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+        return resolve_env_vars_in_string(redis_url)
+    
+    @field_validator('CELERY_RESULT_BACKEND', mode='before')
+    @classmethod
+    def resolve_celery_result_backend(cls, v):
+        """Resolve CELERY_RESULT_BACKEND from REDIS_URL if not set"""
+        if isinstance(v, str) and v:
+            return resolve_env_vars_in_string(v)
+        # Fallback to REDIS_URL if CELERY_RESULT_BACKEND is not set
+        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+        return resolve_env_vars_in_string(redis_url)
+    
     # CORS - can be set as comma-separated string in environment variables
     CORS_ORIGINS: Union[str, List[str]] = "http://localhost:3000,http://localhost:3001"
     
