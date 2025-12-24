@@ -73,9 +73,11 @@ class Settings(BaseSettings):
             return resolved
         return v
     
-    # Qdrant Cloud
-    QDRANT_URL: str = "https://your-cluster-id.us-east4-0.gcp.cloud.qdrant.io"
-    QDRANT_API_KEY: str = "your_qdrant_api_key_here"
+    # Qdrant (по умолчанию используется локальный RAM режим)
+    # Если QDRANT_URL не установлен или пустой, используется in-memory режим
+    # Для Qdrant Cloud установите QDRANT_URL и QDRANT_API_KEY
+    QDRANT_URL: str = ""  # Пустое значение = RAM режим
+    QDRANT_API_KEY: str = ""  # Не требуется для RAM режима
     
     # OpenRouter
     OPENROUTER_API_KEY: str = "your_openrouter_api_key_here"
