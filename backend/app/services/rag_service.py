@@ -104,8 +104,7 @@ class RAGService:
         # Получаем глобальные настройки моделей из БД
         from app.models.llm_model import GlobalModelSettings
         from sqlalchemy import select
-        import logging
-        logger = logging.getLogger(__name__)
+        # logger уже определен на уровне модуля
         
         settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
         global_settings = settings_result.scalar_one_or_none()

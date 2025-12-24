@@ -2,7 +2,7 @@
 Обработчики команд бота (/start, /help, /documents)
 """
 from aiogram import Dispatcher, F
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
@@ -48,21 +48,53 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
             project = project_result.scalar_one_or_none()
             
             if project:
-                       # Сохраняем данные в состоянии
-                       await state.update_data(
-                           project_id=str(project.id),
-                           user_id=str(existing_user.id),
-                           answer_mode="rag_mode"  # По умолчанию режим RAG
-                       )
-                       await state.set_state(AuthStates.authorized)
+                # Сохраняем данные в состоянии
+                await state.update_data(
+                    project_id=str(project.id),
+                    user_id=str(existing_user.id),
+                    answer_mode="rag_mode"  # По умолчанию режим RAG
+                )
+                await state.set_state(AuthStates.authorized)
                 
                 welcome_text = f"👋 <b>Добро пожаловать обратно в проект «{project.name}»!</b>\n\n"
                 welcome_text += "Вы уже авторизованы. Можете:\n"
                 welcome_text += "• Задавать вопросы о документах (/documents - показать список документов)\n"
                 welcome_text += "• Получать ответы на основе загруженных документов\n"
                 welcome_text += "• Использовать /help для справки\n\n"
-                welcome_text += "❓ <b>Задайте ваш вопрос:</b>"
+                
+                # Показываем текущий режим
+                data = await state.get_data()
+                answer_mode = data.get("answer_mode", "rag_mode")
+                if answer_mode == "rag_mode":
+                    welcome_text += "📄 <b>Режим:</b> Ответы на основе документов\n"
+                else:
+                    welcome_text += "💬 <b>Режим:</b> Общие вопросы\n"
+                
+                welcome_text += "\n❓ <b>Задайте ваш вопрос:</b>"
                 await message.answer(welcome_text)
+                
+                # Отправляем клавиатуру с режимами
+                mode_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="📄 Режим: Документы" if answer_mode == "rag_mode" else "📄 Переключить на Документы",
+                            callback_data="set_mode_rag"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="💬 Режим: Общие вопросы" if answer_mode == "general_mode" else "💬 Переключить на Общие вопросы",
+                            callback_data="set_mode_general"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="💡 Предложить вопросы",
+                            callback_data="suggest_questions"
+                        )
+                    ]
+                ])
+                await message.answer("🔧 <b>Управление режимом ответа:</b>", reply_markup=mode_keyboard)
                 return
         
         # Если пользователь уже авторизован в текущей сессии
@@ -82,8 +114,38 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                     welcome_text += "• Задавать вопросы о документах (/documents - показать список документов)\n"
                     welcome_text += "• Получать ответы на основе загруженных документов\n"
                     welcome_text += "• Использовать /help для справки\n\n"
-                    welcome_text += "❓ <b>Задайте ваш вопрос:</b>"
+                    
+                    answer_mode = data.get("answer_mode", "rag_mode")
+                    if answer_mode == "rag_mode":
+                        welcome_text += "📄 <b>Режим:</b> Ответы на основе документов\n"
+                    else:
+                        welcome_text += "💬 <b>Режим:</b> Общие вопросы\n"
+                    
+                    welcome_text += "\n❓ <b>Задайте ваш вопрос:</b>"
                     await message.answer(welcome_text)
+                    
+                    # Отправляем клавиатуру с режимами
+                    mode_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="📄 Режим: Документы" if answer_mode == "rag_mode" else "📄 Переключить на Документы",
+                                callback_data="set_mode_rag"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text="💬 Режим: Общие вопросы" if answer_mode == "general_mode" else "💬 Переключить на Общие вопросы",
+                                callback_data="set_mode_general"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text="💡 Предложить вопросы",
+                                callback_data="suggest_questions"
+                            )
+                        ]
+                    ])
+                    await message.answer("🔧 <b>Управление режимом ответа:</b>", reply_markup=mode_keyboard)
                     return
         
         # Если не нашли пользователя или проект, продолжаем с обычной авторизацией
@@ -188,25 +250,29 @@ async def cmd_help(message: Message, state: FSMContext):
         help_text += "/показать_документы - Показать список документов (альтернатива)\n"
         help_text += "/files - Показать список документов (английский вариант)\n"
         help_text += "/файлы - Показать список документов (русский вариант)\n"
+        help_text += "/suggest_questions - Предложить вопросы на основе документов\n"
+        help_text += "/вопросы - Предложить вопросы (альтернатива)\n"
     
     help_text += "\n❓ <b>Как задать вопрос:</b>\n"
     help_text += "Просто напишите ваш вопрос в свободной форме, и бот найдет ответ в документах проекта.\n"
     help_text += "Бот помнит контекст последних 10 сообщений для более точных ответов.\n\n"
     
     if not is_authorized:
-        help_text += "🔐 <b>Авторизация:</b>\n"
-        help_text += "Для начала работы введите пароль доступа вашего проекта.\n"
-        help_text += "Пароль задается администратором при создании проекта.\n"
-        help_text += "После ввода пароля потребуется указать номер телефона.\n\n"
+        help_text += "\n🔐 <b>Авторизация:</b>\n"
+        help_text += "Для начала работы введите пароль доступа вашего проекта после команды /start.\n"
+        help_text += "После успешной авторизации вам не потребуется вводить пароль повторно.\n"
     
-    help_text += "💡 <b>Советы:</b>\n"
+    help_text += "\n💡 <b>Советы:</b>\n"
     help_text += "• Задавайте конкретные вопросы\n"
     help_text += "• Используйте ключевые слова из документов\n"
     help_text += "• Бот отвечает только на основе загруженных документов\n"
     help_text += "• Если информации нет в документах, бот честно об этом сообщит\n"
-    help_text += "• Используйте /documents для просмотра доступных документов\n\n"
+    if is_authorized:
+        help_text += "• Используйте /documents для просмотра доступных документов\n"
+        help_text += "• Используйте /suggest_questions для получения предложенных вопросов\n"
+        help_text += "• Переключайте режим ответа через кнопки (Документы / Общие вопросы)\n"
     
-    help_text += "Если у вас возникли вопросы, обратитесь к администратору проекта."
+    help_text += "\nЕсли у вас возникли вопросы, обратитесь к администратору проекта."
     
     await message.answer(help_text)
 
@@ -286,6 +352,139 @@ async def cmd_documents(message: Message, state: FSMContext):
             await message.answer(docs_text)
 
 
+async def cmd_suggest_questions(message: Message, state: FSMContext):
+    """Обработка команды /suggest_questions - предложить вопросы на основе документов"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    current_state = await state.get_state()
+    if current_state != AuthStates.authorized:
+        await message.answer("Пожалуйста, сначала авторизуйтесь через /start")
+        return
+    
+    data = await state.get_data()
+    project_id_from_state = data.get("project_id")
+    
+    if not project_id_from_state:
+        await message.answer("Ошибка: проект не определен. Используйте /start.")
+        return
+    
+    from uuid import UUID
+    from app.core.database import AsyncSessionLocal
+    from app.services.rag_service import RAGService
+    
+    processing_msg = await message.answer("⏳ Анализирую документы и генерирую вопросы...")
+    
+    try:
+        async with AsyncSessionLocal() as db:
+            rag_service = RAGService(db)
+            questions = await rag_service.generate_suggested_questions(UUID(project_id_from_state), limit=5)
+            
+            await processing_msg.delete()
+            
+            if not questions:
+                await message.answer(
+                    "📄 В этом проекте пока нет загруженных документов или они еще обрабатываются.\n\n"
+                    "Загрузите документы через веб-интерфейс, чтобы получить предложенные вопросы."
+                )
+                return
+            
+            questions_text = "💡 <b>Предложенные вопросы на основе ваших документов:</b>\n\n"
+            for i, q in enumerate(questions, 1):
+                questions_text += f"{i}. {q}\n"
+            
+            questions_text += "\n💬 <b>Совет:</b> Скопируйте любой вопрос и отправьте его боту для получения ответа!"
+            
+            await message.answer(questions_text)
+            
+    except Exception as e:
+        logger.error(f"Error generating suggested questions: {e}", exc_info=True)
+        await processing_msg.delete()
+        await message.answer("❌ Произошла ошибка при генерации вопросов. Попробуйте позже.")
+
+
+async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработка callback для переключения режима ответа"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    current_state = await state.get_state()
+    if current_state != AuthStates.authorized:
+        await callback.answer("Пожалуйста, сначала авторизуйтесь через /start", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    mode = callback.data
+    
+    if mode == "set_mode_rag":
+        await state.update_data(answer_mode="rag_mode")
+        await callback.answer("✅ Режим изменен: Ответы на основе документов", show_alert=False)
+        
+        # Обновляем клавиатуру
+        mode_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📄 Режим: Документы",
+                    callback_data="set_mode_rag"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💬 Переключить на Общие вопросы",
+                    callback_data="set_mode_general"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💡 Предложить вопросы",
+                    callback_data="suggest_questions"
+                )
+            ]
+        ])
+        await callback.message.edit_text(
+            "🔧 <b>Режим ответа:</b> 📄 Документы\n\n"
+            "Бот будет отвечать на основе загруженных документов проекта.",
+            reply_markup=mode_keyboard
+        )
+    elif mode == "set_mode_general":
+        await state.update_data(answer_mode="general_mode")
+        await callback.answer("✅ Режим изменен: Общие вопросы", show_alert=False)
+        
+        # Обновляем клавиатуру
+        mode_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📄 Переключить на Документы",
+                    callback_data="set_mode_rag"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💬 Режим: Общие вопросы",
+                    callback_data="set_mode_general"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💡 Предложить вопросы",
+                    callback_data="suggest_questions"
+                )
+            ]
+        ])
+        await callback.message.edit_text(
+            "🔧 <b>Режим ответа:</b> 💬 Общие вопросы\n\n"
+            "Бот будет отвечать на общие вопросы без использования документов.",
+            reply_markup=mode_keyboard
+        )
+    elif mode == "suggest_questions":
+        # Вызываем команду предложения вопросов
+        await callback.answer()
+        # Создаем фиктивное сообщение для вызова команды
+        fake_message = callback.message
+        fake_message.text = "/suggest_questions"
+        await cmd_suggest_questions(fake_message, state)
+
+
 def register_commands(dp: Dispatcher, project_id: str):
     """Регистрация команд"""
     dp.message.register(cmd_start, Command("start"))
@@ -296,4 +495,7 @@ def register_commands(dp: Dispatcher, project_id: str):
     dp.message.register(cmd_documents, Command("документы"))
     dp.message.register(cmd_documents, Command("files"))
     dp.message.register(cmd_documents, Command("файлы"))
-
+    # Регистрируем команду для предложения вопросов
+    dp.message.register(cmd_suggest_questions, Command("suggest_questions", "предложить_вопросы", "вопросы", "questions"))
+    # Регистрируем обработчик callback для переключения режимов
+    dp.callback_query.register(handle_mode_callback)
