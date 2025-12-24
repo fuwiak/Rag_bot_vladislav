@@ -171,11 +171,11 @@ async def verify_bot_token(
             detail=f"Неверный токен бота: {str(e)}"
         )
     
-    # Обновляем проект с новым токеном
-    logger.info(f"[VERIFY TOKEN] Updating project with new token...")
+    # Обновляем проект с новым токеном и автоматически активируем бота
+    logger.info(f"[VERIFY TOKEN] Updating project with new token and activating bot...")
     service = ProjectService(db)
     from app.schemas.project import ProjectUpdate
-    project_update = ProjectUpdate(bot_token=bot_token)
+    project_update = ProjectUpdate(bot_token=bot_token, bot_is_active="true")  # Автоматически активируем бота
     project = await service.update_project(project_id, project_update)
     
     if not project:

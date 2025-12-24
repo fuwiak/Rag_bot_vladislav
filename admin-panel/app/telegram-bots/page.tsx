@@ -241,20 +241,8 @@ export default function TelegramBotsPage() {
         console.warn('[BOT TOKEN] Bot not found in updated list!')
       }
       
-      // Автоматически активируем бота после добавления токена
-      console.log('[BOT TOKEN] Auto-activating bot after token verification...')
-      try {
-        const startResponse = await apiFetch(`/api/bots/${selectedProjectId}/start`, {
-          method: 'POST',
-        })
-        if (startResponse.ok) {
-          console.log('[BOT TOKEN] Bot auto-activated successfully')
-        } else {
-          console.warn('[BOT TOKEN] Failed to auto-activate bot, but token is saved')
-        }
-      } catch (startErr) {
-        console.warn('[BOT TOKEN] Error auto-activating bot:', startErr)
-      }
+      // Бот автоматически активируется при сохранении токена (bot_is_active="true" устанавливается в verify endpoint)
+      console.log('[BOT TOKEN] Bot should be auto-activated by backend (bot_is_active="true")')
       
       // Обновляем список еще раз после активации
       await new Promise(resolve => setTimeout(resolve, 500))
