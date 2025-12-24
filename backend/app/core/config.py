@@ -135,7 +135,8 @@ class Settings(BaseSettings):
             return f"redis://{redis_host}:{redis_port}/{redis_db}"
         
         # Require REDIS_HOST to be set in production (no localhost fallback)
-        if not redis_host:
+        # Allow empty REDIS_HOST if pytest or alembic is running
+        if not redis_host and not IS_TESTING and not IS_ALEMBIC:
             raise ValueError(
                 "REDIS_HOST must be set via environment variable. "
                 "For Railway private networking, set REDIS_HOST=redis.railway.internal"
@@ -173,7 +174,8 @@ class Settings(BaseSettings):
             return f"redis://{redis_host}:{redis_port}/{redis_db}"
         
         # Require REDIS_HOST to be set in production (no localhost fallback)
-        if not redis_host:
+        # Allow empty REDIS_HOST if pytest or alembic is running
+        if not redis_host and not IS_TESTING and not IS_ALEMBIC:
             raise ValueError(
                 "REDIS_HOST must be set via environment variable. "
                 "For Railway private networking, set REDIS_HOST=redis.railway.internal"
