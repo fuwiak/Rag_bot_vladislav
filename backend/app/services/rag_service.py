@@ -138,7 +138,8 @@ class RAGService:
                 chunk_texts = summaries  # summaries в формате dict с text, source, score
                 logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
         
-        # ВСЕГДА получаем метаданные, если их еще нет (для использования в промпте)
+        # ВСЕГДА получаем метаданные для использования в промпте (даже если есть чанки)
+        # Это позволяет отвечать на вопросы о файлах и ключевых словах
         if not metadata_context:
             logger.info(f"[RAG SERVICE] Getting metadata for context")
             try:
@@ -153,9 +154,12 @@ class RAGService:
             except Exception as metadata_error:
                 logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
         
-        # Если агент рекомендует использовать метаданные и нет чанков - логируем это
-        if strategy.get("use_metadata", True) and not chunk_texts and metadata_context:
-            logger.info(f"[RAG SERVICE] Using metadata strategy (AI Agent recommendation) - no chunks available")
+        # Логируем стратегию использования метаданных
+        if metadata_context:
+            if not chunk_texts:
+                logger.info(f"[RAG SERVICE] Using metadata as primary source (no chunks available)")
+            else:
+                logger.info(f"[RAG SERVICE] Using metadata as additional context (chunks available)")
         
         # Для вопросов о содержании используем простой промпт из рабочего скрипта
         if is_content_question:
