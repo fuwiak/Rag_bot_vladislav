@@ -53,10 +53,8 @@ export default function UsersPage() {
       const { getApiUrl } = await import('../lib/api-helpers')
 
       // Загружаем все проекты
-      const projectsUrl = await getApiUrl('/api/projects')
-      const projectsRes = await fetch(projectsUrl, {
-        headers: { 'Content-Type': 'application/json' },
-      })
+      const { apiFetch } = await import('../lib/api-helpers')
+      const projectsRes = await apiFetch('/api/projects')
 
       if (!projectsRes.ok) {
         throw new Error(`Ошибка загрузки проектов: ${projectsRes.status}`)
@@ -74,10 +72,7 @@ export default function UsersPage() {
       const allUsers: User[] = []
       for (const project of projectsData) {
         try {
-          const usersUrl = await getApiUrl(`/api/users/project/${project.id}`)
-          const usersRes = await fetch(usersUrl, {
-            headers: { 'Content-Type': 'application/json' },
-          })
+          const usersRes = await apiFetch(`/api/users/project/${project.id}`)
           if (usersRes.ok) {
             const usersData = await usersRes.json()
             allUsers.push(...usersData)
@@ -102,12 +97,10 @@ export default function UsersPage() {
     }
 
     try {
-      const { getApiUrl } = await import('../lib/api-helpers')
+      const { apiFetch } = await import('../lib/api-helpers')
       
-      const apiUrl = await getApiUrl(`/api/users/${userId}`)
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch(`/api/users/${userId}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
       })
       if (response.ok) {
         fetchData()
@@ -122,14 +115,10 @@ export default function UsersPage() {
   const handleStatusChange = async (userId: string, currentStatus: string) => {
     const newStatus = currentStatus === 'active' ? 'blocked' : 'active'
     try {
-      const { getApiUrl } = await import('../lib/api-helpers')
+      const { apiFetch } = await import('../lib/api-helpers')
       
-      const apiUrl = await getApiUrl(`/api/users/${userId}/status`)
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch(`/api/users/${userId}/status`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({ status: newStatus }),
       })
       if (response.ok) {
@@ -165,7 +154,7 @@ export default function UsersPage() {
     setError('')
 
     try {
-      const { getApiUrl } = await import('../lib/api-helpers')
+      const { apiFetch } = await import('../lib/api-helpers')
       
       const updateData: any = {}
       if (editUserPhone !== editingUser.phone) updateData.phone = editUserPhone
@@ -173,12 +162,8 @@ export default function UsersPage() {
       if (editUserProjectId !== editingUser.project_id) updateData.project_id = editUserProjectId
       if (editUserStatus !== editingUser.status) updateData.status = editUserStatus
 
-      const apiUrl = await getApiUrl(`/api/users/${editingUser.id}`)
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch(`/api/users/${editingUser.id}`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify(updateData),
       })
 
@@ -382,14 +367,10 @@ export default function UsersPage() {
               }
 
               try {
-                const { getApiUrl } = await import('../lib/api-helpers')
+                const { apiFetch } = await import('../lib/api-helpers')
                 
-                const apiUrl = await getApiUrl(`/api/users/project/${newUserProjectId}`)
-                const response = await fetch(apiUrl, {
+                const response = await apiFetch(`/api/users/project/${newUserProjectId}`, {
                   method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
                   body: JSON.stringify({
                     phone: newUserPhone,
                     username: newUserUsername || null,

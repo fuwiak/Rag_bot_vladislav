@@ -245,8 +245,12 @@ export async function apiFetch(
   
   // Формируем заголовки
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {}),
+  }
+  
+  // Добавляем Content-Type только если это не FormData (FormData сам устанавливает Content-Type с boundary)
+  if (!(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json'
   }
   
   // Добавляем токен авторизации, если он есть

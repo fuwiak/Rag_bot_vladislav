@@ -38,14 +38,10 @@ export default function NewProjectPage() {
     setLoading(true)
 
     try {
-      const { getApiUrl } = await import('../../lib/api-helpers')
+      const { apiFetch } = await import('../../lib/api-helpers')
       
-      const apiUrl = await getApiUrl('/api/projects')
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch('/api/projects', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify(formData),
       })
 

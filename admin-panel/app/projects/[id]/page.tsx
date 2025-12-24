@@ -86,12 +86,9 @@ export default function ProjectDetailPage() {
   const fetchProjectBasicData = async () => {
     setLoading(true)
     try {
-      const { getApiUrl } = await import('../../lib/api-helpers')
+      const { apiFetch } = await import('../../lib/api-helpers')
 
-      const projectUrl = await getApiUrl(`/api/projects/${projectId}`)
-      const projectRes = await fetch(projectUrl, {
-        headers: { 'Content-Type': 'application/json' },
-      })
+      const projectRes = await apiFetch(`/api/projects/${projectId}`)
 
       if (projectRes.ok) {
         const projectData = await projectRes.json()
@@ -119,12 +116,9 @@ export default function ProjectDetailPage() {
   // Lazy loading документов
   const fetchDocuments = async () => {
     try {
-      const { getApiUrl } = await import('../../lib/api-helpers')
+      const { apiFetch } = await import('../../lib/api-helpers')
 
-      const documentsUrl = await getApiUrl(`/api/documents/${projectId}`)
-      const documentsRes = await fetch(documentsUrl, {
-        headers: { 'Content-Type': 'application/json' },
-      })
+      const documentsRes = await apiFetch(`/api/documents/${projectId}`)
 
       if (documentsRes.ok) {
         const documentsData = await documentsRes.json()
@@ -138,12 +132,9 @@ export default function ProjectDetailPage() {
   // Lazy loading пользователей
   const fetchUsers = async () => {
     try {
-      const { getApiUrl } = await import('../../lib/api-helpers')
+      const { apiFetch } = await import('../../lib/api-helpers')
 
-      const usersUrl = await getApiUrl(`/api/users/project/${projectId}`)
-      const usersRes = await fetch(usersUrl, {
-        headers: { 'Content-Type': 'application/json' },
-      })
+      const usersRes = await apiFetch(`/api/users/project/${projectId}`)
 
       if (usersRes.ok) {
         const usersData = await usersRes.json()
@@ -169,12 +160,10 @@ export default function ProjectDetailPage() {
     }
 
     try {
-      const { getApiUrl } = await import('../../lib/api-helpers')
+      const { apiFetch } = await import('../../lib/api-helpers')
 
-      const apiUrl = await getApiUrl(`/api/projects/${projectId}`)
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch(`/api/projects/${projectId}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
       })
 
       if (response.ok) {
@@ -214,14 +203,10 @@ export default function ProjectDetailPage() {
     setSaving(true)
 
     try {
-      const { getApiUrl } = await import('../../lib/api-helpers')
+      const { apiFetch } = await import('../../lib/api-helpers')
 
-      const apiUrl = await getApiUrl(`/api/projects/${projectId}`)
-      const response = await fetch(apiUrl, {
+      const response = await apiFetch(`/api/projects/${projectId}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify(editData),
       })
 
@@ -622,12 +607,10 @@ export default function ProjectDetailPage() {
                             return
                           }
                           try {
-                            const { getApiUrl } = await import('../../lib/api-helpers')
+                            const { apiFetch } = await import('../../lib/api-helpers')
                             
-                            const apiUrl = await getApiUrl(`/api/documents/${doc.id}`)
-                            const response = await fetch(apiUrl, {
+                            const response = await apiFetch(`/api/documents/${doc.id}`, {
                               method: 'DELETE',
-                              headers: { 'Content-Type': 'application/json' },
                             })
                             if (response.ok || response.status === 204) {
                               fetchDocuments()
@@ -697,14 +680,10 @@ export default function ProjectDetailPage() {
                           onClick={async () => {
                             const newStatus = user.status === 'active' ? 'blocked' : 'active'
                             try {
-                              const { getApiUrl } = await import('../../lib/api-helpers')
+                              const { apiFetch } = await import('../../lib/api-helpers')
                               
-                              const apiUrl = await getApiUrl(`/api/users/${user.id}/status`)
-                              const response = await fetch(apiUrl, {
+                              const response = await apiFetch(`/api/users/${user.id}/status`, {
                                 method: 'PATCH',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                },
                                 body: JSON.stringify({ status: newStatus }),
                               })
                               if (response.ok) {
@@ -808,15 +787,14 @@ export default function ProjectDetailPage() {
                   
                   setUploading(true)
                   try {
-                    const { getApiUrl } = await import('../../lib/api-helpers')
+                    const { apiFetch } = await import('../../lib/api-helpers')
                     
                     const formData = new FormData()
                     uploadFiles.forEach(file => {
                       formData.append('files', file)
                     })
                     
-                    const apiUrl = await getApiUrl(`/api/documents/${projectId}/upload`)
-                    const response = await fetch(apiUrl, {
+                    const response = await apiFetch(`/api/documents/${projectId}/upload`, {
                       method: 'POST',
                       body: formData,
                     })
@@ -862,14 +840,10 @@ export default function ProjectDetailPage() {
               setAddingUser(true)
 
               try {
-                const { getApiUrl } = await import('../../lib/api-helpers')
+                const { apiFetch } = await import('../../lib/api-helpers')
                 
-                const apiUrl = await getApiUrl(`/api/users/project/${projectId}`)
-                const response = await fetch(apiUrl, {
+                const response = await apiFetch(`/api/users/project/${projectId}`, {
                   method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
                   body: JSON.stringify({
                     phone: newUserPhone,
                     username: newUserUsername || null,
