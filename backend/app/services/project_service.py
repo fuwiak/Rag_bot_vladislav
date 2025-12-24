@@ -105,21 +105,38 @@ class ProjectService:
     
     async def update_project(self, project_id: UUID, project_data: ProjectUpdate) -> Optional[Project]:
         """Обновить проект"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"[UPDATE PROJECT] Starting update for project {project_id}")
         project = await self.get_project_by_id(project_id)
         
         if not project:
+            logger.error(f"[UPDATE PROJECT] Project {project_id} not found")
             return None
         
         update_data = project_data.model_dump(exclude_unset=True)
+        logger.info(f"[UPDATE PROJECT] Update data keys: {list(update_data.keys())}")
+        
         # Преобразуем пустую строку bot_token в None для избежания конфликтов unique constraint
-        if 'bot_token' in update_data and update_data['bot_token'] == '':
-            update_data['bot_token'] = None
+        if 'bot_token' in update_data:
+            if update_data['bot_token'] == '':
+                logger.info(f"[UPDATE PROJECT] Empty bot_token, setting to None")
+                update_data['bot_token'] = None
+            else:
+                logger.info(f"[UPDATE PROJECT] Setting bot_token (first 10 chars): {update_data['bot_token'][:10]}...")
         
         for field, value in update_data.items():
+            old_value = getattr(project, field, None)
+            logger.info(f"[UPDATE PROJECT] Setting {field}: {old_value} -> {value if field != 'bot_token' else (value[:10] + '...' if value else None)}")
             setattr(project, field, value)
         
+        logger.info(f"[UPDATE PROJECT] Committing changes...")
         await self.db.commit()
+        logger.info(f"[UPDATE PROJECT] Changes committed")
+        
         await self.db.refresh(project)
+        logger.info(f"[UPDATE PROJECT] Project refreshed. bot_token after refresh: {project.bot_token[:10] if project.bot_token else 'None'}...")
         
         return project
     

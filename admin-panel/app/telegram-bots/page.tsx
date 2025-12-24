@@ -44,13 +44,20 @@ export default function TelegramBotsPage() {
   }, [router])
 
   const fetchBotsInfo = async () => {
+    console.log('[FETCH BOTS] Starting fetchBotsInfo...')
     try {
       setError('')
       setLoading(true)
       const { apiFetch } = await import('../lib/api-helpers')
+      const { getBackendUrl } = await import('../lib/api-helpers')
+      const backendUrl = await getBackendUrl()
+      console.log('[FETCH BOTS] Backend URL:', backendUrl)
 
       // Добавляем timestamp для предотвращения кэширования
-      const response = await apiFetch(`/api/bots/info?t=${Date.now()}`, {
+      const url = `/api/bots/info?t=${Date.now()}`
+      console.log('[FETCH BOTS] Full URL:', `${backendUrl}${url}`)
+      
+      const response = await apiFetch(url, {
         cache: 'no-store',
         headers: {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
@@ -59,15 +66,34 @@ export default function TelegramBotsPage() {
         }
       })
 
+      console.log('[FETCH BOTS] Response status:', response.status)
+      console.log('[FETCH BOTS] Response ok:', response.ok)
+
       if (response.ok) {
         const data = await response.json()
-        console.log('Fetched bots info:', data)
+        console.log('[FETCH BOTS] Fetched bots info:', data)
+        console.log('[FETCH BOTS] Number of bots:', data.length)
+        data.forEach((bot: BotInfo, index: number) => {
+          console.log(`[FETCH BOTS] Bot ${index + 1}:`, {
+            project_id: bot.project_id,
+            project_name: bot.project_name,
+            bot_token: bot.bot_token ? bot.bot_token.substring(0, 10) + '...' : 'null',
+            bot_username: bot.bot_username,
+            bot_url: bot.bot_url,
+            is_active: bot.is_active,
+            users_count: bot.users_count
+          })
+        })
         setBotsInfo(data)
+        console.log('[FETCH BOTS] Bots info state updated')
       } else {
         const errorData = await response.json().catch(() => ({ detail: 'Ошибка загрузки информации о ботах' }))
+        console.error('[FETCH BOTS] Error response:', errorData)
         throw new Error(errorData.detail || `Ошибка ${response.status}`)
       }
     } catch (err) {
+      console.error('[FETCH BOTS] Error:', err)
+      console.error('[FETCH BOTS] Error stack:', err instanceof Error ? err.stack : 'No stack trace')
       const errorMessage = err instanceof Error ? err.message : 'Неизвестная ошибка'
       if (errorMessage.includes('Failed to fetch')) {
         // Получаем реальный URL, который используется
@@ -77,9 +103,9 @@ export default function TelegramBotsPage() {
       } else {
         setError('Ошибка загрузки данных: ' + errorMessage)
       }
-      console.error('Fetch error:', err)
     } finally {
       setLoading(false)
+      console.log('[FETCH BOTS] Fetch completed, loading set to false')
     }
   }
 
@@ -111,7 +137,13 @@ export default function TelegramBotsPage() {
   }
 
   const handleVerifyToken = async () => {
+    console.log('[BOT TOKEN] Starting token verification...')
+    console.log('[BOT TOKEN] Project ID:', selectedProjectId)
+    console.log('[BOT TOKEN] Token (first 10 chars):', newBotToken.trim().substring(0, 10) + '...')
+    console.log('[BOT TOKEN] Selected model ID:', selectedModelId)
+    
     if (!newBotToken.trim()) {
+      console.error('[BOT TOKEN] Error: Token is empty')
       setError('Введите токен бота')
       return
     }
@@ -121,15 +153,27 @@ export default function TelegramBotsPage() {
 
     try {
       const { apiFetch } = await import('../lib/api-helpers')
+      const { getBackendUrl } = await import('../lib/api-helpers')
+      const backendUrl = await getBackendUrl()
+      console.log('[BOT TOKEN] Backend URL:', backendUrl)
+      console.log('[BOT TOKEN] Full endpoint:', `${backendUrl}/api/bots/${selectedProjectId}/verify`)
 
       // Обновляем токен бота
+      const requestBody = { bot_token: newBotToken.trim() }
+      console.log('[BOT TOKEN] Request body:', { ...requestBody, bot_token: requestBody.bot_token.substring(0, 10) + '...' })
+      
       const tokenResponse = await apiFetch(`/api/bots/${selectedProjectId}/verify`, {
         method: 'POST',
-        body: JSON.stringify({ bot_token: newBotToken.trim() }),
+        body: JSON.stringify(requestBody),
       })
+
+      console.log('[BOT TOKEN] Response status:', tokenResponse.status)
+      console.log('[BOT TOKEN] Response ok:', tokenResponse.ok)
+      console.log('[BOT TOKEN] Response headers:', Object.fromEntries(tokenResponse.headers.entries()))
 
       if (!tokenResponse.ok) {
         const errorData = await tokenResponse.json().catch(() => ({ detail: 'Ошибка проверки токена' }))
+        console.error('[BOT TOKEN] Error response:', errorData)
         setError(errorData.detail || 'Ошибка проверки токена')
         setSubmitting(false)
         return
@@ -137,33 +181,46 @@ export default function TelegramBotsPage() {
 
       // Получаем данные о боте из ответа
       const botData = await tokenResponse.json()
-      console.log('Bot verified successfully:', botData)
+      console.log('[BOT TOKEN] Bot verified successfully:', botData)
+      console.log('[BOT TOKEN] Bot token in response:', botData.bot_token ? botData.bot_token.substring(0, 10) + '...' : 'null')
+      console.log('[BOT TOKEN] Bot username:', botData.bot_username)
+      console.log('[BOT TOKEN] Bot URL:', botData.bot_url)
 
       // Обновляем модель LLM если выбрана (или если нужно сбросить)
-      if (selectedModelId !== undefined && selectedModelId !== null) {
+      if (selectedModelId !== undefined && selectedModelId !== null && selectedModelId !== '') {
+        console.log('[BOT TOKEN] Updating LLM model:', selectedModelId)
         try {
           const modelUrl = selectedModelId 
             ? `/api/models/project/${selectedProjectId}?model_id=${encodeURIComponent(selectedModelId)}`
             : `/api/models/project/${selectedProjectId}`
+          console.log('[BOT TOKEN] Model URL:', modelUrl)
           const modelResponse = await apiFetch(modelUrl, {
             method: 'PATCH',
           })
+          console.log('[BOT TOKEN] Model response status:', modelResponse.status)
           if (!modelResponse.ok) {
             const modelError = await modelResponse.json().catch(() => ({ detail: 'Ошибка установки модели' }))
-            console.warn('Failed to assign model:', modelError)
+            console.warn('[BOT TOKEN] Failed to assign model:', modelError)
             // Показываем предупреждение, но не блокируем успех
             setError(`Токен сохранен, но не удалось установить модель: ${modelError.detail || 'Неизвестная ошибка'}`)
+          } else {
+            console.log('[BOT TOKEN] Model assigned successfully')
           }
         } catch (modelErr) {
-          console.warn('Error assigning model:', modelErr)
+          console.error('[BOT TOKEN] Error assigning model:', modelErr)
           // Не блокируем успех
         }
+      } else {
+        console.log('[BOT TOKEN] No model selected, skipping model update')
       }
 
       // Обновляем список ботов ПЕРЕД закрытием модального окна
+      console.log('[BOT TOKEN] Fetching updated bots info...')
       await fetchBotsInfo()
+      console.log('[BOT TOKEN] Bots info fetched, current botsInfo:', botsInfo)
       
       // Закрываем модальное окно
+      console.log('[BOT TOKEN] Closing modal...')
       setShowTokenModal(false)
       setNewBotToken('')
       setSelectedModelId('')
@@ -171,12 +228,16 @@ export default function TelegramBotsPage() {
       setError('')
       
       // Показываем сообщение об успехе
+      console.log('[BOT TOKEN] Showing success message')
       alert(`✅ Токен бота успешно сохранен!\n\nБот: ${botData.bot_first_name || botData.bot_username || 'Неизвестно'}\n${botData.bot_url ? `Ссылка: ${botData.bot_url}` : ''}\n\nБот будет автоматически запущен бот-сервисом в течение 20 секунд.`)
+      console.log('[BOT TOKEN] Token verification completed successfully')
     } catch (err) {
-      console.error('Error verifying token:', err)
+      console.error('[BOT TOKEN] Error verifying token:', err)
+      console.error('[BOT TOKEN] Error stack:', err instanceof Error ? err.stack : 'No stack trace')
       setError('Ошибка подключения к серверу: ' + (err instanceof Error ? err.message : 'Неизвестная ошибка'))
     } finally {
       setSubmitting(false)
+      console.log('[BOT TOKEN] Verification process finished, submitting set to false')
     }
   }
 

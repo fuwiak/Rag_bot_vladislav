@@ -132,42 +132,59 @@ async def verify_bot_token(
     current_admin = Depends(get_current_admin)
 ):
     """Проверить токен бота и получить информацию"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[VERIFY TOKEN] Starting verification for project {project_id}")
+    logger.info(f"[VERIFY TOKEN] Token data keys: {list(token_data.keys())}")
+    
     bot_token = token_data.get('bot_token')
     
     if not bot_token:
+        logger.error(f"[VERIFY TOKEN] Token not provided in request")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Токен бота не предоставлен"
         )
     
+    logger.info(f"[VERIFY TOKEN] Token received (first 10 chars): {bot_token[:10]}...")
+    
     # Проверяем токен через Telegram API
     try:
+        logger.info(f"[VERIFY TOKEN] Checking token with Telegram API...")
         bot = Bot(token=bot_token)
         bot_user = await bot.get_me()
         await bot.session.close()
+        logger.info(f"[VERIFY TOKEN] Token verified successfully. Bot username: {bot_user.username}, first_name: {bot_user.first_name}")
     except Exception as e:
+        logger.error(f"[VERIFY TOKEN] Token verification failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Неверный токен бота: {str(e)}"
         )
     
     # Обновляем проект с новым токеном
+    logger.info(f"[VERIFY TOKEN] Updating project with new token...")
     service = ProjectService(db)
     from app.schemas.project import ProjectUpdate
     project_update = ProjectUpdate(bot_token=bot_token)
     project = await service.update_project(project_id, project_update)
     
     if not project:
+        logger.error(f"[VERIFY TOKEN] Project {project_id} not found after update")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Проект не найден"
         )
+    
+    logger.info(f"[VERIFY TOKEN] Project updated. Current bot_token: {project.bot_token[:10] if project.bot_token else 'None'}...")
     
     # Получаем количество пользователей для проекта
     result = await db.execute(
         select(func.count(User.id)).where(User.project_id == project.id)
     )
     users_count = result.scalar() or 0
+    logger.info(f"[VERIFY TOKEN] Users count: {users_count}")
     
     # Получаем количество документов для проекта
     from app.models.document import Document
@@ -175,6 +192,7 @@ async def verify_bot_token(
         select(func.count(Document.id)).where(Document.project_id == project.id)
     )
     documents_count = docs_result.scalar() or 0
+    logger.info(f"[VERIFY TOKEN] Documents count: {documents_count}")
     
     # Получаем информацию о боте
     bot_info = BotInfoResponse(
@@ -192,6 +210,8 @@ async def verify_bot_token(
     
     if bot_user.username:
         bot_info.bot_url = f"https://t.me/{bot_user.username}"
+    
+    logger.info(f"[VERIFY TOKEN] Returning bot info: project_id={bot_info.project_id}, bot_token={'SET' if bot_info.bot_token else 'NULL'}, bot_username={bot_info.bot_username}, bot_url={bot_info.bot_url}")
     
     return bot_info
 
