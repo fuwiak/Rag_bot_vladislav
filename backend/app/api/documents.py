@@ -72,6 +72,10 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
     """Асинхронная обработка документа (парсинг, эмбеддинги, сохранение в Qdrant)"""
     import asyncio
     import gc  # Для принудительной очистки памяти
+    import os
+    import psutil
+    
+    process = psutil.Process(os.getpid())
     try:
         async with AsyncSessionLocal() as db:
             # Парсинг и разбивка на чанки
@@ -192,12 +196,12 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                             # Продолжаем обработку следующих чанков
                             continue
                     
-                await db.commit()
-                
-                # Логируем память после каждого батча
-                batch_memory = process.memory_info().rss / 1024 / 1024
-                logger.info(f"[Process] Batch {batch_end}/{len(chunks)} processed, memory: {batch_memory:.2f}MB")
-                
+                    await db.commit()
+                    
+                    # Логируем память после каждого батча
+                    batch_memory = process.memory_info().rss / 1024 / 1024
+                    logger.info(f"[Process] Batch {batch_end}/{len(chunks)} processed, memory: {batch_memory:.2f}MB")
+                    
                 except Exception as e:
                     logger.error(f"[Process] Критическая ошибка при обработке батча {batch_start}-{batch_end}: {e}")
                     # Пробуем откатить транзакцию и продолжить
