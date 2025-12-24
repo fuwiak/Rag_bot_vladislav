@@ -91,32 +91,65 @@ class Settings(BaseSettings):
     APP_URL: str = "http://localhost:3000"
     BACKEND_URL: str = "http://localhost:8000"
     
-    # Redis for Celery broker (Railway provides REDIS_URL)
+    # Redis for Celery broker
+    # Railway provides REDIS_URL automatically, or use REDIS_PASSWORD + private networking
     REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_PASSWORD: str = ""  # Railway Redis password (if using private networking)
+    REDIS_HOST: str = "localhost"  # Use 'redis.railway.internal' for private networking
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
     
     # Celery configuration
-    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
-    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
     
     @field_validator('CELERY_BROKER_URL', mode='before')
     @classmethod
     def resolve_celery_broker_url(cls, v):
-        """Resolve CELERY_BROKER_URL from REDIS_URL if not set"""
+        """Resolve CELERY_BROKER_URL from REDIS_URL or build from components"""
         if isinstance(v, str) and v:
             return resolve_env_vars_in_string(v)
-        # Fallback to REDIS_URL if CELERY_BROKER_URL is not set
-        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-        return resolve_env_vars_in_string(redis_url)
+        
+        # Try REDIS_URL first (Railway provides this automatically)
+        redis_url = os.getenv('REDIS_URL', '')
+        if redis_url:
+            return resolve_env_vars_in_string(redis_url)
+        
+        # Build from components (for private networking with password)
+        redis_password = os.getenv('REDIS_PASSWORD', '')
+        redis_host = os.getenv('REDIS_HOST', 'redis.railway.internal')
+        redis_port = os.getenv('REDIS_PORT', '6379')
+        redis_db = os.getenv('REDIS_DB', '0')
+        
+        if redis_password:
+            # Format: redis://:password@host:port/db
+            return f"redis://:{redis_password}@{redis_host}:{redis_port}/{redis_db}"
+        else:
+            return f"redis://{redis_host}:{redis_port}/{redis_db}"
     
     @field_validator('CELERY_RESULT_BACKEND', mode='before')
     @classmethod
     def resolve_celery_result_backend(cls, v):
-        """Resolve CELERY_RESULT_BACKEND from REDIS_URL if not set"""
+        """Resolve CELERY_RESULT_BACKEND from REDIS_URL or build from components"""
         if isinstance(v, str) and v:
             return resolve_env_vars_in_string(v)
-        # Fallback to REDIS_URL if CELERY_RESULT_BACKEND is not set
-        redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-        return resolve_env_vars_in_string(redis_url)
+        
+        # Try REDIS_URL first (Railway provides this automatically)
+        redis_url = os.getenv('REDIS_URL', '')
+        if redis_url:
+            return resolve_env_vars_in_string(redis_url)
+        
+        # Build from components (for private networking with password)
+        redis_password = os.getenv('REDIS_PASSWORD', '')
+        redis_host = os.getenv('REDIS_HOST', 'redis.railway.internal')
+        redis_port = os.getenv('REDIS_PORT', '6379')
+        redis_db = os.getenv('REDIS_DB', '0')
+        
+        if redis_password:
+            # Format: redis://:password@host:port/db
+            return f"redis://:{redis_password}@{redis_host}:{redis_port}/{redis_db}"
+        else:
+            return f"redis://{redis_host}:{redis_port}/{redis_db}"
     
     # CORS - can be set as comma-separated string in environment variables
     CORS_ORIGINS: Union[str, List[str]] = "http://localhost:3000,http://localhost:3001"
