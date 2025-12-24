@@ -22,14 +22,24 @@ async def get_project_users(
 ):
     """Получить список пользователей проекта (оптимизировано - лимит 500, без relationships)"""
     import gc
+    import logging
     
-    service = UserService(db)
-    users = await service.get_project_users(project_id)
+    logger = logging.getLogger(__name__)
     
-    # Явно освобождаем память после запроса
-    gc.collect()
-    
-    return users
+    try:
+        service = UserService(db)
+        users = await service.get_project_users(project_id)
+        
+        # Явно освобождаем память после запроса
+        gc.collect()
+        
+        logger.info(f"Returning {len(users)} users")
+        return users
+    except Exception as e:
+        logger.error(f"Error getting users: {e}", exc_info=True)
+        # Возвращаем пустой список вместо ошибки, чтобы не падал backend
+        gc.collect()
+        return []
 
 
 @router.post("/project/{project_id}", response_model=UserResponse, status_code=status.HTTP_201_CREATED)

@@ -88,9 +88,25 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Добавляем обработчик OPTIONS запросов ПЕРЕД всеми остальными
+from fastapi import Request
+from fastapi.responses import Response
+
+@app.options("/{full_path:path}")
+async def options_handler(request: Request, full_path: str):
+    """Обработчик OPTIONS запросов для CORS preflight"""
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Max-Age": "3600",
+        }
+    )
+
 # Добавляем обработчик ошибок для предотвращения падения приложения
 from fastapi.responses import JSONResponse
-from fastapi import Request
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
