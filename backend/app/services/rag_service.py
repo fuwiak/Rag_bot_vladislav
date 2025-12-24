@@ -1572,8 +1572,8 @@ class RAGService:
                 # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
                 try:
                     # Пробуем обычный запрос
-                result = await self.db.execute(
-                    select(Document)
+                    result = await self.db.execute(
+                        select(Document)
                     .where(Document.project_id == project_id)
                     .limit(10)
                 )
