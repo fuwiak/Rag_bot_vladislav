@@ -114,17 +114,53 @@ class ProjectService:
         from sqlalchemy.orm import noload
         import logging
         logger = logging.getLogger(__name__)
-        
-        # Загружаем проект без relationships для экономии памяти
-        result = await self.db.execute(
-            select(Project)
-            .where(Project.id == project_id)
-            .options(noload(Project.users), noload(Project.documents))
-        )
-        project = result.scalar_one_or_none()
+
+        try:
+            # Загружаем проект без relationships для экономии памяти
+            result = await self.db.execute(
+                select(Project)
+                .where(Project.id == project_id)
+                .options(noload(Project.users), noload(Project.documents))
+            )
+            project = result.scalar_one_or_none()
+        except Exception as e:
+            # Если поле bot_is_active не существует, используем raw SQL
+            logger.warning(f"Field bot_is_active not found in get_project_by_id, using raw query: {e}")
+            await self.db.rollback()
+            from sqlalchemy import text
+            result = await self.db.execute(
+                text("""
+                    SELECT id, name, description, bot_token, llm_model, access_password, 
+                           prompt_template, max_response_length, created_at, updated_at
+                    FROM projects 
+                    WHERE id = :project_id
+                """),
+                {"project_id": str(project_id)}
+            )
+            row = result.first()
+            if not row:
+                logger.warning(f"[GET PROJECT BY ID] Project {project_id} not found")
+                return None
+            # Создаем объект Project вручную
+            project = Project()
+            project.id = row.id
+            project.name = row.name
+            project.description = row.description
+            project.bot_token = row.bot_token
+            project.llm_model = row.llm_model
+            project.access_password = row.access_password
+            project.prompt_template = row.prompt_template
+            project.max_response_length = row.max_response_length
+            project.created_at = row.created_at
+            project.updated_at = row.updated_at
+            setattr(project, 'bot_is_active', 'false')  # Значение по умолчанию
         
         if project:
-            logger.info(f"[GET PROJECT BY ID] Project {project_id} found: bot_token={'SET' if project.bot_token else 'NULL'}")
+            if project.description and len(project.description) > 500:
+                project.description = project.description[:500] + "..."
+            if project.prompt_template and len(project.prompt_template) > 1000:
+                project.prompt_template = project.prompt_template[:1000] + "..."
+            logger.info(f"[GET PROJECT BY ID] Project {project_id} found: bot_token={'SET' if project.bot_token else 'NULL'}, LLM Model: {project.llm_model}")
         else:
             logger.warning(f"[GET PROJECT BY ID] Project {project_id} not found")
         
