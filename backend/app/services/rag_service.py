@@ -466,7 +466,7 @@ class RAGService:
             summary_service = DocumentSummaryService(self.db)
             summaries = []
             
-                    for doc in documents[:limit]:
+            for doc in documents[:limit]:
                         # Приоритет 1: используем существующий summary (проверяем безопасно)
                         doc_summary = getattr(doc, 'summary', None)
                         if doc_summary and doc_summary.strip():
