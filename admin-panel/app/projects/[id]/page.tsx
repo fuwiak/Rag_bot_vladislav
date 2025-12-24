@@ -839,7 +839,7 @@ export default function ProjectDetailPage() {
                       
                       // Обновляем список через небольшую задержку, чтобы получить актуальные данные
                       setTimeout(() => {
-                        fetchDocuments()
+                      fetchDocuments()
                       }, 500)
                     } else {
                       const errorData = await response.json().catch(() => ({ detail: 'Ошибка загрузки документов' }))

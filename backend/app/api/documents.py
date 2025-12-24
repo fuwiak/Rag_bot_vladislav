@@ -56,8 +56,8 @@ async def process_document_async_from_file(document_id: UUID, project_id: UUID, 
             logger.warning(f"[Process] Не удалось удалить временный файл {file_path}: {e}")
         
         # Вызываем основную функцию обработки
-        # Добавляем задержку, чтобы дать время основному запросу завершиться и освободить память
-        await asyncio.sleep(1.0)  # Увеличена задержка для полного завершения запроса
+        # Добавляем небольшую задержку, чтобы дать время основному запросу завершиться
+        await asyncio.sleep(0.1)
         await process_document_async(document_id, project_id, file_content, filename, file_type)
         
     except Exception as e:
@@ -140,13 +140,9 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             # Для больших файлов используем меньший батч, чтобы не перегружать память
             total_chunks = len(chunks)
             if total_chunks > 100:
-                batch_size = 3  # Еще меньший батч для больших документов
-            elif total_chunks > 50:
-                batch_size = 5
+                batch_size = 5  # Меньший батч для больших документов
             else:
                 batch_size = 10
-            
-            logger.info(f"[Process] Processing {total_chunks} chunks in batches of {batch_size}")
             
             for batch_start in range(0, len(chunks), batch_size):
                 batch_end = min(batch_start + batch_size, len(chunks))
@@ -227,13 +223,10 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                 del batch_chunks
                 if 'embeddings' in locals():
                     del embeddings
-                
-                # Принудительная очистка памяти после каждого батча
                 gc.collect()
                 
-                # Большая пауза между батчами для освобождения памяти и неблокирующей обработки
-                # Это дает время системе освободить память
-                await asyncio.sleep(0.5)  # Увеличена пауза для лучшей очистки памяти
+                # Пауза между батчами для освобождения памяти и неблокирующей обработки
+                await asyncio.sleep(0.1)
             
             final_memory = process.memory_info().rss / 1024 / 1024
             logger.info(f"[Process] Документ {document_id} ({filename}) успешно обработан: {len(chunks)} чанков, final memory: {final_memory:.2f}MB")
@@ -386,8 +379,11 @@ async def upload_documents(
             logger.info(f"[Upload] Scheduling async background processing for document {document.id}, temp_file: {temp_path}")
             
             # Создаем задачу, которая будет выполняться независимо от основного запроса
+            # Используем asyncio.create_task для полностью асинхронной обработки
             async def process_in_background():
                 try:
+                    # Добавляем задержку чтобы дать время основному запросу завершиться
+                    await asyncio.sleep(0.5)
                     await process_document_async_from_file(
                         document.id, 
                         project_id, 
@@ -399,7 +395,9 @@ async def upload_documents(
                     logger.error(f"[Upload] Background processing error for document {document.id}: {e}", exc_info=True)
             
             # Запускаем задачу в фоне (не ждем её завершения)
-            asyncio.create_task(process_in_background())
+            # Используем asyncio.ensure_future для гарантии выполнения даже если задача не awaited
+            task = asyncio.create_task(process_in_background())
+            # Не ждем завершения задачи - она выполнится в фоне
         except HTTPException:
             # Если ошибка размера, удаляем временный файл если был создан
             if temp_file and os.path.exists(temp_path):
