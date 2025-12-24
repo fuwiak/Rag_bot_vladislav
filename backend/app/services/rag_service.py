@@ -349,43 +349,79 @@ class RAGService:
         """
         collection_name = f"project_{project_id}"
         
-        # Проверяем существование коллекции
-        collection_exists = await self.vector_store.collection_exists(collection_name)
-        if not collection_exists:
-            logger.info(f"[RAG SERVICE] Collection {collection_name} does not exist, no documents to suggest questions from")
-            return []
-        
         try:
-            # Получаем несколько случайных чанков из коллекции для контекста
-            from app.models.document import Document, DocumentChunk
-            
-            # Получаем документы проекта
-            result = await self.db.execute(
-                select(Document)
-                .where(Document.project_id == project_id)
-                .limit(10)
-            )
-            documents = result.scalars().all()
-            
-            if not documents:
-                logger.info(f"[RAG SERVICE] No documents found for project {project_id}")
-                return []
-            
-            # Получаем несколько чанков из разных документов
+            # Сначала пытаемся получить чанки из Qdrant (если документы уже проиндексированы)
             chunk_texts = []
-            for doc in documents[:5]:  # Берем максимум 5 документов
-                chunks_result = await self.db.execute(
-                    select(DocumentChunk)
-                    .where(DocumentChunk.document_id == doc.id)
-                    .limit(3)  # По 3 чанка из каждого документа
+            collection_exists = await self.vector_store.collection_exists(collection_name)
+            
+            if collection_exists:
+                # Пытаемся получить несколько случайных точек из коллекции Qdrant
+                try:
+                    # Получаем клиент Qdrant через wrapper
+                    from app.vector_db.qdrant_client import QdrantClientWrapper
+                    qdrant_wrapper = QdrantClientWrapper()
+                    qdrant_client = qdrant_wrapper.get_client()
+                    
+                    # Получаем несколько случайных точек из коллекции через scroll
+                    scroll_result = qdrant_client.scroll(
+                        collection_name=collection_name,
+                        limit=10,
+                        with_payload=True,
+                        with_vectors=False
+                    )
+                    
+                    if scroll_result and len(scroll_result[0]) > 0:
+                        for point in scroll_result[0][:10]:
+                            if point.payload and 'chunk_text' in point.payload:
+                                chunk_text = point.payload['chunk_text']
+                                if chunk_text:
+                                    chunk_texts.append(chunk_text[:500])
+                        logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} chunks in Qdrant for project {project_id}")
+                except Exception as qdrant_error:
+                    logger.warning(f"[RAG SERVICE] Error reading from Qdrant: {qdrant_error}, trying DB")
+            
+            # Если не нашли в Qdrant, пытаемся из БД
+            if not chunk_texts:
+                from app.models.document import Document, DocumentChunk
+                
+                # Получаем документы проекта
+                result = await self.db.execute(
+                    select(Document)
+                    .where(Document.project_id == project_id)
+                    .limit(10)
                 )
-                chunks = chunks_result.scalars().all()
-                for chunk in chunks:
-                    if chunk.chunk_text:
-                        chunk_texts.append(chunk.chunk_text[:500])  # Ограничиваем длину
+                documents = result.scalars().all()
+                
+                if not documents:
+                    logger.info(f"[RAG SERVICE] No documents found for project {project_id}")
+                    return []
+                
+                logger.info(f"[RAG SERVICE] Found {len(documents)} documents in DB for project {project_id}")
+                
+                # Получаем несколько чанков из разных документов
+                for doc in documents[:5]:  # Берем максимум 5 документов
+                    chunks_result = await self.db.execute(
+                        select(DocumentChunk)
+                        .where(DocumentChunk.document_id == doc.id)
+                        .limit(3)  # По 3 чанка из каждого документа
+                    )
+                    chunks = chunks_result.scalars().all()
+                    for chunk in chunks:
+                        if chunk.chunk_text:
+                            chunk_texts.append(chunk.chunk_text[:500])  # Ограничиваем длину
+                
+                # Если чанков нет в БД, используем содержимое документов напрямую
+                if not chunk_texts:
+                    logger.info(f"[RAG SERVICE] No chunks in DB, using document content directly")
+                    for doc in documents[:5]:
+                        if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
+                            # Берем первые 1000 символов из содержимого
+                            content = doc.content[:1000]
+                            if content.strip():
+                                chunk_texts.append(content)
             
             if not chunk_texts:
-                logger.info(f"[RAG SERVICE] No chunks found for project {project_id}")
+                logger.warning(f"[RAG SERVICE] No content found for project {project_id} - documents may still be processing")
                 return []
             
             # Объединяем чанки в контекст
