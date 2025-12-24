@@ -476,18 +476,53 @@ class RAGService:
             model_fallback=fallback_model
         )
         max_tokens = project.max_response_length // 4  # Приблизительная оценка токенов
-        raw_answer = await llm_client.chat_completion(
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=0.7
-        )
         
-        # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
-        answer = self.response_formatter.format_response(
-            response=raw_answer,
-            max_length=project.max_response_length,
-            chunks=similar_chunks
-        )
+        # Генерируем ответ
+        try:
+            raw_answer = await llm_client.chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.7
+            )
+            
+            # Проверяем, не является ли ответ отказом
+            answer_text = raw_answer.strip().lower()
+            refusal_phrases = [
+                "нет информации", "не могу ответить", "не нашел", 
+                "не найдено", "нет данных", "недостаточно информации",
+                "нет релевантной информации", "не удалось найти"
+            ]
+            
+            # Если ответ содержит отказ и у нас есть метаданные - генерируем сводку
+            if any(phrase in answer_text for phrase in refusal_phrases) and metadata_context:
+                logger.info(f"[RAG SERVICE] Answer contains refusal, generating document summary as fallback")
+                answer = await self._generate_document_summary_fallback(
+                    question=question,
+                    metadata_context=metadata_context,
+                    project=project,
+                    llm_client=llm_client,
+                    max_tokens=max_tokens
+                )
+            else:
+                # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
+                answer = self.response_formatter.format_response(
+                    response=raw_answer,
+                    max_length=project.max_response_length,
+                    chunks=similar_chunks if 'similar_chunks' in locals() else []
+                )
+        except Exception as llm_error:
+            logger.warning(f"[RAG SERVICE] LLM error: {llm_error}, trying document summary fallback")
+            # Если ошибка LLM, пытаемся сгенерировать сводку
+            if metadata_context:
+                answer = await self._generate_document_summary_fallback(
+                    question=question,
+                    metadata_context=metadata_context,
+                    project=project,
+                    llm_client=llm_client,
+                    max_tokens=max_tokens
+                )
+            else:
+                raise
         
         # Сохранение сообщений в историю
         await self._save_message(user_id, question, "user")
