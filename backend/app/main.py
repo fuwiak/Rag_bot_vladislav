@@ -93,7 +93,7 @@ app = FastAPI(
 cors_origins = settings.CORS_ORIGINS
 if not isinstance(cors_origins, list):
     cors_origins = [cors_origins] if cors_origins else []
-logger.info(f"CORS origins configured: {cors_origins}")
+logging.info(f"CORS origins configured: {cors_origins}")
 
 app.add_middleware(
     CORSMiddleware,
