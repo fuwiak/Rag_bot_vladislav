@@ -140,6 +140,14 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
 
 
 def register_question_handlers(dp: Dispatcher, project_id: str):
-    """Регистрация обработчиков вопросов"""
-    dp.message.register(handle_question, AuthStates.authorized, F.text)
+    """Регистрация обработчиков вопросов
+    
+    Важно: этот обработчик должен регистрироваться ПОСЛЕ команд,
+    чтобы команды не перехватывали текстовые сообщения.
+    Фильтр AuthStates.authorized гарантирует, что обработчик
+    сработает только для авторизованных пользователей.
+    """
+    # Регистрируем обработчик для текстовых сообщений авторизованных пользователей
+    # F.text фильтрует только текстовые сообщения (не команды, не контакты и т.д.)
+    dp.message.register(handle_question, AuthStates.authorized, F.text & ~F.command)
 
