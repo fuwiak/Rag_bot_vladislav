@@ -85,10 +85,36 @@ class BotService:
                 
                 # Получаем текущее состояние проектов
                 async with AsyncSessionLocal() as db:
-                    result = await db.execute(
-                        select(Project).where(Project.bot_token.isnot(None))
-                    )
-                    projects = result.scalars().all()
+                    try:
+                        # Пытаемся загрузить с bot_is_active
+                        result = await db.execute(
+                            select(Project).where(Project.bot_token.isnot(None))
+                        )
+                        projects = result.scalars().all()
+                    except Exception as e:
+                        # Если поле bot_is_active не существует, используем raw SQL
+                        logger.warning(f"Field bot_is_active not found in monitor, using raw query: {e}")
+                        # Откатываем транзакцию
+                        await db.rollback()
+                        # Используем raw SQL без bot_is_active
+                        from sqlalchemy import text
+                        result = await db.execute(
+                            text("SELECT id, name, description, bot_token, llm_model, created_at, updated_at FROM projects WHERE bot_token IS NOT NULL")
+                        )
+                        # Создаем объекты Project вручную
+                        projects = []
+                        for row in result:
+                            project = Project()
+                            project.id = row.id
+                            project.name = row.name
+                            project.description = row.description
+                            project.bot_token = row.bot_token
+                            project.llm_model = row.llm_model
+                            project.created_at = row.created_at
+                            project.updated_at = row.updated_at
+                            # bot_is_active не существует, используем значение по умолчанию
+                            setattr(project, 'bot_is_active', 'false')
+                            projects.append(project)
                 
                 # Создаем хеш текущего состояния для сравнения
                 current_hash = self._get_projects_hash(projects)
