@@ -27,10 +27,10 @@ class DataCache {
     const now = Date.now()
     if (now - entry.timestamp > entry.ttl) {
       // Данные устарели, но возвращаем их (stale-while-revalidate)
-      return entry.data
+      return entry.data as T
     }
 
-    return entry.data
+    return entry.data as T
   }
 
   /**
