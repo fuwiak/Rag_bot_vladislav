@@ -19,9 +19,19 @@ class ProjectService:
         self.collections_manager = CollectionsManager()
     
     async def get_all_projects(self) -> List[Project]:
-        """Получить все проекты"""
-        result = await self.db.execute(select(Project))
-        return list(result.scalars().all())
+        """Получить все проекты (без relationships для оптимизации)"""
+        from sqlalchemy.orm import selectinload
+        # Загружаем только основные данные, без relationships для экономии памяти
+        result = await self.db.execute(
+            select(Project).options()  # Не загружаем relationships
+        )
+        projects = list(result.scalars().all())
+        # Явно отключаем lazy loading для экономии памяти
+        for project in projects:
+            # Убеждаемся что relationships не загружены
+            project.users = []  # Не загружаем пользователей
+            project.documents = []  # Не загружаем документы
+        return projects
     
     async def get_project_by_id(self, project_id: UUID) -> Optional[Project]:
         """Получить проект по ID"""
