@@ -14,12 +14,12 @@ from app.api.dependencies import get_current_admin
 router = APIRouter()
 
 
-@router.get("", response_model=List[ProjectResponse])
+@router.get("", response_model=List[ProjectListResponse])
 async def get_projects(
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(get_current_admin)
 ):
-    """Получить список всех проектов (оптимизировано - лимит 100, без relationships)"""
+    """Получить список всех проектов (оптимизировано - лимит 50, без больших полей)"""
     import gc
     import logging
     
@@ -29,10 +29,24 @@ async def get_projects(
         service = ProjectService(db)
         projects = await service.get_all_projects()
         
-        # Явно освобождаем память после запроса
+        # Преобразуем в упрощенную схему без больших полей
+        # Это критично для предотвращения out of memory
+        simplified_projects = []
+        for project in projects:
+            simplified_projects.append({
+                "id": project.id,
+                "name": project.name,
+                "description": project.description[:200] + "..." if project.description and len(project.description) > 200 else project.description,
+                "created_at": project.created_at,
+                "updated_at": project.updated_at,
+            })
+        
+        # Освобождаем память
+        del projects
         gc.collect()
         
-        return projects
+        logger.info(f"Returning {len(simplified_projects)} projects (simplified)")
+        return simplified_projects
     except Exception as e:
         logger.error(f"Error getting projects: {e}", exc_info=True)
         # Возвращаем пустой список вместо ошибки, чтобы не падал backend
