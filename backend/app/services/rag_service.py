@@ -75,8 +75,8 @@ class RAGService:
         collection_exists = await self.vector_store.collection_exists(collection_name)
         if not collection_exists:
             logger.warning(f"[RAG SERVICE] Collection {collection_name} does not exist. No documents indexed for this project.")
-            # Возвращаем пустой список чанков, но продолжаем генерацию с пустым контекстом
-            chunk_texts = []
+            # Пытаемся использовать summaries документов
+            chunk_texts = await self._get_document_summaries(project.id, top_k)
         else:
             similar_chunks = await self.vector_store.search_similar(
                 collection_name=collection_name,
@@ -92,6 +92,11 @@ class RAGService:
             if similar_chunks and len(similar_chunks) > 0:
                 chunk_texts = [chunk.get("payload", {}).get("chunk_text", "") for chunk in similar_chunks if chunk.get("payload", {}).get("chunk_text")]
                 logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} chunk texts")
+            
+            # Если чанков нет, используем summaries
+            if not chunk_texts:
+                logger.info(f"[RAG SERVICE] No chunks found, trying document summaries")
+                chunk_texts = await self._get_document_summaries(project.id, top_k)
         
         # ВСЕГДА используем промпт проекта, даже если документов нет
         # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
@@ -335,6 +340,60 @@ class RAGService:
         )
         self.db.add(message)
         await self.db.commit()
+    
+    async def _get_document_summaries(self, project_id: UUID, limit: int = 5) -> List[str]:
+        """
+        Получает summaries документов проекта для использования в RAG
+        
+        Args:
+            project_id: ID проекта
+            limit: Максимальное количество summaries
+        
+        Returns:
+            Список summaries документов
+        """
+        try:
+            from app.models.document import Document
+            from app.services.document_summary_service import DocumentSummaryService
+            
+            # Получаем документы проекта
+            result = await self.db.execute(
+                select(Document)
+                .where(Document.project_id == project_id)
+                .limit(limit * 2)  # Берем больше, чтобы выбрать те, у которых есть summary
+            )
+            documents = result.scalars().all()
+            
+            if not documents:
+                return []
+            
+            summary_service = DocumentSummaryService(self.db)
+            summaries = []
+            
+            for doc in documents[:limit]:
+                # Приоритет 1: используем существующий summary
+                if doc.summary and doc.summary.strip():
+                    summaries.append(f"Документ '{doc.filename}': {doc.summary}")
+                else:
+                    # Приоритет 2: пытаемся создать summary
+                    try:
+                        summary = await summary_service.generate_summary(doc.id)
+                        if summary and summary.strip():
+                            summaries.append(f"Документ '{doc.filename}': {summary}")
+                    except Exception as e:
+                        logger.warning(f"Error generating summary for doc {doc.id}: {e}")
+                        # Приоритет 3: используем содержимое
+                        if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
+                            content = doc.content[:500]
+                            if content.strip():
+                                summaries.append(f"Документ '{doc.filename}': {content}")
+            
+            logger.info(f"[RAG SERVICE] Retrieved {len(summaries)} document summaries for project {project_id}")
+            return summaries
+            
+        except Exception as e:
+            logger.error(f"[RAG SERVICE] Error getting document summaries: {e}", exc_info=True)
+            return []
     
     async def generate_suggested_questions(
         self,
