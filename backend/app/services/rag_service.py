@@ -135,7 +135,12 @@ class RAGService:
             
             summaries = await self._get_document_summaries(project.id, top_k * 2)  # Берем больше summaries для содержания
             if summaries:
-                chunk_texts = summaries
+                # Для вопросов о содержании сохраняем формат с метаданными
+                if is_content_question:
+                    chunk_texts = summaries  # summaries уже в формате dict с text, source, score
+                else:
+                    # Для других вопросов преобразуем в строки
+                    chunk_texts = [s if isinstance(s, str) else s.get("text", str(s)) for s in summaries]
                 logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
         
         # Если агент рекомендует использовать метаданные или контента все еще нет
