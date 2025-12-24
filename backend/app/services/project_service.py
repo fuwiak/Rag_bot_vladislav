@@ -32,6 +32,7 @@ class ProjectService:
             # Это предотвращает загрузку больших полей (prompt_template, access_password) в память
             # ВАЖНО: Добавляем bot_token, bot_is_active и llm_model для страницы управления ботами
             # Проверяем, существует ли поле bot_is_active в БД
+            has_bot_is_active = False
             try:
                 # Пытаемся загрузить с bot_is_active
                 result = await self.db.execute(
@@ -50,42 +51,52 @@ class ProjectService:
                 )
                 has_bot_is_active = True
             except Exception as e:
-                # Если поле bot_is_active не существует, загружаем без него
+                # Если поле bot_is_active не существует, откатываем транзакцию и загружаем без него
                 logger.warning(f"Field bot_is_active not found, loading without it: {e}")
+                await self.db.rollback()  # КРИТИЧНО: откатываем failed транзакцию
+                # Используем raw SQL без bot_is_active
+                from sqlalchemy import text
                 result = await self.db.execute(
-                    select(
-                        Project.id,
-                        Project.name,
-                        Project.description,
-                        Project.bot_token,
-                        Project.llm_model,
-                        Project.created_at,
-                        Project.updated_at
-                    )
-                    .limit(50)
-                    .order_by(Project.created_at.desc())
+                    text("""
+                        SELECT id, name, description, bot_token, llm_model, created_at, updated_at 
+                        FROM projects 
+                        ORDER BY created_at DESC 
+                        LIMIT 50
+                    """)
                 )
                 has_bot_is_active = False
             
             # Преобразуем результат в объекты Project с минимальными данными
             projects = []
-            for row in result.all():
-                # Создаем минимальный объект Project только с нужными полями
-                project = Project()
-                project.id = row.id
-                project.name = row.name
-                # Ограничиваем description до 200 символов сразу при загрузке
-                project.description = (row.description[:200] + "...") if row.description and len(row.description) > 200 else row.description
-                project.bot_token = row.bot_token  # ВАЖНО: Загружаем bot_token для страницы управления ботами
-                if has_bot_is_active:
+            if has_bot_is_active:
+                # Используем ORM результат
+                for row in result.all():
+                    # Создаем минимальный объект Project только с нужными полями
+                    project = Project()
+                    project.id = row.id
+                    project.name = row.name
+                    # Ограничиваем description до 200 символов сразу при загрузке
+                    project.description = (row.description[:200] + "...") if row.description and len(row.description) > 200 else row.description
+                    project.bot_token = row.bot_token  # ВАЖНО: Загружаем bot_token для страницы управления ботами
                     project.bot_is_active = row.bot_is_active or "false"  # ВАЖНО: Загружаем bot_is_active для страницы управления ботами
-                else:
+                    project.llm_model = row.llm_model  # ВАЖНО: Загружаем llm_model для страницы управления ботами
+                    project.created_at = row.created_at
+                    project.updated_at = row.updated_at
+                    # НЕ загружаем prompt_template, access_password и другие большие поля
+                    projects.append(project)
+            else:
+                # Используем raw SQL результат
+                for row in result:
+                    project = Project()
+                    project.id = row.id
+                    project.name = row.name
+                    project.description = (row.description[:200] + "...") if row.description and len(row.description) > 200 else row.description
+                    project.bot_token = row.bot_token
                     project.bot_is_active = "false"  # По умолчанию, если поле не существует
-                project.llm_model = row.llm_model  # ВАЖНО: Загружаем llm_model для страницы управления ботами
-                project.created_at = row.created_at
-                project.updated_at = row.updated_at
-                # НЕ загружаем prompt_template, access_password и другие большие поля
-                projects.append(project)
+                    project.llm_model = row.llm_model
+                    project.created_at = row.created_at
+                    project.updated_at = row.updated_at
+                    projects.append(project)
             
             # Явно освобождаем память
             del result
