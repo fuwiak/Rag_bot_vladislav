@@ -22,7 +22,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.url.path in ["/health", "/ready"]:
             return await call_next(request)
         
-        # Пропускаем OPTIONS запросы (CORS preflight)
+        # Пропускаем OPTIONS запросы (CORS preflight) - они обрабатываются CORS middleware
         if request.method == "OPTIONS":
             return await call_next(request)
         

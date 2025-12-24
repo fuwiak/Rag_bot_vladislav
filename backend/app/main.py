@@ -104,13 +104,15 @@ if not cors_origins:
 
 logging.info(f"CORS origins configured: {cors_origins}")
 
+# Добавляем CORS middleware ПЕРЕД rate limiting для правильной обработки preflight
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"],
+    max_age=3600,  # Кэшируем preflight на 1 час
 )
 
 # Rate limiting middleware
