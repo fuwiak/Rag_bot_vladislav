@@ -126,9 +126,12 @@ export default function TelegramBotsPage() {
       }
 
       // Обновляем модель LLM если выбрана
-      if (selectedModelId) {
-        const modelResponse = await apiFetch(`/api/models/project/${selectedProjectId}/assign?model_id=${encodeURIComponent(selectedModelId)}`, {
-          method: 'POST',
+      if (selectedModelId !== undefined) {
+        const modelUrl = selectedModelId 
+          ? `/api/models/project/${selectedProjectId}?model_id=${encodeURIComponent(selectedModelId)}`
+          : `/api/models/project/${selectedProjectId}`
+        const modelResponse = await apiFetch(modelUrl, {
+          method: 'PATCH',
         })
         if (!modelResponse.ok) {
           console.warn('Failed to assign model:', await modelResponse.json())
