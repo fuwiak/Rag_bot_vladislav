@@ -413,19 +413,19 @@ class RAGService:
                 # Вставляем историю перед финальным вопросом
                 messages = [messages[0]] + recent_history + [messages[1]]
         else:
-        # ВСЕГДА используем промпт проекта, даже если документов нет
-        # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
-        # Построение промпта с контекстом (может быть пустым)
+            # ВСЕГДА используем промпт проекта, даже если документов нет
+            # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+            # Построение промпта с контекстом (может быть пустым)
             # chunks_for_prompt уже определен выше
             
-        messages = self.prompt_builder.build_prompt(
-            question=question,
+            messages = self.prompt_builder.build_prompt(
+                question=question,
                 chunks=chunks_for_prompt,  # Может быть пустым списком
-            prompt_template=project.prompt_template,
-            max_length=project.max_response_length,
+                prompt_template=project.prompt_template,
+                max_length=project.max_response_length,
                 conversation_history=conversation_history,
                 metadata_context=metadata_context  # Добавляем метаданные если есть
-        )
+            )
         
         # Генерация ответа через LLM
         # Получаем глобальные настройки моделей из БД
@@ -481,12 +481,12 @@ class RAGService:
         
         # Генерируем ответ
         try:
-        raw_answer = await llm_client.chat_completion(
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=0.7
-        )
-        
+            raw_answer = await llm_client.chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.7
+            )
+            
             # Проверяем, не является ли ответ отказом
             answer_text = raw_answer.strip().lower()
             refusal_phrases = [
@@ -506,10 +506,10 @@ class RAGService:
                     max_tokens=max_tokens
                 )
             else:
-        # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
-        answer = self.response_formatter.format_response(
-            response=raw_answer,
-            max_length=project.max_response_length,
+                # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
+                answer = self.response_formatter.format_response(
+                    response=raw_answer,
+                    max_length=project.max_response_length,
                     chunks=similar_chunks if 'similar_chunks' in locals() else []
                 )
         except Exception as llm_error:
@@ -1408,12 +1408,12 @@ class RAGService:
                 # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
                 try:
                     # Пробуем обычный запрос
-                result = await self.db.execute(
-                    select(Document)
-                    .where(Document.project_id == project_id)
-                    .limit(10)
-                )
-                documents = result.scalars().all()
+                    result = await self.db.execute(
+                        select(Document)
+                        .where(Document.project_id == project_id)
+                        .limit(10)
+                    )
+                    documents = result.scalars().all()
                 except Exception as db_error:
                     # Если ошибка из-за отсутствия поля summary, используем raw SQL
                     error_str = str(db_error).lower()
