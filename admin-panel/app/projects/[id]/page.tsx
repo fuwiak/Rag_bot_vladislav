@@ -121,7 +121,7 @@ export default function ProjectDetailPage() {
   const fetchProjectBasicData = async () => {
     // Показываем кэшированные данные сразу
     const { cache, cacheKeys } = await import('../../lib/cache')
-    const cachedProject = cache.get(cacheKeys.project(projectId))
+    const cachedProject = cache.get<Project>(cacheKeys.project(projectId))
     if (cachedProject) {
       setProject(cachedProject)
       setEditData({
