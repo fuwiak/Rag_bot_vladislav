@@ -31,20 +31,41 @@ class ProjectService:
             # КРИТИЧНО: Загружаем только нужные поля, не всю модель
             # Это предотвращает загрузку больших полей (prompt_template, access_password) в память
             # ВАЖНО: Добавляем bot_token, bot_is_active и llm_model для страницы управления ботами
-            result = await self.db.execute(
-                select(
-                    Project.id,
-                    Project.name,
-                    Project.description,
-                    Project.bot_token,
-                    Project.bot_is_active,
-                    Project.llm_model,
-                    Project.created_at,
-                    Project.updated_at
+            # Проверяем, существует ли поле bot_is_active в БД
+            try:
+                # Пытаемся загрузить с bot_is_active
+                result = await self.db.execute(
+                    select(
+                        Project.id,
+                        Project.name,
+                        Project.description,
+                        Project.bot_token,
+                        Project.bot_is_active,
+                        Project.llm_model,
+                        Project.created_at,
+                        Project.updated_at
+                    )
+                    .limit(50)
+                    .order_by(Project.created_at.desc())
                 )
-                .limit(50)
-                .order_by(Project.created_at.desc())
-            )
+                has_bot_is_active = True
+            except Exception as e:
+                # Если поле bot_is_active не существует, загружаем без него
+                logger.warning(f"Field bot_is_active not found, loading without it: {e}")
+                result = await self.db.execute(
+                    select(
+                        Project.id,
+                        Project.name,
+                        Project.description,
+                        Project.bot_token,
+                        Project.llm_model,
+                        Project.created_at,
+                        Project.updated_at
+                    )
+                    .limit(50)
+                    .order_by(Project.created_at.desc())
+                )
+                has_bot_is_active = False
             
             # Преобразуем результат в объекты Project с минимальными данными
             projects = []
@@ -56,7 +77,10 @@ class ProjectService:
                 # Ограничиваем description до 200 символов сразу при загрузке
                 project.description = (row.description[:200] + "...") if row.description and len(row.description) > 200 else row.description
                 project.bot_token = row.bot_token  # ВАЖНО: Загружаем bot_token для страницы управления ботами
-                project.bot_is_active = row.bot_is_active or "false"  # ВАЖНО: Загружаем bot_is_active для страницы управления ботами
+                if has_bot_is_active:
+                    project.bot_is_active = row.bot_is_active or "false"  # ВАЖНО: Загружаем bot_is_active для страницы управления ботами
+                else:
+                    project.bot_is_active = "false"  # По умолчанию, если поле не существует
                 project.llm_model = row.llm_model  # ВАЖНО: Загружаем llm_model для страницы управления ботами
                 project.created_at = row.created_at
                 project.updated_at = row.updated_at
