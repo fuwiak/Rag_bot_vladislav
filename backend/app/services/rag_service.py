@@ -121,15 +121,15 @@ class RAGService:
             
             # РАСШИРЕННЫЙ ПОИСК ЧАНКОВ - используем все техники перед fallback
             if strategy.get("use_chunks", True) and collection_exists:
-            logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
-            found_chunks, found_similar = await self._advanced_chunk_search(
+                logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
+                found_chunks, found_similar = await self._advanced_chunk_search(
                 question=question,
                 collection_name=collection_name,
                 project_id=project.id,
                 top_k=top_k,
                 strategy=strategy
-            )
-            if found_chunks:
+                )
+                if found_chunks:
                 chunk_texts = found_chunks
                 similar_chunks = found_similar
                 logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} chunks using advanced search techniques")
@@ -324,17 +324,17 @@ class RAGService:
                 
             except Exception as extract_error:
                 logger.warning(f"[RAG SERVICE] Error extracting content from documents: {extract_error}")
-        
-        # Инициализируем chunks_for_prompt для использования в блоке else
-        chunks_for_prompt = []
-        for chunk in chunk_texts:
-            if isinstance(chunk, dict):
-                chunks_for_prompt.append(chunk.get("text", str(chunk)))
-            else:
-                chunks_for_prompt.append(chunk)
-        
-        # Для вопросов о содержании используем простой промпт из рабочего скрипта
-        if is_content_question:
+            
+            # Инициализируем chunks_for_prompt для использования в блоке else
+            chunks_for_prompt = []
+            for chunk in chunk_texts:
+                if isinstance(chunk, dict):
+                    chunks_for_prompt.append(chunk.get("text", str(chunk)))
+                else:
+                    chunks_for_prompt.append(chunk)
+            
+            # Для вопросов о содержании используем простой промпт из рабочего скрипта
+            if is_content_question:
             # Для вопросов типа "summary of each file" - используем метаданные напрямую
             if metadata_context and not chunk_texts:
                 # Просто используем метаданные - это работает как предложенные вопросы
