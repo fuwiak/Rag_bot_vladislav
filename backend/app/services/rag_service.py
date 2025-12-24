@@ -111,20 +111,16 @@ class RAGService:
                 strategy_info = {"documents_metadata": []}
             
             # Инициализируем переменные в начале (до всех блоков) - КРИТИЧНО для избежания UnboundLocalError
-            # chunk_texts уже инициализирована в начале функции, но переинициализируем для безопасности
-            if 'chunk_texts' not in locals() or chunk_texts is None:
-                chunk_texts = []
-            if 'similar_chunks' not in locals() or similar_chunks is None:
-                similar_chunks = []
-            if 'metadata_context' not in locals() or metadata_context is None:
-                metadata_context = ""
-            
-            # Определяем стратегию поиска на основе анализа агента
-            collection_name = f"project_{project.id}"
-            collection_exists = await self.vector_store.collection_exists(collection_name)
-            
-            # РАСШИРЕННЫЙ ПОИСК ЧАНКОВ - используем все техники перед fallback
-            if strategy.get("use_chunks", True) and collection_exists:
+            chunk_texts = []
+            similar_chunks = []
+            metadata_context = ""
+        
+        # Определяем стратегию поиска на основе анализа агента
+        collection_name = f"project_{project.id}"
+        collection_exists = await self.vector_store.collection_exists(collection_name)
+        
+        # РАСШИРЕННЫЙ ПОИСК ЧАНКОВ - используем все техники перед fallback
+        if strategy.get("use_chunks", True) and collection_exists:
             logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
             found_chunks, found_similar = await self._advanced_chunk_search(
                 question=question,
@@ -432,19 +428,19 @@ class RAGService:
                 # Вставляем историю перед финальным вопросом
                 messages = [messages[0]] + recent_history + [messages[1]]
         else:
-        # ВСЕГДА используем промпт проекта, даже если документов нет
-        # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
-        # Построение промпта с контекстом (может быть пустым)
+            # ВСЕГДА используем промпт проекта, даже если документов нет
+            # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+            # Построение промпта с контекстом (может быть пустым)
             # chunks_for_prompt уже определен выше
             
-        messages = self.prompt_builder.build_prompt(
-            question=question,
-                        chunks=chunks_for_prompt,  # Может быть пустым списком
-            prompt_template=project.prompt_template,
-            max_length=project.max_response_length,
-                        conversation_history=conversation_history,
-                        metadata_context=metadata_context  # Добавляем метаданные если есть
-        )
+            messages = self.prompt_builder.build_prompt(
+                question=question,
+                chunks=chunks_for_prompt,  # Может быть пустым списком
+                prompt_template=project.prompt_template,
+                max_length=project.max_response_length,
+                conversation_history=conversation_history,
+                metadata_context=metadata_context  # Добавляем метаданные если есть
+            )
         
         # Генерация ответа через LLM
         # Получаем глобальные настройки моделей из БД
@@ -500,12 +496,12 @@ class RAGService:
         
         # Генерируем ответ
         try:
-        raw_answer = await llm_client.chat_completion(
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=0.7
-        )
-        
+            raw_answer = await llm_client.chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.7
+            )
+            
             # Проверяем, не является ли ответ отказом
             answer_text = raw_answer.strip().lower()
             refusal_phrases = [
@@ -525,12 +521,12 @@ class RAGService:
                     max_tokens=max_tokens
                 )
             else:
-        # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
-        answer = self.response_formatter.format_response(
-            response=raw_answer,
-            max_length=project.max_response_length,
-                            chunks=similar_chunks if 'similar_chunks' in locals() else []
-                        )
+                # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
+                answer = self.response_formatter.format_response(
+                    response=raw_answer,
+                    max_length=project.max_response_length,
+                    chunks=similar_chunks if 'similar_chunks' in locals() else []
+                )
         except Exception as llm_error:
             logger.warning(f"[RAG SERVICE] LLM error: {llm_error}, trying aggressive fallback with all techniques")
             # АГРЕССИВНЫЙ FALLBACK - используем все техники перед отказом
@@ -1372,7 +1368,7 @@ class RAGService:
             
             # Только в самом крайнем случае возвращаем финальное сообщение
             if not answer:
-            return "В загруженных документах нет информации по этому вопросу."
+                return "В загруженных документах нет информации по этому вопросу."
             
             return answer
         
