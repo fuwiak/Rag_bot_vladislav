@@ -6,7 +6,10 @@ import docx
 import PyPDF2
 import io
 import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentParser:
@@ -22,7 +25,7 @@ class DocumentParser:
         
         Args:
             content: Содержимое файла в байтах
-            file_type: Тип файла (txt, docx, pdf)
+            file_type: Тип файла (txt, docx, pdf, xlsx, xls)
         
         Returns:
             Текст документа
@@ -38,6 +41,9 @@ class DocumentParser:
         elif file_type == "pdf":
             # Запускаем в thread pool, чтобы не блокировать event loop
             return await loop.run_in_executor(self.executor, self._parse_pdf, content)
+        elif file_type in ["xlsx", "xls"]:
+            # Запускаем в thread pool для Excel
+            return await loop.run_in_executor(self.executor, self._parse_excel, content)
         else:
             raise ValueError(f"Неподдерживаемый формат файла: {file_type}")
     
@@ -93,5 +99,45 @@ class DocumentParser:
         gc.collect()
         
         return "\n\n".join(text_parts)
+    
+    def _parse_excel(self, content: bytes) -> str:
+        """Парсинг Excel файла (блокирующая операция, выполняется в thread pool)"""
+        import gc
+        import pandas as pd
+        
+        excel_file = io.BytesIO(content)
+        text_parts = []
+        
+        try:
+            # Читаем все листы Excel
+            excel_reader = pd.ExcelFile(excel_file)
+            
+            for sheet_name in excel_reader.sheet_names:
+                try:
+                    df = pd.read_excel(excel_reader, sheet_name=sheet_name)
+                    df = df.fillna("")
+                    
+                    # Преобразуем DataFrame в текст
+                    for idx, row in df.iterrows():
+                        row_text = " | ".join([str(val) for val in row.values if str(val).strip()])
+                        if row_text:
+                            text_parts.append(f"Лист '{sheet_name}', строка {idx + 1}: {row_text}")
+                    
+                    # Освобождаем память после каждого листа
+                    del df
+                    gc.collect()
+                except Exception as e:
+                    # Пропускаем листы с ошибками
+                    continue
+            
+            del excel_reader
+            del excel_file
+            gc.collect()
+            
+        except Exception as e:
+            logger.warning(f"Ошибка при парсинге Excel: {str(e)}")
+            raise
+        
+        return "\n".join(text_parts)
 
 

@@ -6,6 +6,7 @@ from aiogram import Dispatcher
 from app.bot.handlers.commands import register_commands
 from app.bot.handlers.auth_handler import register_auth_handlers
 from app.bot.handlers.question_handler import register_question_handlers
+from app.bot.handlers.document_handler import register_document_handlers
 
 
 def register_handlers(dp: Dispatcher, project_id: str):
@@ -35,6 +36,10 @@ def register_handlers(dp: Dispatcher, project_id: str):
     # В конце обработчики вопросов (для авторизованных пользователей)
     register_question_handlers(dp, project_id)
     logger.info(f"[REGISTER HANDLERS] Question handlers registered for project {project_id}")
+    
+    # Обработчики документов (для авторизованных пользователей)
+    register_document_handlers(dp, project_id)
+    logger.info(f"[REGISTER HANDLERS] Document handlers registered for project {project_id}")
     
     logger.info(f"[REGISTER HANDLERS] ✅ All handlers registered for project {project_id}")
 

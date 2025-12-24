@@ -15,6 +15,8 @@ from app.services.embedding_service import EmbeddingService
 from app.llm.openrouter_client import OpenRouterClient
 from app.llm.prompt_builder import PromptBuilder
 from app.llm.response_formatter import ResponseFormatter
+from app.rag.rag_chain import RAGChain
+from app.rag.qdrant_loader import QdrantLoader
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,8 @@ class RAGService:
         self.llm_client = None  # Будет создан с учетом модели проекта
         self.prompt_builder = PromptBuilder()
         self.response_formatter = ResponseFormatter()
+        # Новая RAG цепочка (будет создана при необходимости)
+        self._rag_chain: Optional[RAGChain] = None
         # logger уже определен на уровне модуля
     
     async def generate_answer(
