@@ -419,12 +419,12 @@ class RAGService:
                 # Вставляем историю перед финальным вопросом
                 messages = [messages[0]] + recent_history + [messages[1]]
         else:
-        # ВСЕГДА используем промпт проекта, даже если документов нет
-        # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
-        # Построение промпта с контекстом (может быть пустым)
+            # ВСЕГДА используем промпт проекта, даже если документов нет
+            # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+            # Построение промпта с контекстом (может быть пустым)
             # chunks_for_prompt уже определен выше
             
-        messages = self.prompt_builder.build_prompt(
+            messages = self.prompt_builder.build_prompt(
             question=question,
                 chunks=chunks_for_prompt,  # Может быть пустым списком
             prompt_template=project.prompt_template,
