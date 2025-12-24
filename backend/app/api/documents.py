@@ -226,9 +226,13 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             # Обновляем статус документа на успешную обработку
             result = await db.execute(select(Document).where(Document.id == document_id))
             document = result.scalar_one_or_none()
-            if document and document.content == "Обработка...":
-                # Обновляем только если еще placeholder
-                document.content = text[:1000] + "..." if len(text) > 1000 else text
+            if document:
+                if document.content == "Обработка...":
+                    # Обновляем только если еще placeholder
+                    document.content = text[:1000] + "..." if len(text) > 1000 else text
+                
+                # Summary будет сгенерирован автоматически после обработки документа в Celery задаче
+                
                 await db.commit()
                 
     except Exception as e:

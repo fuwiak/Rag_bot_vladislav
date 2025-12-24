@@ -174,10 +174,10 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                     chunk = DocumentChunk(
                         document_id=document_id,
                         chunk_text=chunk_text[:1000],  # Ограничиваем для экономии памяти
-                        chunk_index=chunk_index,
-                        embedding=embedding
+                        chunk_index=chunk_index
                     )
                     db.add(chunk)
+                    await db.flush()  # Получаем ID чанка
                     
                     # Сохраняем в Qdrant (ограничиваем payload для экономии памяти)
                     try:
@@ -214,8 +214,46 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             
             logger.info(f"[Celery] Document {document_id} processed successfully, {len(chunks)} chunks created")
             
+            # Генерируем summary для документа через LLM (в фоне)
+            try:
+                from app.services.document_summary_service import DocumentSummaryService
+                summary_service = DocumentSummaryService(db)
+                summary = await summary_service.generate_summary(document_id)
+                if summary:
+                    logger.info(f"[Celery] Summary generated for document {document_id}")
+            except Exception as summary_error:
+                logger.warning(f"[Celery] Error generating summary for document {document_id}: {summary_error}")
+            
     except Exception as e:
         logger.error(f"[Celery] Error processing document {document_id}: {e}", exc_info=True)
     finally:
         gc.collect()
+
+
+@celery_app.task(bind=True, name='app.tasks.document_tasks.generate_document_summary_task')
+def generate_document_summary_task(self, document_id: str):
+    """
+    Celery задача для генерации summary документа через LLM
+    """
+    import asyncio
+    
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            async def generate_summary_async():
+                async with AsyncSessionLocal() as db:
+                    from app.services.document_summary_service import DocumentSummaryService
+                    summary_service = DocumentSummaryService(db)
+                    summary = await summary_service.generate_summary(UUID(document_id))
+                    return summary
+            
+            result = loop.run_until_complete(generate_summary_async())
+            logger.info(f"[Celery] Summary generated for document {document_id}")
+            return {"status": "success", "document_id": document_id}
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.error(f"[Celery] Error generating summary for document {document_id}: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
 

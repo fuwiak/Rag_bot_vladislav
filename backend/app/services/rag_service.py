@@ -387,6 +387,7 @@ class RAGService:
             # Если не нашли в Qdrant, пытаемся из БД
             if not chunk_texts:
                 from app.models.document import Document, DocumentChunk
+                from app.services.document_summary_service import DocumentSummaryService
                 
                 # Получаем документы проекта
                 result = await self.db.execute(
@@ -414,15 +415,31 @@ class RAGService:
                         if chunk.chunk_text:
                             chunk_texts.append(chunk.chunk_text[:500])  # Ограничиваем длину
                 
-                # Если чанков нет в БД, используем содержимое документов напрямую
+                # Если чанков нет в БД, используем summaries или содержимое документов
                 if not chunk_texts:
-                    logger.info(f"[RAG SERVICE] No chunks in DB, using document content directly")
+                    logger.info(f"[RAG SERVICE] No chunks in DB, using summaries or document content")
+                    summary_service = DocumentSummaryService(self.db)
+                    
                     for doc in documents[:5]:
-                        if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
-                            # Берем первые 1000 символов из содержимого
-                            content = doc.content[:1000]
-                            if content.strip():
-                                chunk_texts.append(content)
+                        # Приоритет 1: используем summary если есть
+                        if doc.summary and doc.summary.strip():
+                            chunk_texts.append(f"Документ '{doc.filename}': {doc.summary}")
+                        else:
+                            # Приоритет 2: пытаемся создать summary
+                            try:
+                                summary = await summary_service.generate_summary(doc.id)
+                                if summary and summary.strip():
+                                    chunk_texts.append(f"Документ '{doc.filename}': {summary}")
+                                    continue
+                            except Exception as e:
+                                logger.warning(f"Error generating summary for doc {doc.id}: {e}")
+                            
+                            # Приоритет 3: используем содержимое напрямую
+                            if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
+                                # Берем первые 1000 символов из содержимого
+                                content = doc.content[:1000]
+                                if content.strip():
+                                    chunk_texts.append(f"Документ '{doc.filename}': {content}")
             
             if not chunk_texts:
                 logger.warning(f"[RAG SERVICE] No content found for project {project_id} - documents may still be processing")

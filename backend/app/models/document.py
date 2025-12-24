@@ -19,6 +19,7 @@ class Document(Base):
     filename = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)
     file_type = Column(String(10), nullable=False)  # txt, docx, pdf
+    summary = Column(Text, nullable=True)  # Краткое содержание документа, созданное через LLM
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     # Связи
