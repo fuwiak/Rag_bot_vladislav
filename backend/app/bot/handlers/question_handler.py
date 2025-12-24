@@ -70,16 +70,111 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
             db.add(question_message)
             await db.flush()  # Получаем ID сообщения
             
+            answer = None
+            use_fallback = False
+            
             # Создаем задачу с таймаутом
             try:
                 answer = await asyncio.wait_for(
                     rag_service.generate_answer(user_id, question),
                     timeout=7.0  # Максимум 7 секунд
                 )
+                logger.info(f"[QUESTION HANDLER] RAG answer generated successfully for user {user_id}")
             except asyncio.TimeoutError:
-                logger.warning(f"[QUESTION HANDLER] Timeout for user {user_id}, using fast answer")
-                # Если превышено время, генерируем короткий ответ
-                answer = await rag_service.generate_answer_fast(user_id, question)
+                logger.warning(f"[QUESTION HANDLER] Timeout for user {user_id}, trying fast answer")
+                try:
+                    answer = await rag_service.generate_answer_fast(user_id, question)
+                    logger.info(f"[QUESTION HANDLER] Fast RAG answer generated for user {user_id}")
+                except Exception as fast_error:
+                    logger.warning(f"[QUESTION HANDLER] Fast RAG also failed for user {user_id}: {fast_error}, using LLM fallback")
+                    use_fallback = True
+            except Exception as rag_error:
+                logger.error(f"[QUESTION HANDLER] RAG error for user {user_id}: {rag_error}, using LLM fallback", exc_info=True)
+                use_fallback = True
+            
+            # Fallback: используем прямой LLM без RAG
+            if use_fallback or not answer:
+                logger.warning(f"[QUESTION HANDLER] ⚠️ FALLBACK MODE: Using direct LLM without RAG for user {user_id}, question: {question[:100]}")
+                
+                try:
+                    # Получаем проект для определения модели
+                    from app.models.user import User
+                    from app.models.project import Project
+                    from sqlalchemy import select
+                    
+                    user_result = await db.execute(select(User).where(User.id == user_id))
+                    user = user_result.scalar_one_or_none()
+                    
+                    if not user:
+                        raise ValueError("User not found")
+                    
+                    project_result = await db.execute(select(Project).where(Project.id == user.project_id))
+                    project = project_result.scalar_one_or_none()
+                    
+                    if not project:
+                        raise ValueError("Project not found")
+                    
+                    # Определяем модель LLM
+                    from app.models.llm_model import GlobalModelSettings
+                    settings_result = await db.execute(select(GlobalModelSettings).limit(1))
+                    global_settings = settings_result.scalar_one_or_none()
+                    
+                    primary_model = None
+                    fallback_model = None
+                    
+                    if project.llm_model:
+                        primary_model = project.llm_model
+                    elif global_settings:
+                        primary_model = global_settings.primary_model_id
+                        fallback_model = global_settings.fallback_model_id
+                    
+                    from app.core.config import settings as app_settings
+                    if not primary_model:
+                        primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                    if not fallback_model:
+                        fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                    
+                    logger.info(f"[QUESTION HANDLER] FALLBACK: Using model {primary_model} for user {user_id}")
+                    
+                    # Получаем историю диалога
+                    conversation_history = await rag_service._get_conversation_history(user_id, limit=10)
+                    
+                    # Формируем сообщения для LLM
+                    messages = []
+                    for msg in conversation_history:
+                        messages.append({
+                            "role": msg["role"],
+                            "content": msg["content"]
+                        })
+                    # Добавляем текущий вопрос
+                    messages.append({
+                        "role": "user",
+                        "content": question
+                    })
+                    
+                    # Используем прямой LLM без RAG
+                    from app.llm.openrouter_client import OpenRouterClient
+                    llm_client = OpenRouterClient(
+                        model_primary=primary_model,
+                        model_fallback=fallback_model
+                    )
+                    
+                    logger.info(f"[QUESTION HANDLER] FALLBACK: Sending request to LLM with {len(messages)} messages")
+                    raw_answer = await llm_client.chat_completion(
+                        messages=messages,
+                        max_tokens=min(project.max_response_length, 1000),
+                        temperature=0.7
+                    )
+                    
+                    answer = raw_answer.strip()
+                    if not answer:
+                        answer = "Извините, не удалось сгенерировать ответ. Попробуйте переформулировать вопрос."
+                    
+                    logger.info(f"[QUESTION HANDLER] FALLBACK: LLM response received, length: {len(answer)}")
+                    
+                except Exception as fallback_error:
+                    logger.error(f"[QUESTION HANDLER] FALLBACK also failed for user {user_id}: {fallback_error}", exc_info=True)
+                    answer = "Извините, произошла ошибка при обработке вашего вопроса. Попробуйте позже или обратитесь к администратору."
             
             # Сохраняем ответ в историю
             answer_message = MessageModel(
@@ -91,7 +186,10 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
             db.add(answer_message)
             await db.commit()
             
-            logger.info(f"[QUESTION HANDLER] Answer generated and saved for user {user_id}")
+            if use_fallback:
+                logger.warning(f"[QUESTION HANDLER] ⚠️ FALLBACK MODE: Answer saved for user {user_id} (used direct LLM without RAG)")
+            else:
+                logger.info(f"[QUESTION HANDLER] Answer generated and saved for user {user_id}")
         
         # Удаление сообщения об обработке
         await processing_msg.delete()
