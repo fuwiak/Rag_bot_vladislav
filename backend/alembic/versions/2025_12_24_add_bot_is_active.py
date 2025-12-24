@@ -18,7 +18,22 @@ depends_on = None
 
 def upgrade():
     # Добавляем поле bot_is_active в таблицу projects
-    op.add_column('projects', sa.Column('bot_is_active', sa.String(length=10), nullable=False, server_default='false'))
+    # Проверяем, существует ли поле перед добавлением
+    from sqlalchemy import inspect, text
+    from alembic import context
+    
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    
+    # Получаем список существующих колонок
+    columns = [col['name'] for col in inspector.get_columns('projects')]
+    
+    if 'bot_is_active' not in columns:
+        op.add_column('projects', sa.Column('bot_is_active', sa.String(length=10), nullable=False, server_default='false'))
+    else:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Column bot_is_active already exists, skipping")
 
 
 def downgrade():
