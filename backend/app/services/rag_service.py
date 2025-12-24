@@ -98,6 +98,20 @@ class RAGService:
                 logger.info(f"[RAG SERVICE] No chunks found, trying document summaries")
                 chunk_texts = await self._get_document_summaries(project.id, top_k)
         
+        # Если все еще нет контента, используем метаданные документов
+        metadata_context = ""
+        if not chunk_texts:
+            logger.info(f"[RAG SERVICE] No content found, using document metadata for context")
+            try:
+                from app.services.document_metadata_service import DocumentMetadataService
+                metadata_service = DocumentMetadataService()
+                documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
+                if documents_metadata:
+                    metadata_context = metadata_service.create_metadata_context(documents_metadata)
+                    logger.info(f"[RAG SERVICE] Created metadata context from {len(documents_metadata)} documents")
+            except Exception as metadata_error:
+                logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
+        
         # ВСЕГДА используем промпт проекта, даже если документов нет
         # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
         # Построение промпта с контекстом (может быть пустым)
@@ -106,7 +120,8 @@ class RAGService:
             chunks=chunk_texts,  # Может быть пустым списком
             prompt_template=project.prompt_template,
             max_length=project.max_response_length,
-            conversation_history=conversation_history
+            conversation_history=conversation_history,
+            metadata_context=metadata_context  # Добавляем метаданные если есть
         )
         
         # Генерация ответа через LLM

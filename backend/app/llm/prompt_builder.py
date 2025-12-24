@@ -29,7 +29,8 @@ class PromptBuilder:
         chunks: List[str],
         prompt_template: str,
         max_length: int,
-        conversation_history: List[Dict[str, str]] = None
+        conversation_history: List[Dict[str, str]] = None,
+        metadata_context: str = ""
     ) -> List[Dict[str, str]]:
         """
         Построить промпт для LLM
@@ -40,6 +41,7 @@ class PromptBuilder:
             prompt_template: Шаблон промпта из проекта
             max_length: Максимальная длина ответа
             conversation_history: История диалога
+            metadata_context: Контекст из метаданных документов (названия файлов, ключевые слова)
         
         Returns:
             Список сообщений для LLM
@@ -56,7 +58,15 @@ class PromptBuilder:
                 # Это обычные чанки
                 context = "\n\n".join([f"[Чанк {i+1}]\n{chunk}" for i, chunk in enumerate(chunks)])
         else:
-            context = "Контекст из документов отсутствует. Отвечай на основе своих знаний, но учитывай настройки проекта."
+            # Если нет чанков, но есть метаданные - используем их
+            if metadata_context:
+                context = f"Контекст из документов отсутствует, но доступны метаданные загруженных документов:\n\n{metadata_context}\n\nИспользуй эту информацию о документах для ответа на вопрос. Если вопрос связан с содержимым документов, укажи, что документы еще обрабатываются, но можешь ответить на основе их названий и метаданных."
+            else:
+                context = "Контекст из документов отсутствует. Отвечай на основе своих знаний, но учитывай настройки проекта."
+        
+        # Добавляем метаданные к контексту, если они есть и есть чанки
+        if metadata_context and chunks:
+            context += f"\n\nДополнительная информация о документах проекта:\n{metadata_context}"
         
         # Замена плейсхолдеров в шаблоне
         system_prompt = prompt_template.format(
