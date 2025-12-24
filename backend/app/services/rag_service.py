@@ -1111,6 +1111,105 @@ class RAGService:
             # В крайнем случае возвращаем базовую информацию из метаданных
             return f"На основе доступной информации о документах:\n\n{metadata_context}\n\nК сожалению, полное содержимое документов еще обрабатывается, но вы можете задать вопросы о конкретных файлах по их названиям."
     
+    async def _generate_ai_agent_fallback(
+        self,
+        question: str,
+        project,
+        llm_client,
+        max_tokens: int,
+        conversation_history: List[Dict[str, str]] = None
+    ) -> str:
+        """
+        Генерирует ответ через AI агента как fallback механизм
+        
+        Args:
+            question: Вопрос пользователя
+            project: Объект проекта
+            llm_client: Клиент LLM
+            max_tokens: Максимальное количество токенов
+            conversation_history: История диалога
+            
+        Returns:
+            Ответ от AI агента
+        """
+        try:
+            from app.services.rag_agent import RAGAgent
+            rag_agent = RAGAgent(llm_client)
+            
+            # Используем агента для генерации ответа на основе общих знаний
+            agent_prompt = f"""Вопрос пользователя: {question}
+
+Используй свои знания и контекст проекта '{project.name}' для ответа на вопрос.
+Будь полезным и информативным, даже если у тебя нет доступа к конкретным документам.
+
+Ответ:"""
+            
+            messages = [
+                {"role": "system", "content": f"{project.prompt_template}\n\nТы - полезный ассистент, который отвечает на вопросы пользователей."},
+                {"role": "user", "content": agent_prompt}
+            ]
+            
+            if conversation_history:
+                recent_history = conversation_history[-4:]
+                messages = [messages[0]] + recent_history + [messages[1]]
+            
+            response = await llm_client.chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.7
+            )
+            
+            logger.info(f"[RAG SERVICE] Generated AI agent fallback (length: {len(response)})")
+            return response.strip()
+            
+        except Exception as e:
+            logger.warning(f"[RAG SERVICE] AI agent fallback failed: {e}")
+            return None
+    
+    async def _generate_basic_fallback(
+        self,
+        question: str,
+        project
+    ) -> str:
+        """
+        Генерирует базовый ответ на основе названия проекта
+        
+        Args:
+            question: Вопрос пользователя
+            project: Объект проекта
+            
+        Returns:
+            Базовый ответ
+        """
+        try:
+            # Пытаемся получить хотя бы список документов
+            from app.models.document import Document
+            from sqlalchemy import select
+            
+            result = await self.db.execute(
+                select(Document)
+                .where(Document.project_id == project.id)
+                .limit(5)
+            )
+            documents = result.scalars().all()
+            
+            if documents:
+                doc_names = [doc.filename for doc in documents if doc.filename]
+                doc_list = "\n".join([f"- {name}" for name in doc_names[:5]])
+                
+                return f"""В проекте '{project.name}' загружены следующие документы:
+
+{doc_list}
+
+Документы могут быть еще в процессе обработки. Попробуйте задать вопрос о конкретном документе по его названию."""
+            else:
+                return f"""В проекте '{project.name}' пока нет загруженных документов. 
+Пожалуйста, загрузите документы, чтобы я мог ответить на ваши вопросы."""
+                
+        except Exception as e:
+            logger.warning(f"[RAG SERVICE] Basic fallback failed: {e}")
+            return f"Извините, произошла ошибка при обработке вашего вопроса в проекте '{project.name}'. Пожалуйста, попробуйте переформулировать вопрос."
+    
     async def generate_answer_fast(
         self,
         user_id: UUID,
