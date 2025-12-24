@@ -304,13 +304,46 @@ async def cmd_documents(message: Message, state: FSMContext):
     
     async with AsyncSessionLocal() as db:
         # Получаем список документов проекта
-        result = await db.execute(
-            select(Document)
-            .where(Document.project_id == project_id)
-            .order_by(Document.created_at.desc())
-            .limit(50)
-        )
-        documents = result.scalars().all()
+        # Используем load_only для загрузки только нужных полей, исключая summary
+        # чтобы избежать ошибки если summary колонка не существует в БД
+        from sqlalchemy.orm import load_only
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            result = await db.execute(
+                select(Document)
+                .options(load_only(Document.id, Document.project_id, Document.filename, Document.content, Document.file_type, Document.created_at))
+                .where(Document.project_id == project_id)
+                .order_by(Document.created_at.desc())
+                .limit(50)
+            )
+            documents = result.scalars().all()
+        except Exception as e:
+            # Если ошибка из-за summary в модели, используем raw SQL
+            logger.warning(f"Error loading documents: {e}, using raw SQL query")
+            from sqlalchemy import text
+            result = await db.execute(
+                text("""
+                    SELECT id, project_id, filename, content, file_type, created_at 
+                    FROM documents 
+                    WHERE project_id = :project_id 
+                    ORDER BY created_at DESC 
+                    LIMIT 50
+                """),
+                {"project_id": project_id}
+            )
+            rows = result.all()
+            documents = []
+            for row in rows:
+                doc = Document()
+                doc.id = row[0]
+                doc.project_id = row[1]
+                doc.filename = row[2]
+                doc.content = row[3]
+                doc.file_type = row[4]
+                doc.created_at = row[5]
+                documents.append(doc)
         
         if not documents:
             await message.answer("📄 <b>Документы проекта</b>\n\n"
