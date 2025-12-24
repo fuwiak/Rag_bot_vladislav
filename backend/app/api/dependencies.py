@@ -4,23 +4,26 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 from jose import JWTError, jwt
 
 from app.core.database import get_db
 from app.core.config import settings
 from app.services.auth_service import AuthService
 
-security = HTTPBearer()
+# Делаем токен опциональным - не требуем обязательного наличия Authorization заголовка
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_admin(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Получить текущего администратора (PASSWORD DISABLED - always returns mock admin)
+    Получить текущего администратора (AUTHENTICATION DISABLED - always returns mock admin)
+    Токен не требуется - функция всегда возвращает mock admin
     """
-    # PASSWORD DISABLED - always return mock admin
+    # AUTHENTICATION DISABLED - always return mock admin without checking token
     from app.models.admin_user import AdminUser
     from uuid import uuid4
     
