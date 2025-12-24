@@ -41,7 +41,12 @@ set -e\n\
 echo "Waiting for database..."\n\
 python -c "import asyncio, sys; sys.path.insert(0, '\''/app'\''); from app.core.database import wait_for_db; asyncio.run(wait_for_db(max_retries=10, retry_interval=2))"\n\
 echo "Applying Alembic migrations..."\n\
-cd /app && alembic upgrade head || echo "Warning: Migration failed, but continuing..."\n\
+cd /app\n\
+alembic upgrade head 2>&1 || {\n\
+  echo "Migration failed, retrying..."\n\
+  sleep 2\n\
+  alembic upgrade head 2>&1 || echo "Warning: Migration failed, but continuing..."\n\
+}\n\
 echo "Starting application..."\n\
 exec "$@"' > /entrypoint.sh && \
     chmod +x /entrypoint.sh

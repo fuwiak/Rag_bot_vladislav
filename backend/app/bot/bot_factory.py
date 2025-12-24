@@ -23,13 +23,25 @@ class BotFactory:
     async def start_all_bots(self):
         """Запустить все боты из проектов с настроенными токенами и bot_is_active='true'"""
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(Project).where(
-                    Project.bot_token.isnot(None),
-                    Project.bot_is_active == "true"
+            # Проверяем, существует ли поле bot_is_active в БД
+            try:
+                # Пытаемся загрузить проекты с проверкой bot_is_active
+                result = await db.execute(
+                    select(Project).where(
+                        Project.bot_token.isnot(None),
+                        Project.bot_is_active == "true"
+                    )
                 )
-            )
-            projects = result.scalars().all()
+                projects = result.scalars().all()
+            except Exception as e:
+                # Если поле bot_is_active не существует, загружаем все проекты с токенами
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Field bot_is_active not found, loading all projects with tokens: {e}")
+                result = await db.execute(
+                    select(Project).where(Project.bot_token.isnot(None))
+                )
+                projects = result.scalars().all()
             
             # Группируем проекты по bot_token
             projects_by_token: Dict[str, list] = {}
