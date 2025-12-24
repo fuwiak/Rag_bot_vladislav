@@ -62,7 +62,15 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     logger.info(f"[QUESTION HANDLER] ✅ Processing question for user {user_id}: {question[:100]}")
     
     # Отправка сообщения о том, что идет обработка
-    processing_msg = await message.answer("⏳ Обрабатываю ваш вопрос...")
+    processing_msg = None
+    try:
+        processing_msg = await message.answer("⏳ Обрабатываю ваш вопрос...")
+        logger.info(f"[QUESTION HANDLER] Processing message sent to user {user_id}")
+    except Exception as e:
+        logger.error(f"[QUESTION HANDLER] Failed to send processing message: {e}")
+    
+    answer = None
+    use_fallback = False
     
     try:
         # Генерация ответа через RAG сервис с ограничением времени (5-7 секунд согласно ТЗ п. 6.3)
@@ -73,17 +81,18 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
             # Сохраняем вопрос в историю перед генерацией ответа
             from app.models.message import Message as MessageModel
             from datetime import datetime
-            question_message = MessageModel(
-                user_id=user_id,
-                content=question,
-                role="user",
-                created_at=datetime.utcnow()
-            )
-            db.add(question_message)
-            await db.flush()  # Получаем ID сообщения
-            
-            answer = None
-            use_fallback = False
+            try:
+                question_message = MessageModel(
+                    user_id=user_id,
+                    content=question,
+                    role="user",
+                    created_at=datetime.utcnow()
+                )
+                db.add(question_message)
+                await db.flush()  # Получаем ID сообщения
+                logger.info(f"[QUESTION HANDLER] Question saved to history for user {user_id}")
+            except Exception as e:
+                logger.warning(f"[QUESTION HANDLER] Failed to save question to history: {e}")
             
             # Создаем задачу с таймаутом
             try:
@@ -216,40 +225,70 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                     logger.error(f"[QUESTION HANDLER] FALLBACK also failed for user {user_id}: {fallback_error}", exc_info=True)
                     answer = "Извините, произошла ошибка при обработке вашего вопроса. Попробуйте позже или обратитесь к администратору."
             
+            # Проверяем, что ответ не пустой
+            if not answer or not answer.strip():
+                logger.error(f"[QUESTION HANDLER] ❌ Empty answer generated for user {user_id}")
+                answer = "Извините, не удалось сгенерировать ответ. Попробуйте переформулировать вопрос."
+            
             # Сохраняем ответ в историю
-            answer_message = MessageModel(
-                user_id=user_id,
-                content=answer,
-                role="assistant",
-                created_at=datetime.utcnow()
-            )
-            db.add(answer_message)
-            await db.commit()
+            try:
+                answer_message = MessageModel(
+                    user_id=user_id,
+                    content=answer,
+                    role="assistant",
+                    created_at=datetime.utcnow()
+                )
+                db.add(answer_message)
+                await db.commit()
+                logger.info(f"[QUESTION HANDLER] Answer saved to history for user {user_id}, length: {len(answer)}")
+            except Exception as e:
+                logger.warning(f"[QUESTION HANDLER] Failed to save answer to history: {e}")
             
             if use_fallback:
                 logger.warning(f"[QUESTION HANDLER] ⚠️ FALLBACK MODE: Answer saved for user {user_id} (used direct LLM without RAG)")
             else:
-                logger.info(f"[QUESTION HANDLER] Answer generated and saved for user {user_id}")
+                logger.info(f"[QUESTION HANDLER] ✅ Answer generated and saved for user {user_id}")
         
         # Удаление сообщения об обработке
-        await processing_msg.delete()
+        if processing_msg:
+            try:
+                await processing_msg.delete()
+                logger.debug(f"[QUESTION HANDLER] Processing message deleted")
+            except Exception as e:
+                logger.warning(f"[QUESTION HANDLER] Failed to delete processing message: {e}")
         
         # Отправка ответа (разбиваем на части если длинный)
+        if not answer:
+            logger.error(f"[QUESTION HANDLER] ❌ Answer is None, cannot send to user {user_id}")
+            answer = "Извините, произошла ошибка при обработке вашего вопроса. Попробуйте позже."
+        
         max_length = 4096  # Максимальная длина сообщения Telegram
-        if len(answer) > max_length:
-            # Разбиваем на части
-            parts = [answer[i:i+max_length] for i in range(0, len(answer), max_length)]
-            for part in parts:
-                await message.answer(part)
-        else:
-            await message.answer(answer)
+        logger.info(f"[QUESTION HANDLER] Sending answer to user {user_id}, length: {len(answer)}")
+        try:
+            if len(answer) > max_length:
+                # Разбиваем на части
+                parts = [answer[i:i+max_length] for i in range(0, len(answer), max_length)]
+                logger.info(f"[QUESTION HANDLER] Splitting answer into {len(parts)} parts")
+                for i, part in enumerate(parts):
+                    await message.answer(part)
+                    logger.debug(f"[QUESTION HANDLER] Sent part {i+1}/{len(parts)}")
+            else:
+                await message.answer(answer)
+                logger.info(f"[QUESTION HANDLER] ✅ Answer sent successfully to user {user_id}")
+        except Exception as e:
+            logger.error(f"[QUESTION HANDLER] ❌ Failed to send answer to user {user_id}: {e}", exc_info=True)
+            await message.answer("❌ Произошла ошибка при отправке ответа. Попробуйте позже.")
     
     except Exception as e:
         import logging
         logger = logging.getLogger(__name__)
-        logger.error(f"[QUESTION HANDLER] Error processing question for user {user_id}: {e}", exc_info=True)
+        logger.error(f"[QUESTION HANDLER] ❌ Critical error processing question for user {user_id}: {e}", exc_info=True)
         
-        await processing_msg.delete()
+        if processing_msg:
+            try:
+                await processing_msg.delete()
+            except:
+                pass
         
         # Улучшенная обработка ошибок согласно ТЗ (п. 5.2.8)
         error_message = str(e).lower()
