@@ -512,10 +512,10 @@ class RAGService:
                     max_tokens=max_tokens
                 )
             else:
-        # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
-            answer = self.response_formatter.format_response(
-            response=raw_answer,
-            max_length=project.max_response_length,
+                # Форматирование ответа с добавлением цитат (согласно ТЗ п. 5.3.4)
+                answer = self.response_formatter.format_response(
+                response=raw_answer,
+                max_length=project.max_response_length,
                     chunks=similar_chunks if 'similar_chunks' in locals() else []
                 )
         except Exception as llm_error:
