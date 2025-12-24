@@ -44,9 +44,17 @@ class PromptBuilder:
         Returns:
             Список сообщений для LLM
         """
-        # Объединение чанков в контекст (может быть пустым)
+        # Объединение чанков/summaries в контекст (может быть пустым)
         if chunks and len(chunks) > 0:
-            context = "\n\n".join([f"[Чанк {i+1}]\n{chunk}" for i, chunk in enumerate(chunks)])
+            # Проверяем, являются ли это summaries (содержат "Документ 'filename':")
+            is_summaries = any("Документ '" in chunk for chunk in chunks)
+            if is_summaries:
+                # Это summaries - форматируем как summaries документов
+                context = "\n\n".join([f"{chunk}" for chunk in chunks])
+                context = f"Краткие содержания документов:\n\n{context}\n\nИспользуй эту информацию для ответа на вопрос."
+            else:
+                # Это обычные чанки
+                context = "\n\n".join([f"[Чанк {i+1}]\n{chunk}" for i, chunk in enumerate(chunks)])
         else:
             context = "Контекст из документов отсутствует. Отвечай на основе своих знаний, но учитывай настройки проекта."
         
