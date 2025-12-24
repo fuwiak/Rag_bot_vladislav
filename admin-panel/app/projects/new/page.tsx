@@ -41,17 +41,19 @@ export default function NewProjectPage() {
       const { apiFetch } = await import('../../lib/api-helpers')
       
       // Убеждаемся, что max_response_length - это число
-      const dataToSend = {
+      // Убираем пустые строки для опциональных полей
+      const dataToSend: {
+        name: string
+        description: string | null
+        access_password: string
+        prompt_template: string
+        max_response_length: number
+        bot_token: string | null
+      } = {
         ...formData,
         max_response_length: Number(formData.max_response_length) || 1000,
-      }
-      
-      // Убираем пустые строки для опциональных полей
-      if (dataToSend.bot_token === '') {
-        dataToSend.bot_token = null
-      }
-      if (dataToSend.description === '') {
-        dataToSend.description = null
+        bot_token: formData.bot_token === '' ? null : formData.bot_token,
+        description: formData.description === '' ? null : formData.description,
       }
       
       console.log('Sending project data:', dataToSend)
