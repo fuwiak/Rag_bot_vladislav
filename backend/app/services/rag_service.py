@@ -536,8 +536,8 @@ class RAGService:
         collection_name: str,
         project_id: UUID,
         top_k: int = 5,
-        strategy: Dict = None
-    ) -> tuple[List[Dict], List[Dict]]:
+        strategy: Optional[Dict] = None
+    ) -> tuple:
         """
         Расширенный поиск чанков с использованием множественных техник:
         1. Hybrid Search (Semantic + Keyword/BM25)
