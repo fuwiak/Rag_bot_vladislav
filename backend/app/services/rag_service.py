@@ -310,6 +310,14 @@ class RAGService:
             except Exception as extract_error:
                 logger.warning(f"[RAG SERVICE] Error extracting content from documents: {extract_error}")
         
+        # Инициализируем chunks_for_prompt для использования в блоке else
+        chunks_for_prompt = []
+        for chunk in chunk_texts:
+            if isinstance(chunk, dict):
+                chunks_for_prompt.append(chunk.get("text", str(chunk)))
+            else:
+                chunks_for_prompt.append(chunk)
+        
         # Для вопросов о содержании используем простой промпт из рабочего скрипта
         if is_content_question:
             # Для вопросов типа "summary of each file" - используем метаданные напрямую
@@ -405,25 +413,19 @@ class RAGService:
                 # Вставляем историю перед финальным вопросом
                 messages = [messages[0]] + recent_history + [messages[1]]
         else:
-        # ВСЕГДА используем промпт проекта, даже если документов нет
-        # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
-        # Построение промпта с контекстом (может быть пустым)
-            # Преобразуем chunk_texts в строки если они в формате dict
-            chunks_for_prompt = []
-            for chunk in chunk_texts:
-                if isinstance(chunk, dict):
-                    chunks_for_prompt.append(chunk.get("text", str(chunk)))
-                else:
-                    chunks_for_prompt.append(chunk)
+            # ВСЕГДА используем промпт проекта, даже если документов нет
+            # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+            # Построение промпта с контекстом (может быть пустым)
+            # chunks_for_prompt уже определен выше
             
-        messages = self.prompt_builder.build_prompt(
-            question=question,
+            messages = self.prompt_builder.build_prompt(
+                question=question,
                 chunks=chunks_for_prompt,  # Может быть пустым списком
-            prompt_template=project.prompt_template,
-            max_length=project.max_response_length,
+                prompt_template=project.prompt_template,
+                max_length=project.max_response_length,
                 conversation_history=conversation_history,
                 metadata_context=metadata_context  # Добавляем метаданные если есть
-        )
+            )
         
         # Генерация ответа через LLM
         # Получаем глобальные настройки моделей из БД
