@@ -1,17 +1,46 @@
 """
-Обработчики команд бота (/start, /help)
+Обработчики команд бота (/start, /help, /documents)
 """
 from aiogram import Dispatcher, F
 from aiogram.types import Message
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 
 from app.core.database import AsyncSessionLocal
 from app.models.project import Project
+from app.bot.handlers.auth_handler import AuthStates
 from sqlalchemy import select
 
 
-async def cmd_start(message: Message, project_id: str = None):
+async def cmd_start(message: Message, state: FSMContext, project_id: str = None):
     """Обработка команды /start"""
+    # Проверяем, авторизован ли пользователь
+    current_state = await state.get_state()
+    if current_state == AuthStates.authorized:
+        # Пользователь уже авторизован, показываем информацию о проекте
+        data = await state.get_data()
+        project_id_from_state = data.get("project_id")
+        
+        async with AsyncSessionLocal() as db:
+            if project_id_from_state:
+                result = await db.execute(
+                    select(Project).where(Project.id == project_id_from_state)
+                )
+                project = result.scalar_one_or_none()
+                
+                if project:
+                    welcome_text = f"👋 <b>Вы уже авторизованы в проекте «{project.name}»!</b>\n\n"
+                    welcome_text += "Вы можете:\n"
+                    welcome_text += "• Задавать вопросы о документах (/documents - показать список документов)\n"
+                    welcome_text += "• Получать ответы на основе загруженных документов\n"
+                    welcome_text += "• Использовать /help для справки\n\n"
+                    welcome_text += "❓ <b>Задайте ваш вопрос:</b>"
+                    await message.answer(welcome_text)
+                    return
+        
+        # Если не нашли проект, продолжаем с обычной авторизацией
+        await state.clear()
+    
     # Получаем bot_token из бота
     bot_token = None
     if message.bot and hasattr(message.bot, 'token'):
@@ -53,11 +82,16 @@ async def cmd_start(message: Message, project_id: str = None):
                 welcome_text += "• Используйте /help для получения справки\n\n"
                 welcome_text += "🔐 <b>Для начала работы введите пароль доступа вашего проекта:</b>"
                 await message.answer(welcome_text)
+                # Устанавливаем состояние ожидания пароля
+                await state.set_state(AuthStates.waiting_password)
                 return
         
         if not project:
             await message.answer("Ошибка: проект не найден")
             return
+        
+        # Сохраняем project_id в состоянии
+        await state.update_data(project_id=str(project.id))
         
         # Формируем приветственное сообщение с описанием бота
         welcome_text = f"👋 <b>Добро пожаловать в бот проекта «{project.name}»!</b>\n\n"
@@ -83,32 +117,119 @@ async def cmd_start(message: Message, project_id: str = None):
         welcome_text += "🔐 <b>Для начала работы введите пароль доступа:</b>"
         
         await message.answer(welcome_text)
+        # Устанавливаем состояние ожидания пароля
+        await state.set_state(AuthStates.waiting_password)
 
 
-async def cmd_help(message: Message):
+async def cmd_help(message: Message, state: FSMContext):
     """Обработка команды /help"""
-    help_text = """
-<b>Справка по использованию бота</b>
-
-📋 <b>Основные команды:</b>
-/start - Начать работу с ботом
-/help - Показать эту справку
-
-❓ <b>Как задать вопрос:</b>
-Просто напишите ваш вопрос в свободной форме, и бот найдет ответ в документах проекта.
-
-💡 <b>Советы:</b>
-• Задавайте конкретные вопросы
-• Используйте ключевые слова из документов
-• Бот отвечает только на основе загруженных документов
-
-Если у вас возникли вопросы, обратитесь к администратору проекта.
-    """
+    current_state = await state.get_state()
+    is_authorized = current_state == AuthStates.authorized
+    
+    help_text = "<b>Справка по использованию бота</b>\n\n"
+    
+    help_text += "📋 <b>Основные команды:</b>\n"
+    help_text += "/start - Начать работу с ботом\n"
+    help_text += "/help - Показать эту справку\n"
+    if is_authorized:
+        help_text += "/documents - Показать список документов проекта\n"
+    
+    help_text += "\n❓ <b>Как задать вопрос:</b>\n"
+    help_text += "Просто напишите ваш вопрос в свободной форме, и бот найдет ответ в документах проекта.\n\n"
+    
+    if not is_authorized:
+        help_text += "🔐 <b>Авторизация:</b>\n"
+        help_text += "Для начала работы введите пароль доступа вашего проекта.\n"
+        help_text += "Пароль задается администратором при создании проекта.\n\n"
+    
+    help_text += "💡 <b>Советы:</b>\n"
+    help_text += "• Задавайте конкретные вопросы\n"
+    help_text += "• Используйте ключевые слова из документов\n"
+    help_text += "• Бот отвечает только на основе загруженных документов\n\n"
+    
+    help_text += "Если у вас возникли вопросы, обратитесь к администратору проекта."
+    
     await message.answer(help_text)
+
+
+async def cmd_documents(message: Message, state: FSMContext):
+    """Обработка команды /documents - показать список документов проекта"""
+    # Проверка авторизации
+    current_state = await state.get_state()
+    if current_state != AuthStates.authorized:
+        await message.answer("❌ Сначала авторизуйтесь через /start")
+        return
+    
+    # Получаем project_id из состояния
+    data = await state.get_data()
+    project_id_str = data.get("project_id")
+    
+    if not project_id_str:
+        await message.answer("❌ Ошибка: проект не найден. Используйте /start")
+        return
+    
+    from uuid import UUID
+    from app.models.document import Document
+    
+    try:
+        project_id = UUID(project_id_str)
+    except ValueError:
+        await message.answer("❌ Ошибка: неверный ID проекта")
+        return
+    
+    async with AsyncSessionLocal() as db:
+        # Получаем список документов проекта
+        result = await db.execute(
+            select(Document)
+            .where(Document.project_id == project_id)
+            .order_by(Document.created_at.desc())
+            .limit(50)
+        )
+        documents = result.scalars().all()
+        
+        if not documents:
+            await message.answer("📄 <b>Документы проекта</b>\n\n"
+                               "В проекте пока нет загруженных документов.\n"
+                               "Обратитесь к администратору для загрузки документов.")
+            return
+        
+        # Формируем список документов
+        docs_text = f"📄 <b>Документы проекта ({len(documents)}):</b>\n\n"
+        
+        for i, doc in enumerate(documents, 1):
+            # Определяем тип файла
+            file_type_emoji = "📄"
+            if doc.file_type == "pdf":
+                file_type_emoji = "📕"
+            elif doc.file_type == "docx":
+                file_type_emoji = "📘"
+            elif doc.file_type == "txt":
+                file_type_emoji = "📝"
+            
+            docs_text += f"{i}. {file_type_emoji} <b>{doc.filename}</b>\n"
+            if doc.content and doc.content != "Обработка..." and doc.content != "Обработан":
+                # Показываем первые 50 символов содержимого
+                preview = doc.content[:50].replace('\n', ' ')
+                if len(doc.content) > 50:
+                    preview += "..."
+                docs_text += f"   <i>{preview}</i>\n"
+            docs_text += "\n"
+        
+        docs_text += "\n💡 <b>Совет:</b> Задавайте вопросы о содержании этих документов!"
+        
+        # Разбиваем на части, если слишком длинное
+        max_length = 4096
+        if len(docs_text) > max_length:
+            parts = [docs_text[i:i+max_length] for i in range(0, len(docs_text), max_length)]
+            for part in parts:
+                await message.answer(part)
+        else:
+            await message.answer(docs_text)
 
 
 def register_commands(dp: Dispatcher, project_id: str):
     """Регистрация команд"""
     dp.message.register(cmd_start, Command("start"))
     dp.message.register(cmd_help, Command("help"))
+    dp.message.register(cmd_documents, Command("documents"))
 

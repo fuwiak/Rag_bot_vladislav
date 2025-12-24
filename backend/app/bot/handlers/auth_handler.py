@@ -178,10 +178,18 @@ async def handle_text_before_auth(message: Message, state: FSMContext):
     
     Этот обработчик срабатывает для всех текстовых сообщений, которые не обрабатываются
     более специфичными обработчиками (с фильтрами состояний).
+    Если пользователь вводит текст, а состояние не установлено, пытаемся обработать как пароль.
     """
-    # Проверяем состояние - если не авторизован, показываем сообщение
-    # Обработчики с фильтрами состояний (waiting_password, waiting_phone) имеют приоритет
     current_state = await state.get_state()
+    
+    # Если состояние не установлено, устанавливаем waiting_password и обрабатываем как пароль
+    if current_state is None:
+        await state.set_state(AuthStates.waiting_password)
+        # Рекурсивно вызываем handle_password
+        await handle_password(message, state)
+        return
+    
+    # Если не авторизован и не в процессе авторизации, показываем сообщение
     if current_state != AuthStates.authorized:
         await message.answer("Для начала работы введите пароль доступа или используйте /start")
 
