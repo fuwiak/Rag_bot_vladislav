@@ -46,12 +46,22 @@ export default function TelegramBotsPage() {
   const fetchBotsInfo = async () => {
     try {
       setError('')
+      setLoading(true)
       const { apiFetch } = await import('../lib/api-helpers')
 
-      const response = await apiFetch('/api/bots/info')
+      // Добавляем timestamp для предотвращения кэширования
+      const response = await apiFetch(`/api/bots/info?t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      })
 
       if (response.ok) {
         const data = await response.json()
+        console.log('Fetched bots info:', data)
         setBotsInfo(data)
       } else {
         const errorData = await response.json().catch(() => ({ detail: 'Ошибка загрузки информации о ботах' }))
@@ -150,19 +160,18 @@ export default function TelegramBotsPage() {
         }
       }
 
-      // Закрываем модальное окно и обновляем список
+      // Обновляем список ботов ПЕРЕД закрытием модального окна
+      await fetchBotsInfo()
+      
+      // Закрываем модальное окно
       setShowTokenModal(false)
       setNewBotToken('')
       setSelectedModelId('')
       setSelectedProject(null)
-      
-      // Обновляем список ботов
-      await fetchBotsInfo()
+      setError('')
       
       // Показываем сообщение об успехе
-      if (!error) {
-        alert(`✅ Токен бота успешно сохранен!\n\nБот: ${botData.bot_first_name || botData.bot_username || 'Неизвестно'}\n${botData.bot_url ? `Ссылка: ${botData.bot_url}` : ''}\n\nБот будет автоматически запущен бот-сервисом в течение 20 секунд.`)
-      }
+      alert(`✅ Токен бота успешно сохранен!\n\nБот: ${botData.bot_first_name || botData.bot_username || 'Неизвестно'}\n${botData.bot_url ? `Ссылка: ${botData.bot_url}` : ''}\n\nБот будет автоматически запущен бот-сервисом в течение 20 секунд.`)
     } catch (err) {
       console.error('Error verifying token:', err)
       setError('Ошибка подключения к серверу: ' + (err instanceof Error ? err.message : 'Неизвестная ошибка'))
@@ -308,21 +317,30 @@ export default function TelegramBotsPage() {
                         </Link>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        {bot.bot_username ? (
+                        {bot.bot_token ? (
                           <div>
                             <div className="text-sm font-semibold text-fb-text">
-                              {bot.bot_first_name || bot.bot_username}
+                              {bot.bot_first_name || bot.bot_username || 'Бот настроен'}
                             </div>
-                            {bot.bot_url && (
+                            {bot.bot_url ? (
                               <a
                                 href={bot.bot_url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-xs text-fb-blue hover:text-fb-blue-dark"
+                                className="text-xs text-fb-blue hover:text-fb-blue-dark underline"
                               >
                                 {bot.bot_url}
                               </a>
-                            )}
+                            ) : bot.bot_username ? (
+                              <a
+                                href={`https://t.me/${bot.bot_username}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-fb-blue hover:text-fb-blue-dark underline"
+                              >
+                                https://t.me/{bot.bot_username}
+                              </a>
+                            ) : null}
                           </div>
                         ) : (
                           <span className="text-sm text-fb-text-secondary">Бот не настроен</span>
@@ -336,7 +354,7 @@ export default function TelegramBotsPage() {
                           bot.is_active
                             ? 'bg-green-100 text-green-800'
                             : bot.bot_token
-                            ? 'bg-yellow-100 text-yellow-800'
+                            ? 'bg-blue-100 text-blue-800'
                             : 'bg-gray-100 text-gray-800'
                         }`}>
                           {bot.is_active ? 'Активен' : bot.bot_token ? 'Настроен' : 'Не настроен'}
@@ -355,14 +373,15 @@ export default function TelegramBotsPage() {
                               <span>Добавить токен бота</span>
                             </button>
                           ) : (
-                            <>
-                              <button
-                                onClick={() => handleAddBot(bot.project_id)}
-                                className="px-3 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors text-sm"
-                              >
-                                Настроить
-                              </button>
-                            </>
+                            <button
+                              onClick={() => handleAddBot(bot.project_id)}
+                              className="px-3 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors text-sm flex items-center space-x-2"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                              <span>Редактировать</span>
+                            </button>
                           )}
                         </div>
                       </td>
