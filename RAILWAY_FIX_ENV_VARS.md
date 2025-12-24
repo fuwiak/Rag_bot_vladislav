@@ -149,3 +149,4 @@ NEXT_PUBLIC_BACKEND_URL=https://ragbotvladislav-backend.up.railway.app
 
 После правильной настройки переменных и пересборки frontend должен подключиться к backend.
 
+

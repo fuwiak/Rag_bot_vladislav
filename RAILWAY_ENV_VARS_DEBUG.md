@@ -150,3 +150,4 @@ NEXT_PUBLIC_BACKEND_URL = https://ragbotvladislav-backend.up.railway.app
 - Убедитесь, что backend сервис запущен и доступен
 - Проверьте CORS настройки в backend
 
+

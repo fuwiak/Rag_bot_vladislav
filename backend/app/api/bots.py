@@ -37,54 +37,72 @@ async def get_all_bots_info(
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(get_current_admin)
 ):
-    """Получить информацию о всех ботах"""
-    service = ProjectService(db)
-    projects = await service.get_all_projects()
+    """Получить информацию о всех ботах (оптимизировано - без Telegram API запросов)"""
+    import gc
+    import logging
     
-    # Боты управляются отдельным сервисом telegram-bots
-    # Считаем бота активным, если у проекта есть bot_token
-    # (бот-сервис автоматически запустит его)
+    logger = logging.getLogger(__name__)
     
-    bots_info = []
-    
-    # Получаем количество пользователей для каждого проекта
-    users_counts = {}
-    for project in projects:
-        result = await db.execute(
-            select(func.count(User.id)).where(User.project_id == project.id)
-        )
-        users_counts[project.id] = result.scalar() or 0
-    
-    for project in projects:
-        # Бот считается активным, если есть токен
-        # Бот-сервис автоматически подхватит изменения
-        is_active = project.bot_token is not None
+    try:
+        service = ProjectService(db)
+        projects = await service.get_all_projects()
         
-        bot_info = BotInfoResponse(
-            project_id=project.id,
-            project_name=project.name,
-            bot_token=project.bot_token,
-            users_count=users_counts.get(project.id, 0),
-            is_active=is_active
-        )
+        # Боты управляются отдельным сервисом telegram-bots
+        # Считаем бота активным, если у проекта есть bot_token
+        # (бот-сервис автоматически запустит его)
         
-        # Получаем информацию о боте через Telegram API
-        if project.bot_token:
-            try:
-                bot = Bot(token=project.bot_token)
-                bot_user = await bot.get_me()
-                bot_info.bot_username = bot_user.username
-                bot_info.bot_first_name = bot_user.first_name
-                if bot_user.username:
-                    bot_info.bot_url = f"https://t.me/{bot_user.username}"
-                await bot.session.close()
-            except Exception as e:
-                # Бот невалиден или недоступен
-                pass
+        bots_info = []
         
-        bots_info.append(bot_info)
-    
-    return bots_info
+        # Оптимизация: получаем количество пользователей одним запросом
+        # Вместо N запросов делаем один с GROUP BY
+        if projects:
+            project_ids = [p.id for p in projects]
+            result = await db.execute(
+                select(User.project_id, func.count(User.id))
+                .where(User.project_id.in_(project_ids))
+                .group_by(User.project_id)
+            )
+            users_counts = {row[0]: row[1] for row in result.all()}
+        else:
+            users_counts = {}
+        
+        # Освобождаем память после запроса
+        del result
+        gc.collect()
+        
+        for project in projects:
+            # Бот считается активным, если есть токен
+            # Бот-сервис автоматически подхватит изменения
+            is_active = project.bot_token is not None
+            
+            bot_info = BotInfoResponse(
+                project_id=project.id,
+                project_name=project.name,
+                bot_token=project.bot_token,
+                users_count=users_counts.get(project.id, 0),
+                is_active=is_active
+            )
+            
+            # КРИТИЧНО: НЕ делаем запросы к Telegram API в списке
+            # Это может вызвать out of memory при большом количестве ботов
+            # Telegram API запросы делаются только при необходимости (verify endpoint)
+            # bot_info.bot_username = None
+            # bot_info.bot_first_name = None
+            # bot_info.bot_url = None
+            
+            bots_info.append(bot_info)
+        
+        # Освобождаем память
+        del projects
+        del users_counts
+        gc.collect()
+        
+        logger.info(f"Returning {len(bots_info)} bots info (without Telegram API calls)")
+        return bots_info
+    except Exception as e:
+        logger.error(f"Error getting bots info: {e}", exc_info=True)
+        gc.collect()
+        return []
 
 
 @router.post("/{project_id}/verify", response_model=BotInfoResponse)

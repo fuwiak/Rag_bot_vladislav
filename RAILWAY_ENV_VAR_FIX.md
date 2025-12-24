@@ -77,3 +77,4 @@ Next.js компилирует `NEXT_PUBLIC_*` переменные в JavaScrip
 
 
 
+

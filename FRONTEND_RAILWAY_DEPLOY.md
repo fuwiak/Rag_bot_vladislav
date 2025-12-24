@@ -170,3 +170,4 @@ curl http://localhost:3000/api/mock/auth/login -X POST -H "Content-Type: applica
 
 **Готово!** Ваш frontend теперь работает независимо на Railway с демонстрационными данными.
 
+

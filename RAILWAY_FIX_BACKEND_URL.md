@@ -122,3 +122,4 @@ NEXT_PUBLIC_BACKEND_URL=https://your-backend-service.up.railway.app
 
 После настройки переменных frontend должен подключиться к backend на Railway.
 
+

@@ -74,3 +74,4 @@ python backend/create_admin_auto.py
 
 См. подробную инструкцию: `RAILWAY_BACKEND_FRONTEND_CONNECT.md`
 
+

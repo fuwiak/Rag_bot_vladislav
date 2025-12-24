@@ -114,3 +114,4 @@ https://ragbotvladislav-test.up.railway.app/api/config
 
 После пересборки frontend должен автоматически загрузить конфигурацию из API route и подключиться к backend на Railway.
 
+
