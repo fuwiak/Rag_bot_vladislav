@@ -432,9 +432,20 @@ async def get_project_documents(
     db: AsyncSession = Depends(get_db),
     current_admin = Depends(get_current_admin)
 ):
-    """Получить список документов проекта"""
-    service = DocumentService(db)
-    documents = await service.get_project_documents(project_id)
+    """Получить список документов проекта (оптимизировано - без загрузки chunks)"""
+    from sqlalchemy.orm import noload
+    from app.models.document import Document
+    from sqlalchemy import select
+    
+    # Загружаем документы без chunks для экономии памяти
+    result = await db.execute(
+        select(Document)
+        .where(Document.project_id == project_id)
+        .options(noload(Document.chunks))
+        .order_by(Document.created_at.desc())
+    )
+    documents = list(result.scalars().all())
+    
     return documents
 
 
