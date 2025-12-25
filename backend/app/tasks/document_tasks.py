@@ -136,11 +136,25 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                 logger.error(f"[Celery] Document {document_id} not found")
                 return
             
-            # Ограничиваем размер content для экономии памяти
-            document.content = text[:500] + "..." if len(text) > 500 else text
-            await db.commit()
+            # Сохраняем полный контент документа (с разумным ограничением для очень больших файлов)
+            # Максимальный размер контента: 2MB текста (примерно 2,000,000 символов)
+            MAX_CONTENT_SIZE = 2_000_000
+            if len(text) > MAX_CONTENT_SIZE:
+                logger.warning(f"[Celery] Document {document_id} content too large ({len(text)} chars), truncating to {MAX_CONTENT_SIZE}")
+                document.content = text[:MAX_CONTENT_SIZE] + f"\n\n[... документ обрезан, всего {len(text)} символов ...]"
+            else:
+                document.content = text
             
-            logger.info(f"[Celery] Document parsed, text length: {len(text)}")
+            await db.commit()
+            await db.refresh(document)
+            
+            logger.info(f"[Celery] Document parsed and saved - ID: {document_id}, Filename: {filename}, "
+                       f"Text length: {len(text)} chars, Content saved: {len(document.content)} chars")
+            
+            # Логируем превью контента для отладки
+            if document.content:
+                preview = document.content[:500] if len(document.content) > 500 else document.content
+                logger.info(f"[Celery] Document content preview (first 500 chars): {preview}...")
             
             # Разбивка на чанки
             chunks = chunker.chunk_text(text)
@@ -170,10 +184,16 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                         logger.error(f"[Celery] Ошибка создания эмбеддинга для чанка {chunk_index}: {e}")
                         continue
                     
-                    # Сохраняем чанк в БД
+                    # Сохраняем чанк в БД (сохраняем полный текст чанка)
+                    # Максимальный размер чанка: 10KB текста (примерно 10,000 символов)
+                    MAX_CHUNK_SIZE = 10_000
+                    chunk_text_to_save = chunk_text[:MAX_CHUNK_SIZE] if len(chunk_text) > MAX_CHUNK_SIZE else chunk_text
+                    if len(chunk_text) > MAX_CHUNK_SIZE:
+                        logger.warning(f"[Celery] Chunk {chunk_index} too large ({len(chunk_text)} chars), truncating to {MAX_CHUNK_SIZE}")
+                    
                     chunk = DocumentChunk(
                         document_id=document_id,
-                        chunk_text=chunk_text[:1000],  # Ограничиваем для экономии памяти
+                        chunk_text=chunk_text_to_save,
                         chunk_index=chunk_index
                     )
                     db.add(chunk)
@@ -212,7 +232,21 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             # Коммитим все чанки
             await db.commit()
             
-            logger.info(f"[Celery] Document {document_id} processed successfully, {len(chunks)} chunks created")
+            # Проверяем финальное состояние документа
+            result = await db.execute(select(Document).where(Document.id == document_id))
+            document = result.scalar_one_or_none()
+            if document:
+                content_length = len(document.content) if document.content else 0
+                logger.info(f"[Celery] ✅ Document {document_id} processed successfully:")
+                logger.info(f"  - Filename: {filename}")
+                logger.info(f"  - Chunks created: {len(chunks)}")
+                logger.info(f"  - Content length: {content_length} chars")
+                logger.info(f"  - Content status: {'READY' if content_length > 100 else 'EMPTY'}")
+                if document.content and content_length > 0:
+                    preview = document.content[:300] if content_length > 300 else document.content
+                    logger.info(f"  - Content preview: {preview}...")
+            else:
+                logger.error(f"[Celery] ❌ Document {document_id} not found after processing!")
             
             # Генерируем summary для документа через LLM (в фоне)
             try:

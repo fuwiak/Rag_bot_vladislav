@@ -116,11 +116,25 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                 logger.error(f"Документ {document_id} не найден для обработки")
                 return
             
-            # Обновляем content в документе - сохраняем только первые 500 символов для экономии памяти
-            # Это критично для предотвращения out of memory
-            document.content = text[:500] + "..." if len(text) > 500 else text
+            # Сохраняем полный контент документа (с разумным ограничением для очень больших файлов)
+            # Максимальный размер контента: 2MB текста (примерно 2,000,000 символов)
+            MAX_CONTENT_SIZE = 2_000_000
+            if len(text) > MAX_CONTENT_SIZE:
+                logger.warning(f"[Process] Document {document_id} content too large ({len(text)} chars), truncating to {MAX_CONTENT_SIZE}")
+                document.content = text[:MAX_CONTENT_SIZE] + f"\n\n[... документ обрезан, всего {len(text)} символов ...]"
+            else:
+                document.content = text
+            
             await db.commit()
             await db.refresh(document)
+            
+            logger.info(f"[Process] Document parsed and saved - ID: {document_id}, Filename: {filename}, "
+                       f"Text length: {len(text)} chars, Content saved: {len(document.content)} chars")
+            
+            # Логируем превью контента для отладки
+            if document.content:
+                preview = document.content[:500] if len(document.content) > 500 else document.content
+                logger.info(f"[Process] Document content preview (first 500 chars): {preview}...")
             
             # Освобождаем file_content сразу после парсинга
             if 'file_content' in locals():
@@ -133,9 +147,8 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             # Разбивка на чанки (быстрая операция строк, не блокирует)
             chunks = chunker.chunk_text(text)
             
-            # Освобождаем text сразу после разбивки на чанки
-            del text
-            gc.collect()
+            # НЕ удаляем text сразу - он нужен для финального обновления документа
+            # Освободим его после финального обновления
             
             if not chunks:
                 logger.warning(f"Документ {document_id} не содержит текста")
@@ -167,10 +180,16 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                         # Пропускаем этот чанк, но продолжаем обработку
                         continue
                     
-                    # Сохранение чанка в БД - сохраняем только первые 1000 символов для экономии памяти
+                    # Сохранение чанка в БД (сохраняем полный текст чанка)
+                    # Максимальный размер чанка: 10KB текста (примерно 10,000 символов)
+                    MAX_CHUNK_SIZE = 10_000
+                    chunk_text_to_save = chunk_text[:MAX_CHUNK_SIZE] if len(chunk_text) > MAX_CHUNK_SIZE else chunk_text
+                    if len(chunk_text) > MAX_CHUNK_SIZE:
+                        logger.warning(f"[Process] Chunk {chunk_index} too large ({len(chunk_text)} chars), truncating to {MAX_CHUNK_SIZE}")
+                    
                     chunk = DocumentChunk(
                         document_id=document.id,
-                        chunk_text=chunk_text[:1000] if len(chunk_text) > 1000 else chunk_text,
+                        chunk_text=chunk_text_to_save,
                         chunk_index=chunk_index
                     )
                     db.add(chunk)
@@ -224,16 +243,29 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             logger.info(f"[Process] Документ {document_id} ({filename}) успешно обработан: {len(chunks)} чанков, final memory: {final_memory:.2f}MB")
             
             # Обновляем статус документа на успешную обработку
+            # Примечание: content уже обновлен выше, но проверяем на случай если что-то пошло не так
             result = await db.execute(select(Document).where(Document.id == document_id))
             document = result.scalar_one_or_none()
             if document:
-                if document.content == "Обработка...":
-                    # Обновляем только если еще placeholder
-                    document.content = text[:1000] + "..." if len(text) > 1000 else text
+                if document.content == "Обработка..." or len(document.content) < 100:
+                    # Обновляем только если еще placeholder или контент слишком короткий
+                    # Это означает, что первое обновление не сработало
+                    MAX_CONTENT_SIZE = 2_000_000
+                    if len(text) > MAX_CONTENT_SIZE:
+                        document.content = text[:MAX_CONTENT_SIZE] + f"\n\n[... документ обрезан, всего {len(text)} символов ...]"
+                    else:
+                        document.content = text
+                    logger.info(f"[Process] Document content updated in final step - {len(document.content)} chars")
                 
                 # Summary будет сгенерирован автоматически после обработки документа в Celery задаче
                 
                 await db.commit()
+                logger.info(f"[Process] Document {document_id} final status - Content length: {len(document.content) if document.content else 0} chars")
+            
+            # Теперь освобождаем text после финального обновления
+            if 'text' in locals():
+                del text
+            gc.collect()
                 
     except Exception as e:
         logger.error(f"Критическая ошибка при обработке документа {document_id}: {e}", exc_info=True)
@@ -376,14 +408,30 @@ async def upload_documents(
             
             # Отправляем задачу в Celery очередь
             # Задача будет выполнена в отдельном воркере, не блокируя основной процесс
-            task_result = process_document_task.delay(
-                str(document.id),
-                str(project_id),
-                temp_path,
-                file.filename,
-                file_type
-            )
-            logger.info(f"[Upload] Celery task created: {task_result.id} for document {document.id}")
+            try:
+                task_result = process_document_task.delay(
+                    str(document.id),
+                    str(project_id),
+                    temp_path,
+                    file.filename,
+                    file_type
+                )
+                logger.info(f"[Upload] ✅ Celery task created successfully:")
+                logger.info(f"  - Task ID: {task_result.id}")
+                logger.info(f"  - Document ID: {document.id}")
+                logger.info(f"  - Filename: {file.filename}")
+                logger.info(f"  - File type: {file_type}")
+                logger.info(f"  - Temp file: {temp_path}")
+                logger.info(f"  - Task state: {task_result.state}")
+            except Exception as celery_error:
+                logger.error(f"[Upload] ❌ Failed to create Celery task for document {document.id}: {celery_error}", exc_info=True)
+                # Обновляем статус документа на ошибку
+                document.content = f"Ошибка создания задачи обработки: {str(celery_error)[:200]}"
+                await db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Не удалось запустить обработку файла: {str(celery_error)}"
+                )
         except HTTPException:
             # Если ошибка размера, удаляем временный файл если был создан
             if temp_file and os.path.exists(temp_path):
@@ -410,6 +458,49 @@ async def upload_documents(
     
     # Возвращаем документы сразу (обработка будет происходить в фоне)
     return documents
+
+
+@router.get("/{document_id}/status")
+async def get_document_status(
+    document_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(get_current_admin)
+):
+    """
+    Получить статус обработки документа
+    """
+    from app.models.document import Document
+    from sqlalchemy import select
+    
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    document = result.scalar_one_or_none()
+    
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Документ не найден"
+        )
+    
+    content_length = len(document.content) if document.content else 0
+    is_processing = document.content in ["Обработка...", "Обработан", ""] or content_length < 100
+    
+    # Проверяем наличие чанков
+    from app.models.document import DocumentChunk
+    chunks_result = await db.execute(
+        select(DocumentChunk).where(DocumentChunk.document_id == document_id)
+    )
+    chunks_count = len(chunks_result.scalars().all())
+    
+    return {
+        "document_id": str(document.id),
+        "filename": document.filename,
+        "file_type": document.file_type,
+        "is_processing": is_processing,
+        "content_length": content_length,
+        "chunks_count": chunks_count,
+        "status": "processing" if is_processing else "ready",
+        "content_preview": document.content[:200] if document.content and len(document.content) > 0 else None
+    }
 
 
 @router.get("/{project_id}", response_model=List[DocumentResponse])
