@@ -2331,12 +2331,168 @@ class RAGService:
             
             # Получаем содержимое документа
             document_content = document.content
-            if not document_content or document_content in ["Обработка...", "Обработан", ""]:
-                # Если контента нет, используем только summary
-                if doc_summary:
-                    document_content = doc_summary
+            
+            # Логируем подробную информацию о документе для отладки
+            content_length = len(document_content) if document_content else 0
+            content_preview = ""
+            if document_content and len(document_content) > 0:
+                content_preview = document_content[:500]  # Первые 500 символов для логирования
+                if len(document_content) > 500:
+                    content_preview += "..."
+            else:
+                content_preview = "EMPTY"
+            
+            logger.info(f"[RAG SERVICE] Document info for NLP summarization:")
+            logger.info(f"  - Document ID: {document.id}")
+            logger.info(f"  - Filename: {document.filename}")
+            logger.info(f"  - File type: {document.file_type}")
+            logger.info(f"  - Content length: {content_length} characters")
+            logger.info(f"  - Content status: {'READY' if document_content and document_content not in ['Обработка...', 'Обработан', ''] else 'NOT_READY'}")
+            logger.info(f"  - Content preview (first 500 chars): {content_preview}")
+            
+            # Логируем полное содержимое для Railway/Telegram bot (если не слишком большое)
+            if document_content and len(document_content) > 0 and document_content not in ["Обработка...", "Обработан", ""]:
+                if len(document_content) <= 5000:
+                    logger.info(f"[RAG SERVICE] Full document content:\n{document_content}")
                 else:
-                    return "Документ еще обрабатывается. Пожалуйста, подождите."
+                    logger.info(f"[RAG SERVICE] Document content (first 5000 chars):\n{document_content[:5000]}...")
+                    logger.info(f"[RAG SERVICE] Document content (last 5000 chars):\n...{document_content[-5000:]}")
+            
+            # FALLBACK СТРАТЕГИИ: если контента нет, используем несколько техник
+            if not document_content or document_content in ["Обработка...", "Обработан", ""]:
+                logger.warning(f"[RAG SERVICE] Document content not ready, trying fallback strategies for document {document.id}")
+                
+                # Fallback 1: Пытаемся получить чанки из DocumentChunk таблицы
+                try:
+                    from app.models.document import DocumentChunk
+                    chunks_result = await self.db.execute(
+                        select(DocumentChunk)
+                        .where(DocumentChunk.document_id == document.id)
+                        .where(DocumentChunk.chunk_text.isnot(None))
+                        .where(DocumentChunk.chunk_text != "")
+                        .limit(10)
+                    )
+                    db_chunks = chunks_result.scalars().all()
+                    
+                    if db_chunks:
+                        # Объединяем чанки в контент
+                        chunk_texts = [chunk.chunk_text for chunk in db_chunks if chunk.chunk_text]
+                        document_content = "\n\n".join(chunk_texts)
+                        logger.info(f"[RAG SERVICE] Fallback 1 SUCCESS: Extracted {len(chunk_texts)} chunks from DocumentChunk table")
+                    else:
+                        logger.warning(f"[RAG SERVICE] Fallback 1 FAILED: No chunks found in DocumentChunk table")
+                except Exception as chunk_error:
+                    logger.warning(f"[RAG SERVICE] Fallback 1 ERROR: {chunk_error}")
+                
+                # Fallback 2: Если чанков нет, пытаемся получить метаданные и использовать их
+                if not document_content or document_content in ["Обработка...", "Обработан", ""]:
+                    try:
+                        from app.services.document_metadata_service import DocumentMetadataService
+                        metadata_service = DocumentMetadataService()
+                        documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
+                        
+                        if documents_metadata:
+                            # Находим метаданные для нашего документа
+                            doc_metadata = next((m for m in documents_metadata if m.get("id") == str(document.id)), None)
+                            
+                            if doc_metadata:
+                                # Формируем контент из метаданных
+                                metadata_parts = []
+                                if doc_metadata.get("filename"):
+                                    metadata_parts.append(f"Название файла: {doc_metadata.get('filename')}")
+                                if doc_metadata.get("keywords"):
+                                    keywords = doc_metadata.get("keywords", [])
+                                    if keywords:
+                                        metadata_parts.append(f"Ключевые слова: {', '.join(keywords[:20])}")
+                                if doc_metadata.get("file_type"):
+                                    metadata_parts.append(f"Тип файла: {doc_metadata.get('file_type')}")
+                                
+                                if metadata_parts:
+                                    document_content = "\n".join(metadata_parts)
+                                    logger.info(f"[RAG SERVICE] Fallback 2 SUCCESS: Using metadata for document")
+                                else:
+                                    logger.warning(f"[RAG SERVICE] Fallback 2 FAILED: Metadata exists but empty")
+                            else:
+                                logger.warning(f"[RAG SERVICE] Fallback 2 FAILED: No metadata found for document {document.id}")
+                    except Exception as metadata_error:
+                        logger.warning(f"[RAG SERVICE] Fallback 2 ERROR: {metadata_error}")
+                
+                # Fallback 3: Используем summary если есть
+                if not document_content or document_content in ["Обработка...", "Обработан", ""]:
+                    if doc_summary:
+                        document_content = doc_summary
+                        logger.info(f"[RAG SERVICE] Fallback 3 SUCCESS: Using document summary")
+                    else:
+                        logger.warning(f"[RAG SERVICE] Fallback 3 FAILED: No summary available")
+                
+                # Fallback 4: Используем название файла и общие знания LLM
+                if not document_content or document_content in ["Обработка...", "Обработан", ""]:
+                    logger.info(f"[RAG SERVICE] Fallback 4: Using filename and general knowledge")
+                    # Создаем контекст на основе названия файла
+                    filename_context = f"Документ '{document.filename}'"
+                    if document.file_type:
+                        filename_context += f" (тип: {document.file_type})"
+                    
+                    # Используем LLM для генерации ответа на основе названия файла и вопроса
+                    try:
+                        general_knowledge_prompt = f"""На основе названия документа '{document.filename}' и вопроса пользователя, 
+попробуй дать полезный ответ, используя общие знания о теме документа.
+
+ВОПРОС: {question}
+
+ИНСТРУКЦИЯ: 
+- Используй название файла для понимания тематики
+- Дай информативный ответ на основе общих знаний
+- Если не можешь ответить точно, дай общий ответ по теме
+- Будь полезным и информативным
+
+ОТВЕТ:"""
+                        
+                        general_messages = [
+                            {
+                                "role": "system",
+                                "content": f"""{project.prompt_template}
+
+Ты - полезный ассистент, который отвечает на вопросы пользователей. 
+Даже если у тебя нет полного содержимого документа, используй название файла и общие знания для ответа.
+Отвечай на русском языке, будь дружелюбным и информативным."""
+                            },
+                            {
+                                "role": "user",
+                                "content": general_knowledge_prompt
+                            }
+                        ]
+                        
+                        if conversation_history:
+                            recent_history = conversation_history[-4:]
+                            general_messages = [general_messages[0]] + recent_history + [general_messages[1]]
+                        
+                        answer = await llm_client.chat_completion(
+                            messages=general_messages,
+                            max_tokens=project.max_response_length // 4,
+                            temperature=0.7
+                        )
+                        
+                        answer = self.response_formatter.format_response(
+                            response=answer,
+                            max_length=project.max_response_length,
+                            chunks=[]
+                        )
+                        
+                        await self._save_message(user_id, question, "user")
+                        await self._save_message(user_id, answer, "assistant")
+                        
+                        logger.info(f"[RAG SERVICE] Fallback 4 SUCCESS: Generated answer using filename and general knowledge")
+                        return answer
+                    except Exception as general_error:
+                        logger.warning(f"[RAG SERVICE] Fallback 4 ERROR: {general_error}")
+                
+                # Fallback 5: Последний резерв - используем хотя бы название файла
+                if not document_content or document_content in ["Обработка...", "Обработан", ""]:
+                    document_content = f"Документ '{document.filename}'"
+                    if document.file_type:
+                        document_content += f" (тип: {document.file_type})"
+                    logger.info(f"[RAG SERVICE] Fallback 5: Using minimal context (filename only)")
             
             # NLP-Enhanced подход: создаем структурированный контекст
             # Извлекаем ключевые слова из вопроса для фокусировки
@@ -2361,7 +2517,12 @@ class RAGService:
             
             keywords_str = ', '.join(list(question_keywords)[:10]) if question_keywords else 'общие'
             
-            nlp_prompt = f"""Ты - эксперт по анализу документов с использованием NLP техник.
+            # Определяем, есть ли у нас полный контент или только минимальный
+            has_full_content = document_content and len(document_content) > 100 and document_content not in ["Обработка...", "Обработан", ""] and not document_content.startswith("Документ '")
+            
+            if has_full_content:
+                # Полный контент доступен - используем стандартный NLP-enhanced промпт
+                nlp_prompt = f"""Ты - эксперт по анализу документов с использованием NLP техник.
 
 ДОКУМЕНТ: {document.filename}
 
@@ -2380,6 +2541,28 @@ class RAGService:
 7. Будь точным и информативным, используй информацию из документа
 
 ОТВЕТ (на русском языке, структурированный и информативный):"""
+            else:
+                # Минимальный контент - используем специальный промпт с общими знаниями
+                logger.info(f"[RAG SERVICE] Using minimal context mode (filename/metadata only)")
+                nlp_prompt = f"""Ты - полезный ассистент, который отвечает на вопросы пользователей.
+
+ИНФОРМАЦИЯ О ДОКУМЕНТЕ:
+{document_content}
+{summary_part if summary_part else ''}
+
+ВАЖНО: Полное содержимое документа еще обрабатывается, но у тебя есть информация о документе выше.
+
+ВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}
+
+ИНСТРУКЦИИ:
+1. Используй название файла и доступную информацию для понимания тематики документа
+2. На основе названия файла и ключевых слов (если есть) попробуй понять, о чем документ
+3. Используй общие знания по теме документа для ответа на вопрос
+4. Будь информативным и полезным, даже если у тебя нет полного содержимого
+5. Если можешь дать общий ответ по теме на основе названия файла - сделай это
+6. Будь честным: если нужна конкретная информация из документа, скажи об этом
+
+ОТВЕТ (на русском языке, информативный и полезный):"""
             
             messages = [
                 {
