@@ -2354,6 +2354,13 @@ class RAGService:
                 logger.info(f"[RAG SERVICE] Document too long ({len(document_content)} chars), using first and last parts")
             
             # Создаем NLP-enhanced промпт с структурированием
+            # Формируем часть с резюме отдельно, чтобы избежать проблемы с обратными слешами в f-string
+            summary_part = ""
+            if doc_summary:
+                summary_part = f"КРАТКОЕ РЕЗЮМЕ ДОКУМЕНТА:\n{doc_summary}\n\n"
+            
+            keywords_str = ', '.join(list(question_keywords)[:10]) if question_keywords else 'общие'
+            
             nlp_prompt = f"""Ты - эксперт по анализу документов с использованием NLP техник.
 
 ДОКУМЕНТ: {document.filename}
@@ -2361,12 +2368,10 @@ class RAGService:
 СОДЕРЖАНИЕ ДОКУМЕНТА:
 {document_content}
 
-{f'КРАТКОЕ РЕЗЮМЕ ДОКУМЕНТА:\n{doc_summary}\n' if doc_summary else ''}
-
-ВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}
+{summary_part}ВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}
 
 ИНСТРУКЦИИ (NLP-Enhanced подход):
-1. Проанализируй вопрос и определи ключевые концепции: {', '.join(list(question_keywords)[:10]) if question_keywords else 'общие'}
+1. Проанализируй вопрос и определи ключевые концепции: {keywords_str}
 2. Найди релевантные части документа, которые отвечают на вопрос
 3. Используй весь контекст документа для полного понимания
 4. Если вопрос касается конкретной информации, найди точные данные в документе
