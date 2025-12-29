@@ -14,8 +14,6 @@ class LLMModel(Base):
     """Кастомная модель LLM"""
     __tablename__ = "llm_models"
     
-    model_config = ConfigDict(protected_namespaces=())
-    
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
     model_id = Column(String(255), nullable=False, unique=True)  # ID модели из OpenRouter или кастомный
     name = Column(String(255), nullable=False)
