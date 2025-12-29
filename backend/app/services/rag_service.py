@@ -354,12 +354,12 @@ class RAGService:
                             # Техника 3: Если все еще нет чанков, используем простой preview
                             if not chunk_texts:
                                 try:
-                                result = await self.db.execute(
-                                select(Document)
-                                .where(Document.project_id == project.id)
-                                .limit(5)
-                                )
-                                documents = result.scalars().all()
+                                    result = await self.db.execute(
+                                        select(Document)
+                                        .where(Document.project_id == project.id)
+                                        .limit(5)
+                                    )
+                                    documents = result.scalars().all()
                             
                                 for doc in documents:
                                 if doc.content and len(doc.content) > 50:
