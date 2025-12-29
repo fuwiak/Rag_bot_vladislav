@@ -323,33 +323,33 @@ class RAGService:
                             # Используем DocumentChunker для разбивки на чанки с большим overlap (50-75%)
                             # Overlapping Chunks z kontekstem - улучшенный chunking
                             chunker = DocumentChunker(chunk_size=1000, chunk_overlap=500)  # 50% overlap
-                    question_keywords = set(re.findall(r'\b\w+\b', question.lower()))
-                    question_keywords = {w for w in question_keywords if len(w) > 3}
-                    
-                    for doc in documents:
-                        if doc.content and len(doc.content) > 50:
-                            # Разбиваем на чанки
-                            doc_chunks = chunker.chunk_text(doc.content)
+                            question_keywords = set(re.findall(r'\b\w+\b', question.lower()))
+                            question_keywords = {w for w in question_keywords if len(w) > 3}
                             
-                            # Если вопрос содержит название файла, используем все чанки
-                            is_relevant_file = doc.filename.lower() in question.lower()
+                            for doc in documents:
+                                if doc.content and len(doc.content) > 50:
+                                    # Разбиваем на чанки
+                                    doc_chunks = chunker.chunk_text(doc.content)
+                                    
+                                    # Если вопрос содержит название файла, используем все чанки
+                                    is_relevant_file = doc.filename.lower() in question.lower()
+                                    
+                                    for chunk_text in doc_chunks[:5]:  # Максимум 5 чанков из каждого документа
+                                        # Вычисляем релевантность
+                                        chunk_lower = chunk_text.lower()
+                                        relevance = sum(1 for kw in question_keywords if kw in chunk_lower)
+                                        score = 0.9 if is_relevant_file else min(0.8, 0.5 + (relevance * 0.1))
+                                        
+                                        chunk_texts.append({
+                                            "text": chunk_text,
+                                            "source": doc.filename,
+                                            "score": score
+                                        })
+                                    
+                                    logger.info(f"[RAG SERVICE] Extracted {len(doc_chunks)} chunks from document {doc.filename} using chunker")
                             
-                            for chunk_text in doc_chunks[:5]:  # Максимум 5 чанков из каждого документа
-                                # Вычисляем релевантность
-                                chunk_lower = chunk_text.lower()
-                                relevance = sum(1 for kw in question_keywords if kw in chunk_lower)
-                                score = 0.9 if is_relevant_file else min(0.8, 0.5 + (relevance * 0.1))
-                                
-                                chunk_texts.append({
-                                    "text": chunk_text,
-                                    "source": doc.filename,
-                                    "score": score
-                                })
-                            
-                            logger.info(f"[RAG SERVICE] Extracted {len(doc_chunks)} chunks from document {doc.filename} using chunker")
-                    
-                    if chunk_texts:
-                        logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content chunks using DocumentChunker")
+                            if chunk_texts:
+                                logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content chunks using DocumentChunker")
                     
                     # Техника 3: Если все еще нет чанков, используем простой preview
                     if not chunk_texts:
