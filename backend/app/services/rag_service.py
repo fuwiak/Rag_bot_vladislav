@@ -109,8 +109,7 @@ class RAGService:
             set_project_id(str(project.id))
             span.set_attribute("project_id", str(project.id))
             
-            # Проверяем количество документов в проекте
-            # Если документ только один, используем NLP-enhanced summarization вместо RAG
+            # Проверяем количество документов в проекте (для логирования)
             from app.models.document import Document
             from sqlalchemy import func, select
             docs_count_result = await self.db.execute(
@@ -118,15 +117,7 @@ class RAGService:
                 .where(Document.project_id == project.id)
             )
             documents_count = docs_count_result.scalar() or 0
-            
-            # Если документ только один, используем NLP-enhanced summarization
-            if documents_count == 1:
-                logger.info(f"[RAG SERVICE] Single document detected ({documents_count}), using NLP-enhanced summarization instead of RAG")
-                return await self._generate_answer_with_nlp_summarization(
-                    user_id=user_id,
-                    question=question,
-                    project=project
-                )
+            logger.info(f"[RAG SERVICE] Project has {documents_count} documents, using RAG (not switching to NLP summarization)")
             
             # Получение истории диалога (минимум 10 сообщений согласно требованиям)
             conversation_history = await self.helpers.get_conversation_history(user_id, limit=10)
@@ -914,11 +905,14 @@ class RAGService:
         if documents_count == 0:
             return "В проекте нет загруженных документов. Загрузите документы для использования RAG."
         
-        # Проверяем, есть ли chunks в Qdrant и czy są przetworzone
+        # Проверяем, есть ли chunks в Qdrant
         collection_name = f"project_{project.id}"
         collection_exists = await self.vector_store.collection_exists(collection_name)
         
-        if not collection_exists:
+        similar_chunks = []
+        
+        # Próbujemy użyć RAG z Qdrant jeśli kolekcja istnieje
+        if collection_exists:
             # Проверяем, есть ли chunks в БД с qdrant_point_id (czy są przetworzone)
             processed_chunks_result = await self.db.execute(
                 select(func.count(DocumentChunk.id))
@@ -962,36 +956,99 @@ class RAGService:
             score_threshold=0.0  # Берем wszystkie, nawet z niskim score
         )
         
-        if not similar_chunks or len(similar_chunks) == 0:
-            return "Не найдено релевантной информации в базе."
-        
-        # Формируем контекст (jak w prostym kodzie)
+        # Формируем контекст z chunków jeśli są
         context_parts = []
-        for i, chunk in enumerate(similar_chunks, 1):
-            chunk_text = chunk.get("payload", {}).get("chunk_text", "")
-            if not chunk_text:
-                # Если нет в payload, получаем из БД
-                chunk_id = chunk.get("payload", {}).get("chunk_id")
-                if chunk_id:
-                    try:
-                        chunk_result = await self.db.execute(
-                            select(DocumentChunk).where(DocumentChunk.id == UUID(chunk_id))
-                        )
-                        db_chunk = chunk_result.scalar_one_or_none()
-                        if db_chunk:
-                            chunk_text = db_chunk.chunk_text
-                    except Exception:
-                        pass
-            
-            if chunk_text:
-                score = chunk.get("score", 0.0)
-                source = chunk.get("payload", {}).get("source", "Документ")
-                context_parts.append(
-                    f"Фрагмент {i} (источник: {source}, релевантность: {score:.2f}):\n{chunk_text}"
-                )
+        if similar_chunks and len(similar_chunks) > 0:
+            for i, chunk in enumerate(similar_chunks, 1):
+                chunk_text = chunk.get("payload", {}).get("chunk_text", "")
+                if not chunk_text:
+                    # Если нет в payload, получаем из БД
+                    chunk_id = chunk.get("payload", {}).get("chunk_id")
+                    if chunk_id:
+                        try:
+                            chunk_result = await self.db.execute(
+                                select(DocumentChunk).where(DocumentChunk.id == UUID(chunk_id))
+                            )
+                            db_chunk = chunk_result.scalar_one_or_none()
+                            if db_chunk:
+                                chunk_text = db_chunk.chunk_text
+                        except Exception:
+                            pass
+                
+                if chunk_text:
+                    score = chunk.get("score", 0.0)
+                    source = chunk.get("payload", {}).get("source", "Документ")
+                    context_parts.append(
+                        f"Фрагмент {i} (источник: {source}, релевантность: {score:.2f}):\n{chunk_text}"
+                    )
         
+        # Если нет chunków w Qdrant, generujemy summary i używamy go jako kontekstu
         if not context_parts:
-            return "Не найдено релевантной информации в базе."
+            logger.info(f"[RAG SERVICE SIMPLE] No chunks found in Qdrant, generating summaries and using them as context")
+            
+            # Sprawdzamy czy dokumenty są przetworzone
+            total_chunks_result = await self.db.execute(
+                select(func.count(DocumentChunk.id))
+                .join(Document)
+                .where(Document.project_id == project.id)
+            )
+            total_chunks = total_chunks_result.scalar() or 0
+            
+            if total_chunks == 0:
+                # Sprawdzamy czy dokumenty mają content
+                from app.core.prompt_config import get_constant
+                docs_with_content_result = await self.db.execute(
+                    select(func.count(Document.id))
+                    .where(Document.project_id == project.id)
+                    .where(Document.content.isnot(None))
+                    .where(Document.content != "")
+                    .where(Document.content.notin_([
+                        get_constant("constants.document_status.processing", "Обработка..."),
+                        get_constant("constants.document_status.processed", "Обработан")
+                    ]))
+                )
+                docs_with_content = docs_with_content_result.scalar() or 0
+                
+                if docs_with_content == 0:
+                    return "Документы еще обрабатываются. Пожалуйста, подождите несколько секунд и попробуйте снова."
+            
+            # Generujemy summary dla wszystkich документов i używamy jako kontekсту
+            from app.services.document_summary_service import DocumentSummaryService
+            summary_service = DocumentSummaryService(self.db)
+            
+            # Получаем все документы проекта
+            docs_result = await self.db.execute(
+                select(Document)
+                .where(Document.project_id == project.id)
+                .limit(10)
+            )
+            documents = docs_result.scalars().all()
+            
+            for doc in documents:
+                # Sprawdzamy czy jest summary
+                doc_summary = getattr(doc, 'summary', None)
+                if not doc_summary or not doc_summary.strip():
+                    # Generujemy summary jeśli nie ma
+                    try:
+                        logger.info(f"[RAG SERVICE SIMPLE] Generating summary for document {doc.id} ({doc.filename})")
+                        doc_summary = await summary_service.generate_summary(doc.id)
+                        if doc_summary and doc_summary.strip():
+                            # Zapisujemy summary w dokumencie
+                            doc.summary = doc_summary
+                            await self.db.commit()
+                    except Exception as summary_error:
+                        logger.warning(f"[RAG SERVICE SIMPLE] Error generating summary for doc {doc.id}: {summary_error}")
+                        # Fallback: używamy content jeśli summary nie działa
+                        if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
+                            doc_summary = doc.content[:2000]  # Pierwsze 2000 znaków
+                
+                if doc_summary and doc_summary.strip():
+                    context_parts.append(f"Документ '{doc.filename}':\n{doc_summary}")
+            
+            if not context_parts:
+                return "Не найдено релевантной информации в базе. Документы могут быть еще в процессе обработки."
+            
+            logger.info(f"[RAG SERVICE SIMPLE] Using {len(context_parts)} document summaries as context (no chunks in Qdrant)")
         
         context = "\n\n".join(context_parts)
         
