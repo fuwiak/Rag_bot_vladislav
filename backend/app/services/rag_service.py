@@ -982,35 +982,35 @@ class RAGService:
                         f"Фрагмент {i} (источник: {source}, релевантность: {score:.2f}):\n{chunk_text}"
                     )
         
-        # Если нет chunków w Qdrant, generujemy summary i używamy go jako kontekstu
+        # Если нет chunków w Qdrant, generujemy summary i używamy go jako kontekсту
         if not context_parts:
             logger.info(f"[RAG SERVICE SIMPLE] No chunks found in Qdrant, generating summaries and using them as context")
             
-            # Sprawdzamy czy dokumenty są przetworzone
-            total_chunks_result = await self.db.execute(
-                select(func.count(DocumentChunk.id))
-                .join(Document)
-                .where(Document.project_id == project.id)
-            )
-            total_chunks = total_chunks_result.scalar() or 0
-            
-            if total_chunks == 0:
-                # Sprawdzamy czy dokumenty mają content
-                from app.core.prompt_config import get_constant
-                docs_with_content_result = await self.db.execute(
-                    select(func.count(Document.id))
-                    .where(Document.project_id == project.id)
-                    .where(Document.content.isnot(None))
-                    .where(Document.content != "")
-                    .where(Document.content.notin_([
-                        get_constant("constants.document_status.processing", "Обработка..."),
-                        get_constant("constants.document_status.processed", "Обработан")
-                    ]))
+            # Dla pojedynczego dokumentu używamy NLP summarization jeśli RAG nie działa
+            if documents_count == 1:
+                logger.info(f"[RAG SERVICE SIMPLE] Single document detected, using NLP summarization instead of RAG")
+                return await self._generate_answer_with_nlp_summarization(
+                    user_id=user_id,
+                    question=question,
+                    project=project
                 )
-                docs_with_content = docs_with_content_result.scalar() or 0
-                
-                if docs_with_content == 0:
-                    return "Документы еще обрабатываются. Пожалуйста, подождите несколько секунд и попробуйте снова."
+            
+            # Sprawdzamy czy dokumenty mają content
+            from app.core.prompt_config import get_constant
+            docs_with_content_result = await self.db.execute(
+                select(func.count(Document.id))
+                .where(Document.project_id == project.id)
+                .where(Document.content.isnot(None))
+                .where(Document.content != "")
+                .where(Document.content.notin_([
+                    get_constant("constants.document_status.processing", "Обработка..."),
+                    get_constant("constants.document_status.processed", "Обработан")
+                ]))
+            )
+            docs_with_content = docs_with_content_result.scalar() or 0
+            
+            if docs_with_content == 0:
+                return "Документы еще обрабатываются. Пожалуйста, подождите несколько секунд и попробуйте снова."
             
             # Generujemy summary dla wszystkich документов i używamy jako kontekсту
             from app.services.document_summary_service import DocumentSummaryService
