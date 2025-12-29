@@ -189,6 +189,17 @@ class Settings(BaseSettings):
         else:
             return f"redis://{redis_host}:{redis_port}/{redis_db}"
     
+    # Observability
+    ENABLE_TRACING: bool = True
+    ENABLE_METRICS: bool = True
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = ""  # OTLP endpoint dla Jaeger/Zipkin (np. http://localhost:4317)
+    PROMETHEUS_PORT: int = 9090  # Port dla Prometheus metrics endpoint
+    
+    # Cache
+    ENABLE_RAG_CACHE: bool = True
+    RAG_CACHE_TTL: int = 3600  # 1 godzina w sekundach
+    EMBEDDING_CACHE_TTL: int = 604800  # 7 dni w sekundach
+    
     # CORS - can be set as comma-separated string in environment variables
     CORS_ORIGINS: Union[str, List[str]] = "http://localhost:3000,http://localhost:3001"
     

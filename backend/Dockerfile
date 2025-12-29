@@ -35,6 +35,12 @@ COPY --from=builder /root/.local /root/.local
 # Build context - root проекта, копируем из backend/
 COPY backend/ .
 
+# Uruchamianie testów podczas builda (nie blokuje builda)
+RUN echo "Running tests..." && \
+    python -m pytest tests/ -v --tb=short --no-header -q || \
+    (echo "⚠️  Some tests failed, but continuing build..." && true) && \
+    echo "✅ Tests completed (non-blocking)"
+
 # Создание entrypoint скрипта с применением миграций
 RUN echo '#!/bin/bash\n\
 set -e\n\

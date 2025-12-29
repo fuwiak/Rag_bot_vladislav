@@ -18,8 +18,12 @@ from app.llm.response_formatter import ResponseFormatter
 from app.rag.rag_chain import RAGChain
 from app.rag.qdrant_loader import QdrantLoader
 from app.services.reranker_service import RerankerService
+from app.observability.otel_setup import get_tracer
+from app.observability.metrics import rag_metrics
+from app.observability.structured_logging import get_logger, set_correlation_id, set_user_id, set_project_id
+from app.services.cache_service import cache_service
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class RAGService:
@@ -55,15 +59,33 @@ class RAGService:
         Returns:
             Ответ на вопрос
         """
-        # КРИТИЧНО: Инициализируем все переменные в самом начале функции для избежания UnboundLocalError
-        chunk_texts = []
-        similar_chunks = []
-        metadata_context = ""
-        answer = None
-        user = None
-        project = None
+        import time
+        import uuid as uuid_lib
+        from app.observability.otel_setup import get_tracer
         
-        try:
+        # Ustawiamy kontekst dla logowania
+        set_user_id(str(user_id))
+        correlation_id = str(uuid_lib.uuid4())
+        set_correlation_id(correlation_id)
+        
+        tracer = get_tracer(__name__)
+        start_time = time.time()
+        
+        # Główny span dla całego zapytania RAG
+        with tracer.start_as_current_span("rag.generate_answer") as span:
+            span.set_attribute("user_id", str(user_id))
+            span.set_attribute("question", question[:200])  # Ograniczamy długość
+            span.set_attribute("top_k", top_k)
+            
+            # КРИТИЧНО: Инициализируем все переменные в самом начале функции для избежания UnboundLocalError
+            chunk_texts = []
+            similar_chunks = []
+            metadata_context = ""
+            answer = None
+            user = None
+            project = None
+            
+            try:
             # Получение пользователя и проекта
             user = await self._get_user(user_id)
             if not user:
@@ -687,18 +709,34 @@ class RAGService:
             await self._save_message(user_id, answer, "assistant")
             
             return answer
-        except Exception as e:
-            logger.error(f"[RAG SERVICE] Error in generate_answer: {e}", exc_info=True)
-            # В случае критической ошибки возвращаем базовый ответ
-            if not answer:
-                answer = "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору."
-            # Сохраняем сообщения даже при ошибке
-            try:
-                await self._save_message(user_id, question, "user")
-                await self._save_message(user_id, answer, "assistant")
-            except:
-                pass
-            return answer
+            except Exception as e:
+                duration = time.time() - start_time
+                logger.error(f"[RAG SERVICE] Error in generate_answer: {e}", exc_info=True)
+                span.record_exception(e)
+                span.set_attribute("status", "error")
+                span.set_attribute("error.message", str(e))
+                
+                # Metryki dla błędu
+                rag_metrics.record_query_duration(
+                    duration=duration,
+                    project_id=str(project.id) if project else None,
+                    status="error"
+                )
+                rag_metrics.increment_query(
+                    project_id=str(project.id) if project else None,
+                    status="error"
+                )
+                
+                # В случае критической ошибки возвращаем базовый ответ
+                if not answer:
+                    answer = "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору."
+                # Сохраняем сообщения даже при ошибке
+                try:
+                    await self._save_message(user_id, question, "user")
+                    await self._save_message(user_id, answer, "assistant")
+                except:
+                    pass
+                return answer
     
     async def _advanced_chunk_search(
         self,

@@ -1,0 +1,49 @@
+groups:
+  - name: rag_alerts
+    interval: 30s
+    rules:
+      - alert: HighRAGLatency
+        expr: histogram_quantile(0.95, rag_query_duration_seconds_bucket) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Wysoka latencja zapytań RAG"
+          description: "95 percentyl latencji zapytań RAG przekracza 5 sekund przez 5 minut"
+      
+      - alert: LowRAGQuality
+        expr: histogram_quantile(0.5, rag_answer_relevance_score_bucket) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Niska jakość odpowiedzi RAG"
+          description: "Mediana oceny relewantności odpowiedzi RAG jest poniżej 0.5 przez 10 minut"
+      
+      - alert: HighRAGErrorRate
+        expr: rate(rag_queries_total{status="error"}[5m]) / rate(rag_queries_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Wysoki wskaźnik błędów RAG"
+          description: "Wskaźnik błędów zapytań RAG przekracza 10% przez 5 minut"
+      
+      - alert: LowCacheHitRate
+        expr: rate(rag_cache_hits_total[5m]) / (rate(rag_cache_hits_total[5m]) + rate(rag_cache_misses_total[5m])) < 0.3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Niski wskaźnik trafień w cache"
+          description: "Wskaźnik trafień w cache jest poniżej 30% przez 10 minut"
+      
+      - alert: VectorDBHighLatency
+        expr: histogram_quantile(0.95, vector_db_query_duration_seconds_bucket) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Wysoka latencja zapytań do bazy wektorowej"
+          description: "95 percentyl latencji zapytań do Qdrant przekracza 2 sekundy"
+

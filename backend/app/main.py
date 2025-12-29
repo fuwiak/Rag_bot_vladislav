@@ -6,27 +6,69 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from app.core.config import settings
 from app.core.database import init_db
 from app.api import router as api_router
 from app.api.middleware import RateLimitMiddleware
 
-# Настройка логирования - только важные сообщения
-logging.basicConfig(
-    level=logging.WARNING,
-    format='%(levelname)s: %(message)s'
+# Inicjalizacja Observability
+from app.observability.otel_setup import setup_opentelemetry
+from app.observability.structured_logging import setup_structured_logging
+from app.observability.metrics import get_metrics_exporter
+
+# Setup structured logging
+setup_structured_logging(
+    json_output=os.getenv("JSON_LOGGING", "true").lower() == "true",
+    log_level=os.getenv("LOG_LEVEL", "INFO")
 )
-# Отключаем лишние логи
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-logging.getLogger("pydantic").setLevel(logging.ERROR)
+
+logger = logging.getLogger(__name__)
+
+# Setup OpenTelemetry
+if settings.ENABLE_TRACING or settings.ENABLE_METRICS:
+    try:
+        setup_opentelemetry(
+            service_name="rag-bot-backend",
+            enable_tracing=settings.ENABLE_TRACING,
+            enable_metrics=settings.ENABLE_METRICS
+        )
+        logger.info("✅ Observability stack initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize observability: {e}")
+
+# Auto-instrumentacja FastAPI, SQLAlchemy, httpx
+if settings.ENABLE_TRACING:
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        
+        # Instrumentacja będzie dodana po utworzeniu app
+        _fastapi_instrumentor = FastAPIInstrumentor()
+        _sqlalchemy_instrumentor = SQLAlchemyInstrumentor()
+        _httpx_instrumentor = HTTPXClientInstrumentor()
+        
+        logger.info("✅ OpenTelemetry auto-instrumentation configured")
+    except Exception as e:
+        logger.warning(f"Failed to setup auto-instrumentation: {e}")
+        _fastapi_instrumentor = None
+        _sqlalchemy_instrumentor = None
+        _httpx_instrumentor = None
+else:
+    _fastapi_instrumentor = None
+    _sqlalchemy_instrumentor = None
+    _httpx_instrumentor = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
-    import logging
-    logger = logging.getLogger(__name__)
+    
+    # Inicjalizacja cache service
+    from app.services.cache_service import cache_service
+    await cache_service.connect()
     
     # Инициализация при запуске
     if not settings.SKIP_DB_INIT:
@@ -137,6 +179,9 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Admin creation skipped: {e}")
     
     yield
+    
+    # Cleanup przy zamknięciu
+    await cache_service.disconnect()
 
 
 app = FastAPI(
@@ -145,6 +190,31 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Instrumentacja FastAPI dla OpenTelemetry
+if _fastapi_instrumentor:
+    try:
+        _fastapi_instrumentor.instrument_app(app)
+        logger.info("✅ FastAPI instrumented for OpenTelemetry")
+    except Exception as e:
+        logger.warning(f"Failed to instrument FastAPI: {e}")
+
+# Instrumentacja SQLAlchemy
+if _sqlalchemy_instrumentor:
+    try:
+        from app.core.database import engine
+        _sqlalchemy_instrumentor.instrument(engine=engine.sync_engine)
+        logger.info("✅ SQLAlchemy instrumented for OpenTelemetry")
+    except Exception as e:
+        logger.warning(f"Failed to instrument SQLAlchemy: {e}")
+
+# Instrumentacja httpx
+if _httpx_instrumentor:
+    try:
+        _httpx_instrumentor.instrument()
+        logger.info("✅ HTTPX instrumented for OpenTelemetry")
+    except Exception as e:
+        logger.warning(f"Failed to instrument HTTPX: {e}")
 
 # Добавляем обработчик OPTIONS запросов ПЕРЕД всеми остальными
 from fastapi import Request
@@ -222,6 +292,32 @@ app.include_router(api_router, prefix="/api")
 async def health_check():
     """Health check endpoint для мониторинга"""
     return {"status": "healthy"}
+
+
+@app.get("/metrics")
+async def metrics_endpoint():
+    """Prometheus metrics endpoint"""
+    if not settings.ENABLE_METRICS:
+        return Response(
+            content="Metrics disabled",
+            status_code=503,
+            media_type="text/plain"
+        )
+    
+    try:
+        from prometheus_client.openmetrics.exposition import CONTENT_TYPE_LATEST
+        metrics_data = get_metrics_exporter()
+        return Response(
+            content=metrics_data,
+            media_type=CONTENT_TYPE_LATEST
+        )
+    except Exception as e:
+        logger.error(f"Failed to export metrics: {e}")
+        return Response(
+            content=f"Error: {str(e)}",
+            status_code=500,
+            media_type="text/plain"
+        )
 
 
 @app.get("/ready")
