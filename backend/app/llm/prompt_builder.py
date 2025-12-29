@@ -49,8 +49,8 @@ class PromptBuilder:
             else:
                 # Это обычные чанки
                 context = "\n\n".join([f"[Чанк {i+1}]\n{chunk}" for i, chunk in enumerate(chunks)])
-            else:
-                # Если нет чанков, но есть метаданные - используем их
+        else:
+            # Если нет чанков, но есть метаданные - используем их
             if metadata_context:
                 metadata_prefix = get_constant("constants.context.metadata_prefix", "")
                 metadata_instruction = get_constant("constants.context.metadata_instruction", "")
