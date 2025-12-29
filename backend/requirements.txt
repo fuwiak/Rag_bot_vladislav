@@ -36,7 +36,7 @@ spacy==3.7.2  # Lightweight NLP for metadata extraction
 # Vector Database
 qdrant-client==1.7.0
 rank-bm25==0.2.2  # BM25 search for hybrid search in RAG
-sentence-transformers==2.2.2  # For cross-encoder reranking (optional, lightweight)
+sentence-transformers==2.2.2  # For local embeddings (simple RAG mode) and cross-encoder reranking
 # Uwaga: grpcio jest wymagane przez qdrant-client, ale używamy tylko HTTP API (prefer_grpc=False)
 # Aby przyspieszyć instalację, użyj pre-built wheels: pip install --only-binary :all: grpcio grpcio-tools
 
