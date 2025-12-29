@@ -201,7 +201,7 @@ class RAGService:
                         )
                         search_span.set_attribute("chunks_found", len(chunk_texts))
             
-            # Для вопросов о содержании - приоритет summaries (не используем чанки)
+            # Для вопросов о содержании - приоритет СОДЕРЖИМОГО документов (chunks, summaries, content)
             question_type = strategy.get("question_type", "")
             question_lower = question.lower()
             is_content_question = (
@@ -213,25 +213,30 @@ class RAGService:
                 ])
             )
             
-            # Если агент рекомендует использовать summaries или это вопрос о содержании
-            if (strategy.get("use_summaries", True) and not chunk_texts) or is_content_question:
-                if is_content_question:
-                    logger.info(f"[RAG SERVICE] Content question detected, using summaries strategy")
-                    # Для вопросов о содержании не используем чанки, только summaries
-                    chunk_texts = []
-                else:
-                    logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
-                
-                    summaries = await self.helpers.get_document_summaries(project.id, top_k * 2)  # Берем больше summaries для содержания
+            # Для вопросов о содержании - ВАЖНО: используем содержимое документов, а не только метаданные
+            if is_content_question:
+                logger.info(f"[RAG SERVICE] Content question detected - prioritizing document content (chunks, summaries, content)")
+                # НЕ удаляем chunk_texts - они важны для вопросов о содержании!
+                # Próbujemy uzyskać summaries jeśli nie ma chunków
+                if not chunk_texts:
+                    logger.info(f"[RAG SERVICE] No chunks found for content question, trying to get summaries")
+                    summaries = await self.helpers.get_document_summaries(project.id, top_k * 2)
+                    if summaries:
+                        chunk_texts = summaries  # summaries в формате dict с text, source, score
+                        logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries for content question")
+            
+            # Если агент рекомендует использовать summaries (dla zwykłych pytań)
+            elif strategy.get("use_summaries", True) and not chunk_texts:
+                logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
+                summaries = await self.helpers.get_document_summaries(project.id, top_k * 2)
                 if summaries:
                     chunk_texts = summaries  # summaries в формате dict с text, source, score
                     logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
             
-            # ВСЕГДА получаем метаданные для использования в промпте (даже если есть чанки)
-            # Это позволяет отвечать на вопросы о файлах и ключевых словах
-            # Для вопросов о содержании метаданные КРИТИЧНЫ - получаем их всегда
-            if not metadata_context or is_content_question:
-                logger.info(f"[RAG SERVICE] Getting metadata for context (is_content_question={is_content_question})")
+            # Получаем метаданные как ДОПОЛНИТЕЛЬНЫЙ контекст (не основное źródło)
+            # Метаданные помогают, но для pytań o zawartość priorytetem jest zawartość dokumentów
+            if not metadata_context:
+                logger.info(f"[RAG SERVICE] Getting metadata as additional context")
                 try:
                     from app.services.document_metadata_service import DocumentMetadataService
                     metadata_service = DocumentMetadataService()
@@ -240,15 +245,9 @@ class RAGService:
                         documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
                     if documents_metadata:
                         metadata_context = metadata_service.create_metadata_context(documents_metadata)
-                        logger.info(f"[RAG SERVICE] Created metadata context from {len(documents_metadata)} documents")
-                    elif is_content_question:
-                        # Для вопросов о содержании метаданные обязательны - логируем предупреждение
-                        logger.warning(f"[RAG SERVICE] No metadata available for content question - documents may not be processed yet")
+                        logger.info(f"[RAG SERVICE] Created metadata context from {len(documents_metadata)} documents (as additional context)")
                 except Exception as metadata_error:
                     logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
-                    if is_content_question:
-                        # Для вопросов о содержании это критично
-                        logger.error(f"[RAG SERVICE] CRITICAL: Cannot get metadata for content question: {metadata_error}")
             
             # Логируем стратегию использования метаданных
             if metadata_context:
@@ -476,26 +475,10 @@ class RAGService:
                 else:
                     chunks_for_prompt.append(chunk)
             
-            # Для вопросов о содержании используем простой промпт из рабочего скрипта
+            # Для вопросов о содержании - ПРИОРИТЕТ: содержимое документов (chunks, summaries, content)
             if is_content_question:
-                # Для вопросов типа "summary of each file" - используем метаданные напрямую
-                # ВАЖНО: Для вопросов о содержании ВСЕГДА используем метаданные, даже если нет chunk_texts
-                if metadata_context:
-                    # Просто используем метаданные - это работает как предложенные вопросы
-                    logger.info(f"[RAG SERVICE] Content question with metadata only - using direct metadata approach")
-                    context = get_prompt("prompts.content_question.metadata_only", metadata_context=metadata_context)
-                    
-                    enhanced_prompt = f"""Вопрос пользователя: {question}
-
-Используй информацию о документах выше для ответа. Если вопрос о summary каждого файла, предоставь краткое описание каждого файла на основе его названия и ключевых слов.
-
-Ответ:"""
-                    
-                    messages = [
-                        {"role": "system", "content": get_prompt("prompts.system.metadata_assistant")},
-                        {"role": "user", "content": enhanced_prompt}
-                    ]
-                elif chunk_texts:
+                # ВАЖНО: Для pytań o zawartość używamy ZAWARTOŚCI dokumentów jako głównego źródła
+                if chunk_texts:
                     # Есть summaries или извлеченный контент - используем их
                     context_parts = []
                     for i, doc in enumerate(chunk_texts, 1):
@@ -519,6 +502,104 @@ class RAGService:
                         {"role": "system", "content": get_prompt("prompts.system.document_assistant")},
                         {"role": "user", "content": enhanced_prompt}
                     ]
+                else:
+                    # Fallback: Jeśli nie ma zawartości, próbujemy uzyskać content z dokumentów bezpośrednio
+                    logger.info(f"[RAG SERVICE] Content question but no chunks/summaries - trying to get document content directly")
+                    try:
+                        from app.models.document import Document
+                        from sqlalchemy import select
+                        
+                        # Próbujemy uzyskać content z dokumentów
+                        result = await self.db.execute(
+                            select(Document.id, Document.filename, Document.content)
+                            .where(Document.project_id == project.id)
+                            .where(Document.content.isnot(None))
+                            .where(Document.content != "")
+                            .where(Document.content.notin_([
+                                get_constant("constants.document_status.processing", "Обработка..."),
+                                get_constant("constants.document_status.processed", "Обработан")
+                            ]))
+                            .limit(5)
+                        )
+                        documents = result.all()
+                        
+                        if documents:
+                            context_parts = []
+                            for doc_id, filename, content in documents:
+                                # Bierzemy pierwsze 2000 znaków z każdego dokumentu
+                                content_preview = content[:2000] if content else ""
+                                if content_preview:
+                                    context_parts.append(f"Документ '{filename}':\n{content_preview}...")
+                            
+                            if context_parts:
+                                context = "\n\n---\n\n".join(context_parts)
+                                
+                                # Dodajemy metadane jako dodatkowy kontekst
+                                if metadata_context:
+                                    context += f"\n\nДополнительная информация о документах:\n{metadata_context}"
+                                
+                                enhanced_prompt = get_prompt("prompts.content_question.with_chunks", context=context, question=question)
+                                
+                                messages = [
+                                    {"role": "system", "content": get_prompt("prompts.system.document_assistant")},
+                                    {"role": "user", "content": enhanced_prompt}
+                                ]
+                                logger.info(f"[RAG SERVICE] Content question: using document content directly from {len(documents)} documents")
+                            else:
+                                # Ostatni fallback: metadane (tylko jeśli nie ma zawartości)
+                                logger.warning(f"[RAG SERVICE] Content question: no document content available, using metadata as last resort")
+                                if metadata_context:
+                                    context = get_prompt("prompts.content_question.metadata_only", metadata_context=metadata_context)
+                                    enhanced_prompt = f"""Вопрос пользователя: {question}
+
+Используй информацию о документах выше для ответа. Если вопрос о summary каждого файла, предоставь краткое описание каждого файла на основе его названия и ключевых слов.
+
+Ответ:"""
+                                    messages = [
+                                        {"role": "system", "content": get_prompt("prompts.system.metadata_assistant")},
+                                        {"role": "user", "content": enhanced_prompt}
+                                    ]
+                                else:
+                                    # Brak zawartości i metadanych - używamy standardowego fallback
+                                    messages = None
+                        else:
+                            # Brak dokumentów z zawartością - używamy metadanych jako ostatni fallback
+                            logger.warning(f"[RAG SERVICE] Content question: no documents with content found, using metadata as last resort")
+                            if metadata_context:
+                                context = get_prompt("prompts.content_question.metadata_only", metadata_context=metadata_context)
+                                enhanced_prompt = f"""Вопрос пользователя: {question}
+
+Используй информацию о документах выше для ответа. Если вопрос о summary каждого файла, предоставь краткое описание каждого файла на основе его названия и ключевых слов.
+
+Ответ:"""
+                                messages = [
+                                    {"role": "system", "content": get_prompt("prompts.system.metadata_assistant")},
+                                    {"role": "user", "content": enhanced_prompt}
+                                ]
+                            else:
+                                messages = None
+                    except Exception as content_error:
+                        logger.error(f"[RAG SERVICE] Error getting document content for content question: {content_error}")
+                        # Fallback do metadanych
+                        if metadata_context:
+                            context = get_prompt("prompts.content_question.metadata_only", metadata_context=metadata_context)
+                            enhanced_prompt = f"""Вопрос пользователя: {question}
+
+Используй информацию о документах выше для ответа. Если вопрос о summary каждого файла, предоставь краткое описание каждого файла на основе его названия и ключевых слов.
+
+Ответ:"""
+                            messages = [
+                                {"role": "system", "content": get_prompt("prompts.system.metadata_assistant")},
+                                {"role": "user", "content": enhanced_prompt}
+                            ]
+                        else:
+                            messages = None
+                    
+                    # Jeśli messages nie zostały ustawione, używamy standardowego fallback
+                    if not messages:
+                        logger.warning(f"[RAG SERVICE] Content question: no content or metadata available, using standard fallback")
+                        # Przechodzimy do standardowego fallback (poniżej)
+                        is_content_question = False  # Wyłączamy specjalną obsługę, żeby użyć standardowego fallback
             elif metadata_context:
                 # Нет summaries, но есть метаданные - используем их
                 context = get_prompt("prompts.metadata.prompt", metadata_context=metadata_context)
@@ -823,60 +904,140 @@ class RAGService:
             "обзор", "обзор файлов", "что в файлах", "список файлов"
         ])
         
-        # Для вопросов о содержании сразу используем метаданные
+        # Для вопросов о содержании - ПРИОРИТЕТ: содержимое документов
         if is_content_question:
-            logger.info(f"[RAG SERVICE FAST] Content question detected: {question}")
+            logger.info(f"[RAG SERVICE FAST] Content question detected: {question} - trying to get document content")
             try:
-                from app.services.document_metadata_service import DocumentMetadataService
-                metadata_service = DocumentMetadataService()
-                documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
-                if documents_metadata:
-                    metadata_context = metadata_service.create_metadata_context(documents_metadata)
-                    logger.info(f"[RAG SERVICE FAST] Using metadata for content question")
+                # Próbujemy uzyskać zawartość dokumentów (content, chunks)
+                from app.models.document import Document, DocumentChunk
+                from sqlalchemy import select
+                from app.core.prompt_config import get_prompt, get_constant
+                
+                # Próbujemy uzyskać chunks z DocumentChunk
+                chunks_result = await self.db.execute(
+                    select(DocumentChunk.chunk_text, DocumentChunk.document_id)
+                    .join(Document)
+                    .where(Document.project_id == project.id)
+                    .where(DocumentChunk.chunk_text.isnot(None))
+                    .where(DocumentChunk.chunk_text != "")
+                    .limit(20)
+                )
+                chunks = chunks_result.all()
+                
+                context_parts = []
+                if chunks:
+                    # Grupujemy chunks po dokumentach
+                    doc_chunks = {}
+                    for chunk_text, doc_id in chunks:
+                        if doc_id not in doc_chunks:
+                            doc_chunks[doc_id] = []
+                        doc_chunks[doc_id].append(chunk_text)
                     
-                    # Используем промпт для вопросов о содержании
-                    from app.core.prompt_config import get_prompt
-                    context = get_prompt("prompts.content_question.metadata_only", metadata_context=metadata_context)
+                    # Pobieramy nazwy dokumentów
+                    for doc_id, chunk_list in list(doc_chunks.items())[:5]:
+                        doc_result = await self.db.execute(
+                            select(Document.filename).where(Document.id == doc_id)
+                        )
+                        filename = doc_result.scalar_one_or_none()
+                        filename = filename or f"Документ {doc_id}"
+                        
+                        # Łączymy chunks z tego dokumentu
+                        doc_content = "\n".join(chunk_list[:5])  # Max 5 chunks per document
+                        context_parts.append(f"Документ '{filename}':\n{doc_content}")
+                
+                # Jeśli nie ma chunks, próbujemy uzyskać content z Document
+                if not context_parts:
+                    docs_result = await self.db.execute(
+                        select(Document.id, Document.filename, Document.content)
+                        .where(Document.project_id == project.id)
+                        .where(Document.content.isnot(None))
+                        .where(Document.content != "")
+                        .where(Document.content.notin_([
+                            get_constant("constants.document_status.processing", "Обработка..."),
+                            get_constant("constants.document_status.processed", "Обработан")
+                        ]))
+                        .limit(5)
+                    )
+                    documents = docs_result.all()
                     
-                    enhanced_prompt = f"""Вопрос пользователя: {question}
+                    for doc_id, filename, content in documents:
+                        content_preview = content[:2000] if content else ""
+                        if content_preview:
+                            context_parts.append(f"Документ '{filename}':\n{content_preview}...")
+                
+                # Jeśli mamy zawartość, używamy jej
+                if context_parts:
+                    context = "\n\n---\n\n".join(context_parts)
+                    
+                    # Dodajemy metadane jako dodatkowy kontekst
+                    from app.services.document_metadata_service import DocumentMetadataService
+                    metadata_service = DocumentMetadataService()
+                    documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
+                    if documents_metadata:
+                        metadata_context = metadata_service.create_metadata_context(documents_metadata)
+                        context += f"\n\nДополнительная информация о документах:\n{metadata_context}"
+                    
+                    enhanced_prompt = get_prompt("prompts.content_question.with_chunks", context=context, question=question)
+                    
+                    messages = [
+                        {"role": "system", "content": get_prompt("prompts.system.document_assistant")},
+                        {"role": "user", "content": enhanced_prompt}
+                    ]
+                    
+                    logger.info(f"[RAG SERVICE FAST] Content question: using document content from {len(context_parts)} sources")
+                else:
+                    # Fallback: metadane tylko jeśli nie ma zawartości
+                    logger.warning(f"[RAG SERVICE FAST] Content question: no document content available, using metadata as last resort")
+                    from app.services.document_metadata_service import DocumentMetadataService
+                    metadata_service = DocumentMetadataService()
+                    documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
+                    if documents_metadata:
+                        metadata_context = metadata_service.create_metadata_context(documents_metadata)
+                        context = get_prompt("prompts.content_question.metadata_only", metadata_context=metadata_context)
+                        
+                        enhanced_prompt = f"""Вопрос пользователя: {question}
 
 Используй информацию о документах выше для ответа. Если вопрос о summary каждого файла, предоставь краткое описание каждого файла на основе его названия и ключевых слов.
 
 Ответ:"""
-                    
-                    messages = [
-                        {"role": "system", "content": get_prompt("prompts.system.metadata_assistant")},
-                        {"role": "user", "content": enhanced_prompt}
-                    ]
-                    
-                    # Генерируем ответ через LLM
-                    from app.models.llm_model import GlobalModelSettings
-                    from sqlalchemy import select
-                    settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
-                    global_settings = settings_result.scalar_one_or_none()
-                    
-                    primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
-                    fallback_model = global_settings.fallback_model_id if global_settings else None
-                    
-                    if not primary_model:
-                        from app.core.config import settings as app_settings
-                        primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
-                        fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
-                    
-                    llm_client = OpenRouterClient(
-                        model_primary=primary_model,
-                        model_fallback=fallback_model
-                    )
-                    
-                    answer = await llm_client.chat_completion(
-                        messages=messages,
-                        max_tokens=1000,
-                        temperature=0.2
-                    )
-                    
-                    if answer:
-                        logger.info(f"[RAG SERVICE FAST] Content question answered successfully using metadata")
-                        return answer
+                        
+                        messages = [
+                            {"role": "system", "content": get_prompt("prompts.system.metadata_assistant")},
+                            {"role": "user", "content": enhanced_prompt}
+                        ]
+                    else:
+                        # Brak zawartości i metadanych - nie możemy odpowiedzieć
+                        logger.error(f"[RAG SERVICE FAST] Content question: no content or metadata available")
+                        return get_constant("constants.errors.no_information", "В загруженных документах нет информации по этому вопросу.")
+                
+                # Генерируем ответ через LLM
+                from app.models.llm_model import GlobalModelSettings
+                from sqlalchemy import select
+                settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+                global_settings = settings_result.scalar_one_or_none()
+                
+                primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
+                fallback_model = global_settings.fallback_model_id if global_settings else None
+                
+                if not primary_model:
+                    from app.core.config import settings as app_settings
+                    primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                    fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
+                
+                llm_client = OpenRouterClient(
+                    model_primary=primary_model,
+                    model_fallback=fallback_model
+                )
+                
+                answer = await llm_client.chat_completion(
+                    messages=messages,
+                    max_tokens=1000,
+                    temperature=0.2
+                )
+                
+                if answer:
+                    logger.info(f"[RAG SERVICE FAST] Content question answered successfully")
+                    return answer
             except Exception as content_error:
                 logger.warning(f"[RAG SERVICE FAST] Error handling content question: {content_error}")
         
