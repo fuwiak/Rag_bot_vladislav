@@ -286,7 +286,7 @@ class RAGService:
                         
                         # Техника 2: Если нет чанков в БД, получаем документы и используем chunking
                         if not chunk_texts:
-                        try:
+                            try:
                             result = await self.db.execute(
                                 select(Document)
                                 .where(Document.project_id == project.id)
