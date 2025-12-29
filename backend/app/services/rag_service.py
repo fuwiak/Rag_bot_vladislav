@@ -298,7 +298,7 @@ class RAGService:
                                 documents = result.scalars().all()
                             except Exception:
                                 # Fallback на raw SQL
-                            result = await self.db.execute(
+                                result = await self.db.execute(
                                 text("""
                                     SELECT id, filename, content, file_type 
                                     FROM documents 
@@ -309,16 +309,16 @@ class RAGService:
                                     LIMIT 10
                                 """),
                                 {"project_id": str(project.id)}
-                            )
-                            rows = result.all()
-                            documents = []
-                            for row in rows:
-                                doc = Document()
-                                doc.id = row[0]
-                                doc.filename = row[1]
-                                doc.content = row[2]
-                                doc.file_type = row[3]
-                                documents.append(doc)
+                                )
+                                rows = result.all()
+                                documents = []
+                                for row in rows:
+                                    doc = Document()
+                                    doc.id = row[0]
+                                    doc.filename = row[1]
+                                    doc.content = row[2]
+                                    doc.file_type = row[3]
+                                    documents.append(doc)
                     
                     # Используем DocumentChunker для разбивки на чанки с большим overlap (50-75%)
                     # Overlapping Chunks z kontekstem - улучшенный chunking
