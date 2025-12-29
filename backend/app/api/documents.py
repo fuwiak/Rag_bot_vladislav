@@ -108,6 +108,16 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                     await db.commit()
                 return  # Прерываем обработку, но не падаем
             
+            # Проверяем, что текст не пустой
+            if not text or not text.strip():
+                logger.error(f"Документ {document_id} ({filename}) вернул пустой текст - невозможно обработать. PDF может быть сканированным/на основе изображений.")
+                result = await db.execute(select(Document).where(Document.id == document_id))
+                document = result.scalar_one_or_none()
+                if document:
+                    document.content = "Ошибка: документ вернул пустой текст. PDF может быть сканированным или содержать только изображения."
+                    await db.commit()
+                return
+            
             # Получаем документ и обновляем его content
             result = await db.execute(select(Document).where(Document.id == document_id))
             document = result.scalar_one_or_none()
@@ -156,6 +166,24 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             
             logger.info(f"[Process] Document split into {len(chunks)} chunks")
             
+            # Определяем, является ли документ длинным (более 100,000 символов или более 100 чанков)
+            # Для длинных документов используем оптимизированный LongDocumentService
+            is_long_document = len(text) > 100_000 or len(chunks) > 100
+            
+            if is_long_document:
+                logger.info(f"[Process] Long document detected ({len(text)} chars, {len(chunks)} chunks). Using LongDocumentService for batch processing...")
+                from app.services.long_document_service import LongDocumentService
+                long_doc_service = LongDocumentService(db)
+                total_processed = await long_doc_service.process_long_document(
+                    document_id=document.id,
+                    project_id=project_id,
+                    text=text,
+                    batch_size=50
+                )
+                logger.info(f"[Process] Long document processing complete: {total_processed} chunks processed")
+                return
+            
+            # Для обычных документов используем стандартную обработку по одному чанку
             # Создание эмбеддингов по одному для минимального использования памяти
             from app.services.embedding_service import EmbeddingService
             from app.vector_db.vector_store import VectorStore

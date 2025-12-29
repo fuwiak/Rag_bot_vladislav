@@ -73,32 +73,109 @@ class DocumentParser:
         return "\n".join(paragraphs)
     
     def _parse_pdf(self, content: bytes) -> str:
-        """Парсинг PDF файла (блокирующая операция, выполняется в thread pool)"""
+        """Парсинг PDF файла (блокирующая операция, выполняется в thread pool)
+        
+        Использует PyPDF2 как основной парсер, с fallback на pdfplumber для лучшей поддержки простых PDF.
+        """
         import gc
         
         pdf_file = io.BytesIO(content)
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        
         text_parts = []
-        # Обрабатываем страницы по одной и освобождаем память
-        for i, page in enumerate(pdf_reader.pages):
-            try:
-                text = page.extract_text()
-                if text.strip():
-                    text_parts.append(text)
+        total_pages = 0
+        empty_pages = 0
+        error_pages = 0
+        
+        # Пробуем PyPDF2 сначала
+        try:
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            total_pages = len(pdf_reader.pages)
+            
+            # Обрабатываем страницы по одной и освобождаем память
+            for i, page in enumerate(pdf_reader.pages):
+                try:
+                    text = page.extract_text()
+                    if text and text.strip():
+                        text_parts.append(text)
+                    else:
+                        empty_pages += 1
+                        logger.warning(f"PDF page {i+1}/{total_pages} returned empty text (PyPDF2)")
+                except Exception as e:
+                    error_pages += 1
+                    logger.warning(f"Error extracting text from page {i+1}/{total_pages} (PyPDF2): {e}")
+                    continue
+                
                 # Освобождаем память после каждой страницы
                 if i % 10 == 0:  # Каждые 10 страниц
                     gc.collect()
-            except Exception as e:
-                # Пропускаем страницы с ошибками, продолжаем обработку
-                continue
+            
+            # Освобождаем память после парсинга
+            del pdf_reader
+            del pdf_file
+            gc.collect()
+            
+            # Если PyPDF2 не извлек текст или слишком много пустых страниц, пробуем pdfplumber
+            if not text_parts or (empty_pages > total_pages * 0.5 and total_pages > 0):
+                logger.warning(f"PyPDF2 extracted {len(text_parts)} pages with text, {empty_pages} empty pages. Trying pdfplumber fallback...")
+                return self._parse_pdf_with_pdfplumber(content)
+            
+            if empty_pages == total_pages and total_pages > 0:
+                logger.error(f"All {total_pages} pages returned empty text with PyPDF2. Trying pdfplumber fallback...")
+                return self._parse_pdf_with_pdfplumber(content)
+            
+            logger.info(f"PDF parsed successfully: {len(text_parts)} pages with text, {empty_pages} empty, {error_pages} errors (PyPDF2)")
+            return "\n\n".join(text_parts)
+            
+        except Exception as e:
+            logger.error(f"PyPDF2 failed to parse PDF: {e}. Trying pdfplumber fallback...")
+            return self._parse_pdf_with_pdfplumber(content)
+    
+    def _parse_pdf_with_pdfplumber(self, content: bytes) -> str:
+        """Fallback парсер PDF используя pdfplumber (лучше для простых PDF)"""
+        import gc
+        try:
+            import pdfplumber
+        except ImportError:
+            logger.error("pdfplumber not installed. Install with: pip install pdfplumber")
+            raise ImportError("pdfplumber не установлен. Установите: pip install pdfplumber")
         
-        # Освобождаем память после парсинга
-        del pdf_reader
-        del pdf_file
-        gc.collect()
+        pdf_file = io.BytesIO(content)
+        text_parts = []
+        total_pages = 0
+        empty_pages = 0
         
-        return "\n\n".join(text_parts)
+        try:
+            with pdfplumber.open(pdf_file) as pdf:
+                total_pages = len(pdf.pages)
+                
+                for i, page in enumerate(pdf.pages):
+                    try:
+                        text = page.extract_text()
+                        if text and text.strip():
+                            text_parts.append(text)
+                        else:
+                            empty_pages += 1
+                            logger.warning(f"PDF page {i+1}/{total_pages} returned empty text (pdfplumber)")
+                    except Exception as e:
+                        logger.warning(f"Error extracting text from page {i+1}/{total_pages} (pdfplumber): {e}")
+                        empty_pages += 1
+                        continue
+                    
+                    # Освобождаем память после каждой страницы
+                    if i % 10 == 0:
+                        gc.collect()
+            
+            if empty_pages == total_pages and total_pages > 0:
+                logger.error(f"All {total_pages} pages returned empty text with pdfplumber. PDF may be scanned/image-based.")
+            
+            logger.info(f"PDF parsed with pdfplumber: {len(text_parts)} pages with text, {empty_pages} empty")
+            return "\n\n".join(text_parts)
+            
+        except Exception as e:
+            logger.error(f"pdfplumber also failed to parse PDF: {e}")
+            raise
+        finally:
+            del pdf_file
+            gc.collect()
     
     def _parse_excel(self, content: bytes) -> str:
         """Парсинг Excel файла (блокирующая операция, выполняется в thread pool)"""
