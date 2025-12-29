@@ -354,14 +354,14 @@ class RAGService:
                             # Техника 3: Если все еще нет чанков, используем простой preview
                             if not chunk_texts:
                                 try:
-                            result = await self.db.execute(
+                                result = await self.db.execute(
                                 select(Document)
                                 .where(Document.project_id == project.id)
                                 .limit(5)
-                            )
-                            documents = result.scalars().all()
+                                )
+                                documents = result.scalars().all()
                             
-                            for doc in documents:
+                                for doc in documents:
                                 if doc.content and len(doc.content) > 50:
                                     # Простой preview - первые 1000 символов
                                     content_preview = doc.content[:1000]
@@ -375,10 +375,10 @@ class RAGService:
                                         "score": 0.7 if is_relevant else 0.4
                                     })
                             
-                            if chunk_texts:
+                                if chunk_texts:
                                 logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content previews")
                         except Exception as preview_error:
-                            logger.warning(f"[RAG SERVICE] Error extracting previews: {preview_error}")
+                                logger.warning(f"[RAG SERVICE] Error extracting previews: {preview_error}")
                 except Exception as extract_error:
                     logger.warning(f"[RAG SERVICE] Error extracting content from documents: {extract_error}")
                     
@@ -387,21 +387,21 @@ class RAGService:
                         logger.info(f"[RAG SERVICE] Still no chunks after extraction techniques, trying Late Chunking")
                         try:
                             # Late Chunking - создаем embedding всего документа
-                            from app.models.document import Document
-                            from sqlalchemy import select
-                            import numpy as np
+                                from app.models.document import Document
+                                from sqlalchemy import select
+                                import numpy as np
                             
-                            result = await self.db.execute(
+                                result = await self.db.execute(
                                 select(Document)
                                 .where(Document.project_id == project.id)
                                 .where(Document.content.isnot(None))
                                 .where(Document.content != "")
                                 .where(Document.content.notin_(["Обработка...", "Обработан"]))
                                 .limit(2)
-                            )
-                            documents = result.scalars().all()
+                                )
+                                documents = result.scalars().all()
                             
-                            if documents:
+                                if documents:
                                 # Создаем эмбеддинг вопроса
                                 question_embedding = await self.embedding_service.create_embedding(question)
                                 
@@ -425,7 +425,7 @@ class RAGService:
                                             best_doc = doc
                             
                             # Если нашли релевантный документ, используем его первые 5000 символов как чанк
-                            if best_doc and best_score > 0.3:
+                                if best_doc and best_score > 0.3:
                                 doc_content = best_doc.content[:5000]
                                 if len(best_doc.content) > 5000:
                                     doc_content += "..."
@@ -437,7 +437,7 @@ class RAGService:
                                 })
                                 logger.info(f"[RAG SERVICE] Late chunking found relevant document '{best_doc.filename}' with score {best_score:.2f}")
                         except Exception as late_error:
-                            logger.warning(f"[RAG SERVICE] Late chunking failed: {late_error}")
+                                logger.warning(f"[RAG SERVICE] Late chunking failed: {late_error}")
                 
                 # Инициализируем chunks_for_prompt для использования в блоке else
                 chunks_for_prompt = []
