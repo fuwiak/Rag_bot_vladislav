@@ -353,7 +353,7 @@ class RAGService:
                             
                             # Техника 3: Если все еще нет чанков, используем простой preview
                             if not chunk_texts:
-                        try:
+                                try:
                             result = await self.db.execute(
                                 select(Document)
                                 .where(Document.project_id == project.id)
