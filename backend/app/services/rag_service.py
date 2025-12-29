@@ -930,31 +930,25 @@ class RAGService:
             )
             total_chunks = total_chunks_result.scalar() or 0
             
-            if total_chunks == 0:
-                return "Документы еще обрабатываются. Пожалуйста, подождите несколько секунд и попробуйте снова."
-            elif processed_chunks == 0:
-                return "Документы обрабатываются (chunks созданы, но embeddings еще не готовы). Пожалуйста, подождите несколько секунд и попробуйте снова."
+            # Nie zwracamy błędu tutaj - pozwalamy kodowi przejść do generowania summary
+            # jeśli nie ma chunków w Qdrant (sprawdzane później w linii 986)
+            
+            # Создаем embedding для вопроса
+            # Используем локальные embeddings если доступны
+            if use_local_embeddings:
+                embedding_service = EmbeddingService(use_local=True)
             else:
-                # Chunks są, ale kolekcja nie istnieje - próbujemy utworzyć
-                logger.warning(f"[RAG SERVICE SIMPLE] Collection {collection_name} doesn't exist but {processed_chunks} chunks have qdrant_point_id")
-                return "Документы обрабатываются. Пожалуйста, подождите несколько секунд и попробуйте снова."
-        
-        # Создаем embedding для вопроса
-        # Используем локальные embeddings если доступны
-        if use_local_embeddings:
-            embedding_service = EmbeddingService(use_local=True)
-        else:
-            embedding_service = self.embedding_service
-        
-        question_embedding = await embedding_service.create_embedding(question)
-        
-        # Простой поиск в Qdrant (jak w prostym kodzie)
-        similar_chunks = await self.vector_store.search_similar(
-            collection_name=collection_name,
-            query_vector=question_embedding,
-            limit=top_k,
-            score_threshold=0.0  # Берем wszystkie, nawet z niskim score
-        )
+                embedding_service = self.embedding_service
+            
+            question_embedding = await embedding_service.create_embedding(question)
+            
+            # Простой поиск в Qdrant (jak w prostym kodzie)
+            similar_chunks = await self.vector_store.search_similar(
+                collection_name=collection_name,
+                query_vector=question_embedding,
+                limit=top_k,
+                score_threshold=0.0  # Берем wszystkie, nawet z niskim score
+            )
         
         # Формируем контекст z chunków jeśli są
         context_parts = []

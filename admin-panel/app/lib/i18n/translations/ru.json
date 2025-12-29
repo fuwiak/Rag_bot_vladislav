@@ -19,7 +19,8 @@
     "projects": "Проекты",
     "allUsers": "Все пользователи",
     "botManagement": "Управление ботами",
-    "modelManagement": "Управление моделями"
+    "modelManagement": "Управление моделями",
+    "ragDiagnostics": "Диагностика RAG"
   },
   "dashboard": {
     "title": "Проекты",
