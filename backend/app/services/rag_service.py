@@ -360,25 +360,25 @@ class RAGService:
                                         .limit(5)
                                     )
                                     documents = result.scalars().all()
-                            
-                                for doc in documents:
-                                if doc.content and len(doc.content) > 50:
-                                    # Простой preview - первые 1000 символов
-                                    content_preview = doc.content[:1000]
-                                    if len(doc.content) > 1000:
-                                        content_preview += "..."
                                     
-                                    is_relevant = doc.filename.lower() in question.lower()
-                                    chunk_texts.append({
-                                        "text": f"Документ '{doc.filename}':\n{content_preview}",
-                                        "source": doc.filename,
-                                        "score": 0.7 if is_relevant else 0.4
-                                    })
-                            
-                                if chunk_texts:
-                                logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content previews")
-                        except Exception as preview_error:
-                                logger.warning(f"[RAG SERVICE] Error extracting previews: {preview_error}")
+                                    for doc in documents:
+                                        if doc.content and len(doc.content) > 50:
+                                            # Простой preview - первые 1000 символов
+                                            content_preview = doc.content[:1000]
+                                            if len(doc.content) > 1000:
+                                                content_preview += "..."
+                                            
+                                            is_relevant = doc.filename.lower() in question.lower()
+                                            chunk_texts.append({
+                                                "text": f"Документ '{doc.filename}':\n{content_preview}",
+                                                "source": doc.filename,
+                                                "score": 0.7 if is_relevant else 0.4
+                                            })
+                                    
+                                    if chunk_texts:
+                                        logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content previews")
+                                except Exception as preview_error:
+                                    logger.warning(f"[RAG SERVICE] Error extracting previews: {preview_error}")
                 except Exception as extract_error:
                     logger.warning(f"[RAG SERVICE] Error extracting content from documents: {extract_error}")
                     
