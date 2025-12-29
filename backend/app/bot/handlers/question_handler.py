@@ -464,7 +464,6 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                 "Попробуйте позже или обратитесь к администратору."
             )
 
-
 def register_question_handlers(dp: Dispatcher, project_id: str):
     """Регистрация обработчиков вопросов
     

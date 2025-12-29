@@ -96,10 +96,36 @@ class DocumentSummaryService:
                 logger.warning(f"Document {document_id} has no content yet")
                 return None
             
-            # Ограничиваем длину контента для summary (первые 8000 символов)
-            content_for_summary = content[:8000]
-            if len(content) > 8000:
-                content_for_summary += "..."
+            # ✅ ОПТИМИЗАЦИЯ: Анализируем весь документ с умным подходом
+            # Для очень длинных документов используем стратегию анализа по частям
+            content_length = len(content)
+            max_context_length = 100000  # Максимальная длина для одного запроса (100k символов)
+            
+            if content_length <= max_context_length:
+                # Документ помещается в один запрос - анализируем целиком
+                content_for_summary = content
+                logger.info(f"Document {document_id} fits in one request ({content_length} chars), analyzing full content")
+            else:
+                # Документ слишком длинный - используем стратегию анализа по частям
+                logger.info(f"Document {document_id} is very long ({content_length} chars), using multi-part analysis")
+                # Берем начало, середину и конец документа для полного понимания
+                part_size = max_context_length // 3
+                beginning = content[:part_size]
+                middle_start = content_length // 2 - part_size // 2
+                middle = content[middle_start:middle_start + part_size]
+                end = content[-part_size:]
+                
+                content_for_summary = f"""НАЧАЛО ДОКУМЕНТА:
+{beginning}
+
+СЕРЕДИНА ДОКУМЕНТА:
+{middle}
+
+КОНЕЦ ДОКУМЕНТА:
+{end}
+
+ПРИМЕЧАНИЕ: Документ содержит {content_length} символов. Проанализируй все три части для создания полного summary."""
+                logger.info(f"Using multi-part analysis: beginning ({len(beginning)}), middle ({len(middle)}), end ({len(end)})")
             
             # Определяем модель LLM
             primary_model = None
@@ -125,23 +151,33 @@ class DocumentSummaryService:
                 model_fallback=fallback_model
             )
             
-            # Промпт для создания summary
-            prompt = f"""Создай краткое содержание (summary) следующего документа на русском языке.
+            # ✅ УЛУЧШЕННЫЙ ПРОМПТ для создания summary с минимальными искажениями
+            prompt = f"""Проанализируй весь документ и создай точное краткое содержание (summary) на русском языке.
 
 Название файла: {document.filename}
 Тип файла: {document.file_type}
+Общая длина документа: {content_length} символов
 
-Содержимое документа:
+СОДЕРЖИМОЕ ДОКУМЕНТА:
 {content_for_summary}
 
-Требования к summary:
-1. Краткое содержание должно быть на русском языке
-2. Длина: 200-500 символов
-3. Должно отражать основные темы и ключевую информацию документа
-4. Будь конкретным и информативным
-5. Не используй маркеры или нумерацию
+КРИТИЧЕСКИ ВАЖНЫЕ ТРЕБОВАНИЯ К SUMMARY:
+1. Язык: ТОЛЬКО русский язык
+2. Длина: 300-600 символов (достаточно для полного описания)
+3. Точность: Отрази ВСЕ основные темы и ключевую информацию из документа
+4. Минимальные искажения: Сохрани точность фактов, цифр, дат, имен собственных
+5. Структура: Начни с главной темы, затем ключевые пункты
+6. Полнота: Упомяни все важные аспекты документа
+7. Формат: Сплошной текст без маркеров, нумерации или заголовков
+8. Стиль: Информативный, профессиональный, без лишних слов
 
-Создай только summary, без дополнительных комментариев:"""
+ВАЖНО: 
+- Если документ содержит специфические термины, используй их точно
+- Если есть важные цифры или даты, включи их в summary
+- Сохрани логическую структуру документа
+- Не добавляй информацию, которой нет в документе
+
+Создай только summary, без дополнительных комментариев или предисловий:"""
             
             messages = [
                 {
@@ -154,11 +190,13 @@ class DocumentSummaryService:
                 }
             ]
             
-            logger.info(f"Generating summary for document {document_id} ({document.filename})")
+            logger.info(f"Generating summary for document {document_id} ({document.filename}), content length: {content_length}")
+            # ✅ Увеличиваем max_tokens для более подробного summary (300->500)
+            # ✅ Низкая temperature (0.2) для максимальной точности и минимальных искажений
             summary = await llm_client.chat_completion(
                 messages=messages,
-                max_tokens=300,
-                temperature=0.3
+                max_tokens=500,  # Увеличено для более полного summary
+                temperature=0.2  # Снижено для максимальной точности
             )
             
             # Очищаем summary от лишних символов

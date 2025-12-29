@@ -73,7 +73,7 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                 welcome_text += "\n❓ <b>Задайте ваш вопрос:</b>"
                 await message.answer(welcome_text)
                 
-                # Отправляем клавиатуру с режимами
+                # Отправляем клавиатуру с режимами и типовыми запросами
                 mode_keyboard = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
@@ -92,9 +92,21 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                             text="💡 Предложить вопросы",
                             callback_data="suggest_questions"
                         )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="📋 Резюме документа",
+                            callback_data="get_summary"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="📝 Описание содержания",
+                            callback_data="get_description"
+                        )
                     ]
                 ])
-                await message.answer("🔧 <b>Управление режимом ответа:</b>", reply_markup=mode_keyboard)
+                await message.answer("🔧 <b>Управление режимом ответа и типовые запросы:</b>", reply_markup=mode_keyboard)
                 return
         
         # Если пользователь уже авторизован в текущей сессии
@@ -251,7 +263,11 @@ async def cmd_help(message: Message, state: FSMContext):
         help_text += "/files - Показать список документов (английский вариант)\n"
         help_text += "/файлы - Показать список документов (русский вариант)\n"
         help_text += "/suggest_questions - Предложить вопросы на основе документов\n"
-        help_text += "/вопросы - Предложить вопросы (альтернатива)\n"
+        help_text += "/вопросы - Предложить вопросы (альтернатива)\n\n"
+        help_text += "📋 <b>Типовые запросы:</b>\n"
+        help_text += "/summary или /резюме - Получить резюме документа/блока\n"
+        help_text += "/describe или /описание - Описание содержания документа\n"
+        help_text += "Просто задайте вопрос - Ответ на вопрос на основе документов\n"
     
     help_text += "\n❓ <b>Как задать вопрос:</b>\n"
     help_text += "Просто напишите ваш вопрос в свободной форме, и бот найдет ответ в документах проекта.\n"
@@ -385,6 +401,182 @@ async def cmd_documents(message: Message, state: FSMContext):
             await message.answer(docs_text)
 
 
+async def cmd_summary(message: Message, state: FSMContext):
+    """Обработка команды /summary или /резюме - получить резюме документа или блока"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    current_state = await state.get_state()
+    if current_state != AuthStates.authorized:
+        await message.answer("Пожалуйста, сначала авторизуйтесь через /start")
+        return
+    
+    data = await state.get_data()
+    user_id_str = data.get("user_id")
+    if not user_id_str:
+        await message.answer("Ошибка: пользователь не найден. Используйте /start")
+        return
+    
+    from uuid import UUID
+    try:
+        user_id = UUID(user_id_str)
+    except ValueError:
+        await message.answer("Ошибка: неверный формат ID пользователя. Используйте /start")
+        return
+    
+    async with AsyncSessionLocal() as db:
+        from app.models.user import User
+        from app.models.document import Document
+        from sqlalchemy import select
+        from app.services.document_summary_service import DocumentSummaryService
+        
+        user_result = await db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        
+        if not user:
+            await message.answer("Ошибка: пользователь не найден")
+            return
+        
+        project_id = user.project_id
+        
+        # Получаем последний документ проекта или все документы
+        result = await db.execute(
+            select(Document)
+            .where(Document.project_id == project_id)
+            .order_by(Document.created_at.desc())
+            .limit(10)
+        )
+        documents = result.scalars().all()
+        
+        if not documents:
+            await message.answer("📄 В проекте пока нет документов для анализа.")
+            return
+        
+        processing_msg = await message.answer("⏳ Анализирую документы и создаю резюме...")
+        
+        try:
+            summary_service = DocumentSummaryService(db)
+            
+            # Если один документ - резюме этого документа
+            if len(documents) == 1:
+                doc = documents[0]
+                summary = await summary_service.generate_summary(doc.id)
+                if summary:
+                    await processing_msg.delete()
+                    await message.answer(f"📄 <b>Резюме документа «{doc.filename}»:</b>\n\n{summary}")
+                else:
+                    await processing_msg.delete()
+                    await message.answer(f"❌ Не удалось создать резюме для документа «{doc.filename}»")
+            else:
+                # Несколько документов - создаем общее резюме
+                summaries = []
+                for doc in documents[:5]:  # Максимум 5 документов
+                    doc_summary = getattr(doc, 'summary', None)
+                    if not doc_summary:
+                        doc_summary = await summary_service.generate_summary(doc.id)
+                    if doc_summary:
+                        summaries.append(f"<b>{doc.filename}:</b> {doc_summary}")
+                
+                if summaries:
+                    await processing_msg.delete()
+                    summary_text = "📄 <b>Резюме документов проекта:</b>\n\n" + "\n\n".join(summaries)
+                    # Разбиваем на части если длинное
+                    max_length = 4096
+                    if len(summary_text) > max_length:
+                        parts = [summary_text[i:i+max_length] for i in range(0, len(summary_text), max_length)]
+                        for part in parts:
+                            await message.answer(part)
+                    else:
+                        await message.answer(summary_text)
+                else:
+                    await processing_msg.delete()
+                    await message.answer("❌ Не удалось создать резюме документов")
+        except Exception as e:
+            logger.error(f"Error generating summary: {e}", exc_info=True)
+            await processing_msg.delete()
+            await message.answer("❌ Произошла ошибка при создании резюме. Попробуйте позже.")
+
+
+async def cmd_describe(message: Message, state: FSMContext):
+    """Обработка команды /describe или /описание - описание содержания документа"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    current_state = await state.get_state()
+    if current_state != AuthStates.authorized:
+        await message.answer("Пожалуйста, сначала авторизуйтесь через /start")
+        return
+    
+    data = await state.get_data()
+    user_id_str = data.get("user_id")
+    if not user_id_str:
+        await message.answer("Ошибка: пользователь не найден. Используйте /start")
+        return
+    
+    from uuid import UUID
+    try:
+        user_id = UUID(user_id_str)
+    except ValueError:
+        await message.answer("Ошибка: неверный формат ID пользователя. Используйте /start")
+        return
+    
+    async with AsyncSessionLocal() as db:
+        from app.models.user import User
+        from app.models.document import Document
+        from sqlalchemy import select
+        from app.services.rag_service import RAGService
+        
+        user_result = await db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        
+        if not user:
+            await message.answer("Ошибка: пользователь не найден")
+            return
+        
+        project_id = user.project_id
+        
+        # Получаем документы проекта
+        result = await db.execute(
+            select(Document)
+            .where(Document.project_id == project_id)
+            .order_by(Document.created_at.desc())
+            .limit(10)
+        )
+        documents = result.scalars().all()
+        
+        if not documents:
+            await message.answer("📄 В проекте пока нет документов для описания.")
+            return
+        
+        processing_msg = await message.answer("⏳ Анализирую содержание документов...")
+        
+        try:
+            rag_service = RAGService(db)
+            
+            # Используем RAG для создания описания содержания
+            question = "Опиши кратко содержание всех документов проекта. Что в них содержится? Какие основные темы?"
+            answer = await rag_service.generate_answer(user_id, question)
+            
+            await processing_msg.delete()
+            
+            if answer:
+                description_text = f"📄 <b>Описание содержания документов проекта:</b>\n\n{answer}"
+                # Разбиваем на части если длинное
+                max_length = 4096
+                if len(description_text) > max_length:
+                    parts = [description_text[i:i+max_length] for i in range(0, len(description_text), max_length)]
+                    for part in parts:
+                        await message.answer(part)
+                else:
+                    await message.answer(description_text)
+            else:
+                await message.answer("❌ Не удалось создать описание содержания документов")
+        except Exception as e:
+            logger.error(f"Error generating description: {e}", exc_info=True)
+            await processing_msg.delete()
+            await message.answer("❌ Произошла ошибка при создании описания. Попробуйте позже.")
+
+
 async def cmd_suggest_questions(message: Message, state: FSMContext):
     """Обработка команды /suggest_questions - предложить вопросы на основе документов"""
     import logging
@@ -472,6 +664,18 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
                     text="💡 Предложить вопросы",
                     callback_data="suggest_questions"
                 )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📋 Резюме документа",
+                    callback_data="get_summary"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📝 Описание содержания",
+                    callback_data="get_description"
+                )
             ]
         ])
         try:
@@ -506,6 +710,18 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
                 InlineKeyboardButton(
                     text="💡 Предложить вопросы",
                     callback_data="suggest_questions"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📋 Резюме документа",
+                    callback_data="get_summary"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📝 Описание содержания",
+                    callback_data="get_description"
                 )
             ]
         ])
@@ -570,6 +786,14 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
             logger.error(f"Error generating suggested questions: {e}", exc_info=True)
             await processing_msg.delete()
             await callback.message.answer("❌ Произошла ошибка при генерации вопросов. Попробуйте позже.")
+    elif mode == "get_summary":
+        # Вызываем команду summary напрямую
+        await callback.answer()
+        await cmd_summary(callback.message, state)
+    elif mode == "get_description":
+        # Вызываем команду describe напрямую
+        await callback.answer()
+        await cmd_describe(callback.message, state)
 
 
 def register_commands(dp: Dispatcher, project_id: str):
@@ -584,5 +808,8 @@ def register_commands(dp: Dispatcher, project_id: str):
     dp.message.register(cmd_documents, Command("файлы"))
     # Регистрируем команду для предложения вопросов
     dp.message.register(cmd_suggest_questions, Command("suggest_questions", "предложить_вопросы", "вопросы", "questions"))
-    # Регистрируем обработчик callback для переключения режимов
+    # Регистрируем команды для типовых запросов
+    dp.message.register(cmd_summary, Command("summary", "резюме", "summary_doc", "резюме_документа"))
+    dp.message.register(cmd_describe, Command("describe", "описание", "describe_doc", "описание_документа"))
+    # Регистрируем обработчик callback для переключения режимов и типовых запросов
     dp.callback_query.register(handle_mode_callback)
