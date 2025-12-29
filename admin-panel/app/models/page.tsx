@@ -55,8 +55,48 @@ export default function ModelsPage() {
     fetchData()
   }, [router])
 
-  const fetchData = async () => {
+  const fetchData = async (useCache = true) => {
     try {
+      const { cache, cacheKeys } = await import('../lib/cache')
+      
+      // Проверяем кэш сначала
+      if (useCache) {
+        const cachedModels = cache.get<Model[]>(cacheKeys.models)
+        const cachedProjects = cache.get<Project[]>(cacheKeys.projects)
+        const cachedSettings = cache.get<{primary_model_id: string | null, fallback_model_id: string | null}>(cacheKeys.globalSettings)
+        
+        if (cachedModels && cachedProjects && cachedSettings) {
+          // Показываем кэшированные данные сразу
+          setModels(cachedModels)
+          setFilteredModels(cachedModels)
+          setProjects(cachedProjects)
+          setGlobalSettings(cachedSettings)
+          
+          // Инициализируем поисковые запросы
+          if (cachedSettings.primary_model_id) {
+            const primaryModel = cachedModels.find(m => m.id === cachedSettings.primary_model_id)
+            if (primaryModel) {
+              setPrimarySearchQuery(primaryModel.name)
+            } else {
+              setPrimarySearchQuery(cachedSettings.primary_model_id)
+            }
+          }
+          if (cachedSettings.fallback_model_id) {
+            const fallbackModel = cachedModels.find(m => m.id === cachedSettings.fallback_model_id)
+            if (fallbackModel) {
+              setFallbackSearchQuery(fallbackModel.name)
+            } else {
+              setFallbackSearchQuery(cachedSettings.fallback_model_id)
+            }
+          }
+          
+          setLoading(false)
+          // Обновляем данные в фоне
+          fetchData(false)
+          return
+        }
+      }
+
       const { apiFetch } = await import('../lib/api-helpers')
 
       // Загружаем модели, проекты и глобальные настройки параллельно
@@ -72,16 +112,22 @@ export default function ModelsPage() {
         loadedModels = modelsData.models || []
         setModels(loadedModels)
         setFilteredModels(loadedModels)
+        // Сохраняем в кэш на 5 минут (модели меняются редко)
+        cache.set(cacheKeys.models, loadedModels, 5 * 60 * 1000)
       }
 
       if (projectsRes.ok) {
         const projectsData = await projectsRes.json()
         setProjects(projectsData || [])
+        // Сохраняем в кэш на 2 минуты
+        cache.set(cacheKeys.projects, projectsData, 2 * 60 * 1000)
       }
 
       if (settingsRes.ok) {
         const settingsData = await settingsRes.json()
         setGlobalSettings(settingsData)
+        // Сохраняем в кэш на 2 минуты
+        cache.set(cacheKeys.globalSettings, settingsData, 2 * 60 * 1000)
         
         // Устанавливаем модели по умолчанию, если их нет
         const defaultPrimary = 'x-ai/grok-4.1-fast'
@@ -99,6 +145,8 @@ export default function ModelsPage() {
             }),
           }).then(res => res.json()).then(data => {
             setGlobalSettings(data)
+            // Обновляем кэш
+            cache.set(cacheKeys.globalSettings, data, 2 * 60 * 1000)
             // Инициализируем поисковые запросы (используем loadedModels z closure)
             const primaryModel = loadedModels.find(m => m.id === defaultPrimary)
             const fallbackModel = loadedModels.find(m => m.id === defaultFallback)
@@ -129,6 +177,23 @@ export default function ModelsPage() {
       }
     } catch (err) {
       console.error('Ошибка загрузки данных:', err)
+      
+      // При ошибке используем кэш, если есть
+      try {
+        const { cache, cacheKeys } = await import('../lib/cache')
+        const cachedModels = cache.get<Model[]>(cacheKeys.models)
+        const cachedProjects = cache.get<Project[]>(cacheKeys.projects)
+        const cachedSettings = cache.get<{primary_model_id: string | null, fallback_model_id: string | null}>(cacheKeys.globalSettings)
+        
+        if (cachedModels && cachedProjects && cachedSettings) {
+          setModels(cachedModels)
+          setFilteredModels(cachedModels)
+          setProjects(cachedProjects)
+          setGlobalSettings(cachedSettings)
+        }
+      } catch (cacheErr) {
+        console.error('Cache error:', cacheErr)
+      }
     } finally {
       setLoading(false)
     }
@@ -151,7 +216,10 @@ export default function ModelsPage() {
       if (response.ok) {
         const data = await response.json()
         alert('Модель успешно присвоена проекту')
-        fetchData() // Обновляем список проектов
+        // Очищаем кэш перед обновлением
+        const { cache, cacheKeys } = await import('../lib/cache')
+        cache.delete(cacheKeys.projects)
+        fetchData(false) // Обновляем список проектов без кэша
         setSelectedProject(null)
         setSelectedModel('')
       } else {
@@ -218,7 +286,10 @@ export default function ModelsPage() {
         const data = await response.json()
         setGlobalSettings(data)
         alert('Глобальные настройки обновлены')
-        fetchData()
+        // Очищаем кэш перед обновлением
+        const { cache, cacheKeys } = await import('../lib/cache')
+        cache.delete(cacheKeys.globalSettings)
+        fetchData(false) // Обновляем без кэша
       } else {
         const errorData = await response.json()
         alert(errorData.detail || 'Ошибка обновления настроек')
@@ -252,7 +323,10 @@ export default function ModelsPage() {
         setCustomModelId('')
         setCustomModelName('')
         setCustomModelDesc('')
-        fetchData()
+        // Очищаем кэш перед обновлением
+        const { cache, cacheKeys } = await import('../lib/cache')
+        cache.delete(cacheKeys.models)
+        fetchData(false) // Обновляем без кэша
         alert('Кастомная модель добавлена')
       } else {
         const errorData = await response.json()
