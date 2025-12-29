@@ -229,8 +229,9 @@ class RAGService:
             
             # ВСЕГДА получаем метаданные для использования в промпте (даже если есть чанки)
             # Это позволяет отвечать на вопросы о файлах и ключевых словах
-            if not metadata_context:
-                logger.info(f"[RAG SERVICE] Getting metadata for context")
+            # Для вопросов о содержании метаданные КРИТИЧНЫ - получаем их всегда
+            if not metadata_context or is_content_question:
+                logger.info(f"[RAG SERVICE] Getting metadata for context (is_content_question={is_content_question})")
                 try:
                     from app.services.document_metadata_service import DocumentMetadataService
                     metadata_service = DocumentMetadataService()
@@ -240,8 +241,14 @@ class RAGService:
                     if documents_metadata:
                         metadata_context = metadata_service.create_metadata_context(documents_metadata)
                         logger.info(f"[RAG SERVICE] Created metadata context from {len(documents_metadata)} documents")
+                    elif is_content_question:
+                        # Для вопросов о содержании метаданные обязательны - логируем предупреждение
+                        logger.warning(f"[RAG SERVICE] No metadata available for content question - documents may not be processed yet")
                 except Exception as metadata_error:
                     logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
+                    if is_content_question:
+                        # Для вопросов о содержании это критично
+                        logger.error(f"[RAG SERVICE] CRITICAL: Cannot get metadata for content question: {metadata_error}")
             
             # Логируем стратегию использования метаданных
             if metadata_context:
@@ -472,7 +479,8 @@ class RAGService:
             # Для вопросов о содержании используем простой промпт из рабочего скрипта
             if is_content_question:
                 # Для вопросов типа "summary of each file" - используем метаданные напрямую
-                if metadata_context and not chunk_texts:
+                # ВАЖНО: Для вопросов о содержании ВСЕГДА используем метаданные, даже если нет chunk_texts
+                if metadata_context:
                     # Просто используем метаданные - это работает как предложенные вопросы
                     logger.info(f"[RAG SERVICE] Content question with metadata only - using direct metadata approach")
                     context = get_prompt("prompts.content_question.metadata_only", metadata_context=metadata_context)
@@ -795,6 +803,9 @@ class RAGService:
         Returns:
             Короткий ответ на вопрос
         """
+        # Инициализируем answer для избежания UnboundLocalError
+        answer = None
+        
         # Получение пользователя и проекта
         user = await self.helpers.get_user(user_id)
         if not user:
@@ -803,6 +814,71 @@ class RAGService:
         project = await self.helpers.get_project(user.project_id)
         if not project:
             raise ValueError(get_constant("constants.errors.project_not_found", "Проект не найден"))
+        
+        # Проверяем, является ли вопрос о содержании документов
+        question_lower = question.lower()
+        is_content_question = any(word in question_lower for word in [
+            "содержание", "содержание документов", "обзор документов", 
+            "summary", "summary of", "summary of each", "summary of each file",
+            "обзор", "обзор файлов", "что в файлах", "список файлов"
+        ])
+        
+        # Для вопросов о содержании сразу используем метаданные
+        if is_content_question:
+            logger.info(f"[RAG SERVICE FAST] Content question detected: {question}")
+            try:
+                from app.services.document_metadata_service import DocumentMetadataService
+                metadata_service = DocumentMetadataService()
+                documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
+                if documents_metadata:
+                    metadata_context = metadata_service.create_metadata_context(documents_metadata)
+                    logger.info(f"[RAG SERVICE FAST] Using metadata for content question")
+                    
+                    # Используем промпт для вопросов о содержании
+                    from app.core.prompt_config import get_prompt
+                    context = get_prompt("prompts.content_question.metadata_only", metadata_context=metadata_context)
+                    
+                    enhanced_prompt = f"""Вопрос пользователя: {question}
+
+Используй информацию о документах выше для ответа. Если вопрос о summary каждого файла, предоставь краткое описание каждого файла на основе его названия и ключевых слов.
+
+Ответ:"""
+                    
+                    messages = [
+                        {"role": "system", "content": get_prompt("prompts.system.metadata_assistant")},
+                        {"role": "user", "content": enhanced_prompt}
+                    ]
+                    
+                    # Генерируем ответ через LLM
+                    from app.models.llm_model import GlobalModelSettings
+                    from sqlalchemy import select
+                    settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+                    global_settings = settings_result.scalar_one_or_none()
+                    
+                    primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
+                    fallback_model = global_settings.fallback_model_id if global_settings else None
+                    
+                    if not primary_model:
+                        from app.core.config import settings as app_settings
+                        primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                        fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
+                    
+                    llm_client = OpenRouterClient(
+                        model_primary=primary_model,
+                        model_fallback=fallback_model
+                    )
+                    
+                    answer = await llm_client.chat_completion(
+                        messages=messages,
+                        max_tokens=1000,
+                        temperature=0.2
+                    )
+                    
+                    if answer:
+                        logger.info(f"[RAG SERVICE FAST] Content question answered successfully using metadata")
+                        return answer
+            except Exception as content_error:
+                logger.warning(f"[RAG SERVICE FAST] Error handling content question: {content_error}")
         
         # Создание эмбеддинга вопроса
         question_embedding = await self.embedding_service.create_embedding(question)
@@ -854,7 +930,7 @@ class RAGService:
             except Exception as e2:
                 logger.warning(f"[RAG SERVICE FAST] Aggressive fallback failed: {e2}")
             
-            # Fallback 4: Sub-agents dla całych документов - обработка целых документов
+            # Fallback 4: Sub-agents для целых документов - обработка целых документов
             if not answer:
                 logger.info(f"[RAG SERVICE FAST] Trying sub-agent for full document processing")
                 try:
