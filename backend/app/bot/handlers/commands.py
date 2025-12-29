@@ -411,7 +411,7 @@ async def cmd_suggest_questions(message: Message, state: FSMContext):
     try:
         async with AsyncSessionLocal() as db:
             rag_service = RAGService(db)
-            questions = await rag_service.generate_suggested_questions(UUID(project_id_from_state), limit=5)
+            questions = await rag_service.suggestions.generate_suggested_questions(UUID(project_id_from_state), limit=5)
             
             await processing_msg.delete()
             
@@ -547,7 +547,7 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
         try:
             async with AsyncSessionLocal() as db:
                 rag_service = RAGService(db)
-                questions = await rag_service.generate_suggested_questions(UUID(project_id_from_state), limit=5)
+                questions = await rag_service.suggestions.generate_suggested_questions(UUID(project_id_from_state), limit=5)
                 
                 await processing_msg.delete()
                 

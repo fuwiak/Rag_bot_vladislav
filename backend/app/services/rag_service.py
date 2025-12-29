@@ -22,6 +22,10 @@ from app.observability.otel_setup import get_tracer
 from app.observability.metrics import rag_metrics
 from app.observability.structured_logging import get_logger, set_correlation_id, set_user_id, set_project_id
 from app.services.cache_service import cache_service
+from app.services.rag.retrieval import RAGRetrieval
+from app.services.rag.fallbacks import RAGFallbacks
+from app.services.rag.helpers import RAGHelpers
+from app.services.rag.suggestions import RAGSuggestions
 
 logger = get_logger(__name__)
 
@@ -40,6 +44,11 @@ class RAGService:
         self._rag_chain: Optional[RAGChain] = None
         # Reranker для улучшения релевантности чанков
         self.reranker = RerankerService()
+        # Refactored modules
+        self.retrieval = RAGRetrieval(db, self.vector_store, self.embedding_service, self.reranker)
+        self.fallbacks = RAGFallbacks(db, self.embedding_service)
+        self.helpers = RAGHelpers(db)
+        self.suggestions = RAGSuggestions(db, self.vector_store)
         # logger уже определен на уровне модуля
     
     async def generate_answer(
@@ -77,228 +86,228 @@ class RAGService:
             span.set_attribute("question", question[:200])  # Ograniczamy długość
             span.set_attribute("top_k", top_k)
             
-            # КРИТИЧНО: Инициализируем все переменные в самом начале функции для избежания UnboundLocalError
+        # КРИТИЧНО: Инициализируем все переменные в самом начале функции для избежания UnboundLocalError
+        chunk_texts = []
+        similar_chunks = []
+        metadata_context = ""
+        answer = None
+        user = None
+        project = None
+        
+        try:
+            # Получение пользователя и проекта
+            with tracer.start_as_current_span("rag.get_user_and_project"):
+                user = await self.helpers.get_user(user_id)
+            if not user:
+                raise ValueError("Пользователь не найден")
+            
+            project = await self.helpers.get_project(user.project_id)
+            if not project:
+                raise ValueError("Проект не найден")
+            
+            set_project_id(str(project.id))
+            span.set_attribute("project_id", str(project.id))
+            
+            # Проверяем количество документов в проекте
+            # Если документ только один, используем NLP-enhanced summarization вместо RAG
+            from app.models.document import Document
+            from sqlalchemy import func, select
+            docs_count_result = await self.db.execute(
+                select(func.count(Document.id))
+                .where(Document.project_id == project.id)
+            )
+            documents_count = docs_count_result.scalar() or 0
+            
+            # Если документ только один, используем NLP-enhanced summarization
+            if documents_count == 1:
+                logger.info(f"[RAG SERVICE] Single document detected ({documents_count}), using NLP-enhanced summarization instead of RAG")
+                return await self._generate_answer_with_nlp_summarization(
+                    user_id=user_id,
+                    question=question,
+                    project=project
+                )
+            
+            # Получение истории диалога (минимум 10 сообщений согласно требованиям)
+            conversation_history = await self.helpers.get_conversation_history(user_id, limit=10)
+            
+            # Используем AI агента для определения стратегии ответа
+            from app.services.rag_agent import RAGAgent
+            from app.llm.openrouter_client import OpenRouterClient
+            from app.models.llm_model import GlobalModelSettings
+            from sqlalchemy import select
+            
+            # Получаем модель для агента
+            settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+            global_settings = settings_result.scalar_one_or_none()
+            
+            primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
+            fallback_model = global_settings.fallback_model_id if global_settings else None
+            
+            if not primary_model:
+                from app.core.config import settings as app_settings
+                primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+                fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
+            
+            agent_llm = OpenRouterClient(
+                model_primary=primary_model,
+                model_fallback=fallback_model
+            )
+            rag_agent = RAGAgent(agent_llm)
+            
+            # Анализируем вопрос и получаем стратегию
+            try:
+                strategy_info = await rag_agent.get_answer_strategy(question, project.id, self.db)
+                strategy = strategy_info["strategy"]
+                logger.info(f"[RAG SERVICE] AI Agent strategy: {strategy.get('question_type')} - {strategy.get('recommendation')}")
+            except Exception as agent_error:
+                logger.warning(f"[RAG SERVICE] AI Agent failed: {agent_error}, using default strategy")
+                strategy = {"use_chunks": True, "use_summaries": True, "use_metadata": True, "use_general_knowledge": True}
+                strategy_info = {"documents_metadata": []}
+            
+            # Инициализируем переменные в начале (до всех блоков) - КРИТИЧНО для избежания UnboundLocalError
             chunk_texts = []
             similar_chunks = []
             metadata_context = ""
-            answer = None
-            user = None
-            project = None
             
-            try:
-                # Получение пользователя и проекта
-                with tracer.start_as_current_span("rag.get_user_and_project"):
-                    user = await self._get_user(user_id)
-                    if not user:
-                        raise ValueError("Пользователь не найден")
+            # Определяем стратегию поиска на основе анализа агента
+            collection_name = f"project_{project.id}"
+            collection_exists = await self.vector_store.collection_exists(collection_name)
+        
+            # РАСШИРЕННЫЙ ПОИСК ЧАНКОВ - используем все техники перед fallback
+            if strategy.get("use_chunks", True) and collection_exists:
+                logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
+                with tracer.start_as_current_span("rag.advanced_chunk_search") as search_span:
+                    search_span.set_attribute("collection_name", collection_name)
+                    search_span.set_attribute("top_k", top_k)
                     
-                    project = await self._get_project(user.project_id)
-                    if not project:
-                        raise ValueError("Проект не найден")
-                    
-                    set_project_id(str(project.id))
-                    span.set_attribute("project_id", str(project.id))
-                
-                # Проверяем количество документов в проекте
-                # Если документ только один, используем NLP-enhanced summarization вместо RAG
-                from app.models.document import Document
-                from sqlalchemy import func, select
-                docs_count_result = await self.db.execute(
-                    select(func.count(Document.id))
-                    .where(Document.project_id == project.id)
-                )
-                documents_count = docs_count_result.scalar() or 0
-                
-                # Если документ только один, используем NLP-enhanced summarization
-                if documents_count == 1:
-                    logger.info(f"[RAG SERVICE] Single document detected ({documents_count}), using NLP-enhanced summarization instead of RAG")
-                    return await self._generate_answer_with_nlp_summarization(
-                        user_id=user_id,
+                    found_chunks, found_similar = await self.retrieval.advanced_chunk_search(
                         question=question,
-                        project=project
+                        collection_name=collection_name,
+                        project_id=project.id,
+                        top_k=top_k,
+                        strategy=strategy
                     )
-                
-                # Получение истории диалога (минимум 10 сообщений согласно требованиям)
-                conversation_history = await self._get_conversation_history(user_id, limit=10)
-                
-                # Используем AI агента для определения стратегии ответа
-                from app.services.rag_agent import RAGAgent
-                from app.llm.openrouter_client import OpenRouterClient
-                from app.models.llm_model import GlobalModelSettings
-                from sqlalchemy import select
-                
-                # Получаем модель для агента
-                settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
-                global_settings = settings_result.scalar_one_or_none()
-                
-                primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
-                fallback_model = global_settings.fallback_model_id if global_settings else None
-                
-                if not primary_model:
-                    from app.core.config import settings as app_settings
-                    primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
-                    fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
-                
-                agent_llm = OpenRouterClient(
-                    model_primary=primary_model,
-                    model_fallback=fallback_model
-                )
-                rag_agent = RAGAgent(agent_llm)
-                
-                # Анализируем вопрос и получаем стратегию
-                try:
-                    strategy_info = await rag_agent.get_answer_strategy(question, project.id, self.db)
-                    strategy = strategy_info["strategy"]
-                    logger.info(f"[RAG SERVICE] AI Agent strategy: {strategy.get('question_type')} - {strategy.get('recommendation')}")
-                except Exception as agent_error:
-                    logger.warning(f"[RAG SERVICE] AI Agent failed: {agent_error}, using default strategy")
-                    strategy = {"use_chunks": True, "use_summaries": True, "use_metadata": True, "use_general_knowledge": True}
-                    strategy_info = {"documents_metadata": []}
-                
-                # Инициализируем переменные в начале (до всех блоков) - КРИТИЧНО для избежания UnboundLocalError
-                chunk_texts = []
-                similar_chunks = []
-                metadata_context = ""
-                
-                # Определяем стратегию поиска на основе анализа агента
-                collection_name = f"project_{project.id}"
-                collection_exists = await self.vector_store.collection_exists(collection_name)
-            
-                # РАСШИРЕННЫЙ ПОИСК ЧАНКОВ - используем все техники перед fallback
-                if strategy.get("use_chunks", True) and collection_exists:
-                    logger.info(f"[RAG SERVICE] Starting advanced chunk search with multiple techniques")
-                    with tracer.start_as_current_span("rag.advanced_chunk_search") as search_span:
-                        search_span.set_attribute("collection_name", collection_name)
-                        search_span.set_attribute("top_k", top_k)
-                        
-                        found_chunks, found_similar = await self._advanced_chunk_search(
-                            question=question,
-                            collection_name=collection_name,
-                            project_id=project.id,
-                            top_k=top_k,
-                            strategy=strategy
-                        )
-                        
-                        if found_chunks:
-                            chunk_texts = found_chunks
-                            similar_chunks = found_similar
-                            logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} chunks using advanced search techniques")
-                            
-                            # Metryki dla retrieved chunks
-                            rag_metrics.record_chunks_retrieved(
-                                count=len(chunk_texts),
-                                project_id=str(project.id)
-                            )
-                            search_span.set_attribute("chunks_found", len(chunk_texts))
-                
-                # Для вопросов о содержании - приоритет summaries (не используем чанки)
-                question_type = strategy.get("question_type", "")
-                question_lower = question.lower()
-                is_content_question = (
-                    question_type == "содержание" or 
-                    any(word in question_lower for word in [
-                        "содержание", "содержание документов", "обзор документов", 
-                        "summary", "summary of", "summary of each", "summary of each file",
-                        "обзор", "обзор файлов", "что в файлах", "список файлов"
-                    ])
-                )
-                
-                # Если агент рекомендует использовать summaries или это вопрос о содержании
-                if (strategy.get("use_summaries", True) and not chunk_texts) or is_content_question:
-                    if is_content_question:
-                        logger.info(f"[RAG SERVICE] Content question detected, using summaries strategy")
-                        # Для вопросов о содержании не используем чанки, только summaries
-                        chunk_texts = []
-                    else:
-                        logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
                     
-                    summaries = await self._get_document_summaries(project.id, top_k * 2)  # Берем больше summaries для содержания
-                    if summaries:
-                        chunk_texts = summaries  # summaries в формате dict с text, source, score
-                        logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
-                
-                # ВСЕГДА получаем метаданные для использования в промпте (даже если есть чанки)
-                # Это позволяет отвечать на вопросы о файлах и ключевых словах
-                if not metadata_context:
-                    logger.info(f"[RAG SERVICE] Getting metadata for context")
-                    try:
-                        from app.services.document_metadata_service import DocumentMetadataService
-                        metadata_service = DocumentMetadataService()
-                        documents_metadata = strategy_info.get("documents_metadata", [])
-                        if not documents_metadata:
-                            documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
-                        if documents_metadata:
-                            metadata_context = metadata_service.create_metadata_context(documents_metadata)
-                            logger.info(f"[RAG SERVICE] Created metadata context from {len(documents_metadata)} documents")
-                    except Exception as metadata_error:
-                        logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
-                
-                # Логируем стратегию использования метаданных
-                if metadata_context:
-                    if not chunk_texts:
-                        logger.info(f"[RAG SERVICE] Using metadata as primary source (no chunks available)")
-                    else:
-                        logger.info(f"[RAG SERVICE] Using metadata as additional context (chunks available)")
-                
-                # Если нет чанков, пытаемся извлечь контент напрямую из документов разными способами
-                # Используем все стратегии fallback: Late Chunking, Sub-agents, Overlapping Chunks
-                if not chunk_texts:
-                    logger.info(f"[RAG SERVICE] No chunks found, trying all fallback strategies: Late Chunking, Sub-agents, Overlapping Chunks")
-                    try:
-                        from app.models.document import Document, DocumentChunk
-                        from app.documents.chunker import DocumentChunker
-                        from sqlalchemy import select, text
-                        import re
+                    if found_chunks:
+                        chunk_texts = found_chunks
+                        similar_chunks = found_similar
+                        logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} chunks using advanced search techniques")
                         
-                        # Техника 1: Пытаемся получить чанки из БД (DocumentChunk)
+                        # Metryki dla retrieved chunks
+                        rag_metrics.record_chunks_retrieved(
+                            count=len(chunk_texts),
+                            project_id=str(project.id)
+                        )
+                        search_span.set_attribute("chunks_found", len(chunk_texts))
+            
+            # Для вопросов о содержании - приоритет summaries (не используем чанки)
+            question_type = strategy.get("question_type", "")
+            question_lower = question.lower()
+            is_content_question = (
+                question_type == "содержание" or 
+                any(word in question_lower for word in [
+                    "содержание", "содержание документов", "обзор документов", 
+                    "summary", "summary of", "summary of each", "summary of each file",
+                    "обзор", "обзор файлов", "что в файлах", "список файлов"
+                ])
+            )
+            
+            # Если агент рекомендует использовать summaries или это вопрос о содержании
+            if (strategy.get("use_summaries", True) and not chunk_texts) or is_content_question:
+                if is_content_question:
+                    logger.info(f"[RAG SERVICE] Content question detected, using summaries strategy")
+                    # Для вопросов о содержании не используем чанки, только summaries
+                    chunk_texts = []
+                else:
+                    logger.info(f"[RAG SERVICE] Using summaries strategy (AI Agent recommendation)")
+                
+                    summaries = await self.helpers.get_document_summaries(project.id, top_k * 2)  # Берем больше summaries для содержания
+                if summaries:
+                    chunk_texts = summaries  # summaries в формате dict с text, source, score
+                    logger.info(f"[RAG SERVICE] Found {len(chunk_texts)} summaries")
+            
+            # ВСЕГДА получаем метаданные для использования в промпте (даже если есть чанки)
+            # Это позволяет отвечать на вопросы о файлах и ключевых словах
+            if not metadata_context:
+                logger.info(f"[RAG SERVICE] Getting metadata for context")
+                try:
+                    from app.services.document_metadata_service import DocumentMetadataService
+                    metadata_service = DocumentMetadataService()
+                    documents_metadata = strategy_info.get("documents_metadata", [])
+                    if not documents_metadata:
+                        documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
+                    if documents_metadata:
+                        metadata_context = metadata_service.create_metadata_context(documents_metadata)
+                        logger.info(f"[RAG SERVICE] Created metadata context from {len(documents_metadata)} documents")
+                except Exception as metadata_error:
+                    logger.warning(f"[RAG SERVICE] Error getting metadata: {metadata_error}")
+            
+            # Логируем стратегию использования метаданных
+            if metadata_context:
+                if not chunk_texts:
+                    logger.info(f"[RAG SERVICE] Using metadata as primary source (no chunks available)")
+                else:
+                    logger.info(f"[RAG SERVICE] Using metadata as additional context (chunks available)")
+            
+            # Если нет чанков, пытаемся извлечь контент напрямую из документов разными способами
+            # Используем все стратегии fallback: Late Chunking, Sub-agents, Overlapping Chunks
+            if not chunk_texts:
+                logger.info(f"[RAG SERVICE] No chunks found, trying all fallback strategies: Late Chunking, Sub-agents, Overlapping Chunks")
+                try:
+                    from app.models.document import Document, DocumentChunk
+                    from app.documents.chunker import DocumentChunker
+                    from sqlalchemy import select, text
+                    import re
+                    
+                    # Техника 1: Пытаемся получить чанки из БД (DocumentChunk)
+                    try:
+                        result = await self.db.execute(
+                            select(DocumentChunk)
+                            .join(Document)
+                            .where(Document.project_id == project.id)
+                            .where(DocumentChunk.chunk_text.isnot(None))
+                            .where(DocumentChunk.chunk_text != "")
+                            .limit(top_k * 2)
+                        )
+                        db_chunks = result.scalars().all()
+                        
+                        if db_chunks:
+                            # Извлекаем ключевые слова из вопроса для релевантности
+                            question_keywords = set(re.findall(r'\b\w+\b', question.lower()))
+                            question_keywords = {w for w in question_keywords if len(w) > 3}  # Слова длиннее 3 символов
+                            
+                            for chunk in db_chunks:
+                                chunk_text_lower = chunk.chunk_text.lower()
+                                # Вычисляем релевантность по количеству совпадающих ключевых слов
+                                relevance = sum(1 for kw in question_keywords if kw in chunk_text_lower)
+                                score = min(0.9, 0.5 + (relevance * 0.1))
+                                
+                                chunk_texts.append({
+                                    "text": chunk.chunk_text,
+                                    "source": chunk.document.filename if chunk.document else "Документ",
+                                    "score": score
+                                })
+                            
+                            if chunk_texts:
+                                logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} chunks from DocumentChunk table")
+                    except Exception as chunk_error:
+                        logger.warning(f"[RAG SERVICE] Error getting chunks from DB: {chunk_error}")
+                    
+                    # Техника 2: Если нет чанков в БД, получаем документы и используем chunking
+                    if not chunk_texts:
                         try:
                             result = await self.db.execute(
-                                select(DocumentChunk)
-                                .join(Document)
+                                select(Document)
                                 .where(Document.project_id == project.id)
-                                .where(DocumentChunk.chunk_text.isnot(None))
-                                .where(DocumentChunk.chunk_text != "")
-                                .limit(top_k * 2)
+                                .where(Document.content.isnot(None))
+                                .where(Document.content != "")
+                                .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                                .limit(10)
                             )
-                            db_chunks = result.scalars().all()
-                            
-                            if db_chunks:
-                                # Извлекаем ключевые слова из вопроса для релевантности
-                                question_keywords = set(re.findall(r'\b\w+\b', question.lower()))
-                                question_keywords = {w for w in question_keywords if len(w) > 3}  # Слова длиннее 3 символов
-                                
-                                for chunk in db_chunks:
-                                    chunk_text_lower = chunk.chunk_text.lower()
-                                    # Вычисляем релевантность по количеству совпадающих ключевых слов
-                                    relevance = sum(1 for kw in question_keywords if kw in chunk_text_lower)
-                                    score = min(0.9, 0.5 + (relevance * 0.1))
-                                    
-                                    chunk_texts.append({
-                                        "text": chunk.chunk_text,
-                                        "source": chunk.document.filename if chunk.document else "Документ",
-                                        "score": score
-                                    })
-                                
-                                if chunk_texts:
-                                    logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} chunks from DocumentChunk table")
-                        except Exception as chunk_error:
-                            logger.warning(f"[RAG SERVICE] Error getting chunks from DB: {chunk_error}")
-                        
-                        # Техника 2: Если нет чанков в БД, получаем документы и используем chunking
-                        if not chunk_texts:
-                            try:
-                                result = await self.db.execute(
-                                    select(Document)
-                                    .where(Document.project_id == project.id)
-                                    .where(Document.content.isnot(None))
-                                    .where(Document.content != "")
-                                    .where(Document.content.notin_(["Обработка...", "Обработан"]))
-                                    .limit(10)
-                                )
-                                documents = result.scalars().all()
-                            except Exception:
-                                # Fallback на raw SQL
-                                result = await self.db.execute(
+                            documents = result.scalars().all()
+                        except Exception:
+                            # Fallback на raw SQL
+                            result = await self.db.execute(
                                 text("""
                                     SELECT id, filename, content, file_type 
                                     FROM documents 
@@ -309,148 +318,148 @@ class RAGService:
                                     LIMIT 10
                                 """),
                                 {"project_id": str(project.id)}
-                                )
-                                rows = result.all()
-                                documents = []
-                                for row in rows:
-                                    doc = Document()
-                                    doc.id = row[0]
-                                    doc.filename = row[1]
-                                    doc.content = row[2]
-                                    doc.file_type = row[3]
-                                    documents.append(doc)
+                            )
+                            rows = result.all()
+                            documents = []
+                            for row in rows:
+                                doc = Document()
+                                doc.id = row[0]
+                                doc.filename = row[1]
+                                doc.content = row[2]
+                                doc.file_type = row[3]
+                                documents.append(doc)
+                    
+                    # Используем DocumentChunker для разбивки на чанки с большим overlap (50-75%)
+                    # Overlapping Chunks z kontekstem - улучшенный chunking
+                    chunker = DocumentChunker(chunk_size=1000, chunk_overlap=500)  # 50% overlap
+                    question_keywords = set(re.findall(r'\b\w+\b', question.lower()))
+                    question_keywords = {w for w in question_keywords if len(w) > 3}
+                    
+                    for doc in documents:
+                        if doc.content and len(doc.content) > 50:
+                            # Разбиваем на чанки
+                            doc_chunks = chunker.chunk_text(doc.content)
                             
-                            # Используем DocumentChunker для разбивки на чанки с большим overlap (50-75%)
-                            # Overlapping Chunks z kontekstem - улучшенный chunking
-                            chunker = DocumentChunker(chunk_size=1000, chunk_overlap=500)  # 50% overlap
-                            question_keywords = set(re.findall(r'\b\w+\b', question.lower()))
-                            question_keywords = {w for w in question_keywords if len(w) > 3}
+                            # Если вопрос содержит название файла, используем все чанки
+                            is_relevant_file = doc.filename.lower() in question.lower()
+                            
+                            for chunk_text in doc_chunks[:5]:  # Максимум 5 чанков из каждого документа
+                                # Вычисляем релевантность
+                                chunk_lower = chunk_text.lower()
+                                relevance = sum(1 for kw in question_keywords if kw in chunk_lower)
+                                score = 0.9 if is_relevant_file else min(0.8, 0.5 + (relevance * 0.1))
+                                
+                                chunk_texts.append({
+                                    "text": chunk_text,
+                                    "source": doc.filename,
+                                    "score": score
+                                })
+                            
+                            logger.info(f"[RAG SERVICE] Extracted {len(doc_chunks)} chunks from document {doc.filename} using chunker")
+                    
+                    if chunk_texts:
+                        logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content chunks using DocumentChunker")
+                    
+                    # Техника 3: Если все еще нет чанков, используем простой preview
+                    if not chunk_texts:
+                        try:
+                            result = await self.db.execute(
+                                select(Document)
+                                .where(Document.project_id == project.id)
+                                .limit(5)
+                            )
+                            documents = result.scalars().all()
                             
                             for doc in documents:
                                 if doc.content and len(doc.content) > 50:
-                                    # Разбиваем на чанки
-                                    doc_chunks = chunker.chunk_text(doc.content)
+                                    # Простой preview - первые 1000 символов
+                                    content_preview = doc.content[:1000]
+                                    if len(doc.content) > 1000:
+                                        content_preview += "..."
                                     
-                                    # Если вопрос содержит название файла, используем все чанки
-                                    is_relevant_file = doc.filename.lower() in question.lower()
-                                    
-                                    for chunk_text in doc_chunks[:5]:  # Максимум 5 чанков из каждого документа
-                                        # Вычисляем релевантность
-                                        chunk_lower = chunk_text.lower()
-                                        relevance = sum(1 for kw in question_keywords if kw in chunk_lower)
-                                        score = 0.9 if is_relevant_file else min(0.8, 0.5 + (relevance * 0.1))
-                                        
-                                        chunk_texts.append({
-                                            "text": chunk_text,
-                                            "source": doc.filename,
-                                            "score": score
-                                        })
-                                    
-                                    logger.info(f"[RAG SERVICE] Extracted {len(doc_chunks)} chunks from document {doc.filename} using chunker")
+                                    is_relevant = doc.filename.lower() in question.lower()
+                                    chunk_texts.append({
+                                        "text": f"Документ '{doc.filename}':\n{content_preview}",
+                                        "source": doc.filename,
+                                        "score": 0.7 if is_relevant else 0.4
+                                    })
                             
                             if chunk_texts:
-                                logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content chunks using DocumentChunker")
-                            
-                            # Техника 3: Если все еще нет чанков, используем простой preview
-                            if not chunk_texts:
-                                try:
-                                    result = await self.db.execute(
-                                        select(Document)
-                                        .where(Document.project_id == project.id)
-                                        .limit(5)
-                                    )
-                                    documents = result.scalars().all()
-                                    
-                                    for doc in documents:
-                                        if doc.content and len(doc.content) > 50:
-                                            # Простой preview - первые 1000 символов
-                                            content_preview = doc.content[:1000]
-                                            if len(doc.content) > 1000:
-                                                content_preview += "..."
-                                            
-                                            is_relevant = doc.filename.lower() in question.lower()
-                                            chunk_texts.append({
-                                                "text": f"Документ '{doc.filename}':\n{content_preview}",
-                                                "source": doc.filename,
-                                                "score": 0.7 if is_relevant else 0.4
-                                            })
-                                    
-                                    if chunk_texts:
-                                        logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content previews")
-                                except Exception as preview_error:
-                                    logger.warning(f"[RAG SERVICE] Error extracting previews: {preview_error}")
-                    except Exception as fallback_error:
-                        logger.warning(f"[RAG SERVICE] Fallback strategies failed: {fallback_error}")
-                    
-                    # Если все еще нет чанков после всех техник, пробуем Late Chunking
+                                logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content previews")
+                        except Exception as preview_error:
+                            logger.warning(f"[RAG SERVICE] Error extracting previews: {preview_error}")
+                except Exception as fallback_error:
+                    logger.warning(f"[RAG SERVICE] Fallback strategies failed: {fallback_error}")
+                
+                # Если все еще нет чанков после всех техник, пробуем Late Chunking
                     if not chunk_texts:
                         logger.info(f"[RAG SERVICE] Still no chunks after extraction techniques, trying Late Chunking")
                         try:
                             # Late Chunking - создаем embedding всего документа
-                                from app.models.document import Document
-                                from sqlalchemy import select
-                                import numpy as np
+                            from app.models.document import Document
+                            from sqlalchemy import select
+                            import numpy as np
                             
-                                result = await self.db.execute(
+                            result = await self.db.execute(
                                 select(Document)
                                 .where(Document.project_id == project.id)
                                 .where(Document.content.isnot(None))
                                 .where(Document.content != "")
                                 .where(Document.content.notin_(["Обработка...", "Обработан"]))
                                 .limit(2)
-                                )
-                                documents = result.scalars().all()
+                            )
+                            documents = result.scalars().all()
                             
-                                if documents:
-                                    # Создаем эмбеддинг вопроса
-                                    question_embedding = await self.embedding_service.create_embedding(question)
+                            if documents:
+                                # Создаем эмбеддинг вопроса
+                                question_embedding = await self.embedding_service.create_embedding(question)
                                 
                                 # Для каждого документа создаем эмбеддинг всего документа
-                                    best_doc = None
-                                    best_score = 0.0
+                                best_doc = None
+                                best_score = 0.0
                                 
-                                    for doc in documents:
-                                        if doc.content and len(doc.content) > 100:
-                                            # Создаем эмбеддинг всего документа (первые 8000 символов)
-                                            doc_content = doc.content[:8000]
-                                            doc_embedding = await self.embedding_service.create_embedding(doc_content)
-                                            
-                                            # Вычисляем косинусное сходство
-                                            similarity = np.dot(question_embedding, doc_embedding) / (
-                                                np.linalg.norm(question_embedding) * np.linalg.norm(doc_embedding)
-                                            )
-                                            
-                                            if similarity > best_score:
-                                                best_score = similarity
-                                                best_doc = doc
-                            
-                                    # Если нашли релевантный документ, используем его первые 5000 символов как чанк
-                                    if best_doc and best_score > 0.3:
-                                        doc_content = best_doc.content[:5000]
-                                        if len(best_doc.content) > 5000:
-                                            doc_content += "..."
+                                for doc in documents:
+                                    if doc.content and len(doc.content) > 100:
+                                        # Создаем эмбеддинг всего документа (первые 8000 символов)
+                                        doc_content = doc.content[:8000]
+                                        doc_embedding = await self.embedding_service.create_embedding(doc_content)
                                         
-                                        chunk_texts.append({
-                                            "text": doc_content,
-                                            "source": best_doc.filename,
-                                            "score": best_score
-                                        })
-                                        logger.info(f"[RAG SERVICE] Late chunking found relevant document '{best_doc.filename}' with score {best_score:.2f}")
+                                        # Вычисляем косинусное сходство
+                                        similarity = np.dot(question_embedding, doc_embedding) / (
+                                            np.linalg.norm(question_embedding) * np.linalg.norm(doc_embedding)
+                                        )
+                                        
+                                        if similarity > best_score:
+                                            best_score = similarity
+                                            best_doc = doc
+                            
+                            # Если нашли релевантный документ, используем его первые 5000 символов как чанк
+                            if best_doc and best_score > 0.3:
+                                doc_content = best_doc.content[:5000]
+                                if len(best_doc.content) > 5000:
+                                    doc_content += "..."
+                                
+                                chunk_texts.append({
+                                    "text": doc_content,
+                                    "source": best_doc.filename,
+                                    "score": best_score
+                                })
+                                logger.info(f"[RAG SERVICE] Late chunking found relevant document '{best_doc.filename}' with score {best_score:.2f}")
                         except Exception as late_error:
                             logger.warning(f"[RAG SERVICE] Late chunking failed: {late_error}")
-                
-                # Инициализируем chunks_for_prompt для использования в блоке else
-                chunks_for_prompt = []
-                for chunk in chunk_texts:
-                    if isinstance(chunk, dict):
-                        chunks_for_prompt.append(chunk.get("text", str(chunk)))
-                    else:
-                        chunks_for_prompt.append(chunk)
-                
-                # Для вопросов о содержании используем простой промпт из рабочего скрипта
-                if is_content_question:
-                    # Для вопросов типа "summary of each file" - используем метаданные напрямую
-                    if metadata_context and not chunk_texts:
+            
+            # Инициализируем chunks_for_prompt для использования в блоке else
+            chunks_for_prompt = []
+            for chunk in chunk_texts:
+                if isinstance(chunk, dict):
+                    chunks_for_prompt.append(chunk.get("text", str(chunk)))
+                else:
+                    chunks_for_prompt.append(chunk)
+            
+            # Для вопросов о содержании используем простой промпт из рабочего скрипта
+            if is_content_question:
+                # Для вопросов типа "summary of each file" - используем метаданные напрямую
+                if metadata_context and not chunk_texts:
                     # Просто используем метаданные - это работает как предложенные вопросы
                     logger.info(f"[RAG SERVICE] Content question with metadata only - using direct metadata approach")
                     context = f"""Информация о загруженных документах:
@@ -504,9 +513,9 @@ class RAGService:
                         {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей на основе предоставленных документов. Отвечай на русском языке, будь дружелюбным и информативным."},
                         {"role": "user", "content": enhanced_prompt}
                     ]
-                elif metadata_context:
-                    # Нет summaries, но есть метаданные - используем их
-                    context = f"""Метаданные документов:
+            elif metadata_context:
+                # Нет summaries, но есть метаданные - используем их
+                context = f"""Метаданные документов:
 
 {metadata_context}
 
@@ -522,10 +531,10 @@ class RAGService:
                     {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей на основе информации о загруженных документах. Отвечай на русском языке, будь дружелюбным и информативным."},
                     {"role": "user", "content": enhanced_prompt}
                 ]
-                else:
-                    # Нет ни summaries, ни метаданных
-                    context = "Документы еще обрабатываются. Доступна только информация о загруженных файлах."
-                    enhanced_prompt = f"""Вопрос: {question}
+            else:
+                # Нет ни summaries, ни метаданных
+                context = "Документы еще обрабатываются. Доступна только информация о загруженных файлах."
+                enhanced_prompt = f"""Вопрос: {question}
 
 Контекст: {context}
 
@@ -535,19 +544,19 @@ class RAGService:
                     {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей. Отвечай на русском языке, будь дружелюбным и информативным."},
                     {"role": "user", "content": enhanced_prompt}
                 ]
+            
+            # Добавляем историю диалога
+            if conversation_history:
+                recent_history = conversation_history[-4:]  # Последние 2 пары вопрос-ответ
+                # Вставляем историю перед финальным вопросом
+                messages = [messages[0]] + recent_history + [messages[1]]
+            else:
+                # ВСЕГДА используем промпт проекта, даже если документов нет
+                # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
+                # Построение промпта с контекстом (может быть пустым)
+                # chunks_for_prompt уже определен выше
                 
-                # Добавляем историю диалога
-                if conversation_history:
-                    recent_history = conversation_history[-4:]  # Последние 2 пары вопрос-ответ
-                    # Вставляем историю перед финальным вопросом
-                    messages = [messages[0]] + recent_history + [messages[1]]
-                else:
-                    # ВСЕГДА используем промпт проекта, даже если документов нет
-                    # Это позволяет боту отвечать на основе общих знаний, но с учетом настроек проекта
-                    # Построение промпта с контекстом (может быть пустым)
-                    # chunks_for_prompt уже определен выше
-                    
-                    messages = self.prompt_builder.build_prompt(
+                messages = self.prompt_builder.build_prompt(
                     question=question,
                     chunks=chunks_for_prompt,  # Может быть пустым списком
                     prompt_template=project.prompt_template,
@@ -555,39 +564,39 @@ class RAGService:
                     conversation_history=conversation_history,
                     metadata_context=metadata_context  # Добавляем метаданные если есть
                 )
-                
-                # Генерация ответа через LLM
-                # Получаем глобальные настройки моделей из БД
-                from app.models.llm_model import GlobalModelSettings
-                from sqlalchemy import select
-                # logger уже определен на уровне модуля
-                
-                settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
-                global_settings = settings_result.scalar_one_or_none()
-                
-                logger.info(f"[RAG SERVICE] Global settings from DB: primary={global_settings.primary_model_id if global_settings else 'None'}, fallback={global_settings.fallback_model_id if global_settings else 'None'}")
-                
-                # Определяем primary и fallback модели
-                # Приоритет: 1) модель проекта, 2) глобальные настройки из БД, 3) дефолты из .env
-                primary_model = None
-                fallback_model = None
-                
-                if project.llm_model:
-                    # Если у проекта есть своя модель, используем её как primary
-                    primary_model = project.llm_model
-                    logger.info(f"[RAG SERVICE] Using project model: {primary_model}")
-                    # Fallback берем из глобальных настроек БД
-                    if global_settings and global_settings.fallback_model_id:
-                        fallback_model = global_settings.fallback_model_id
-                        logger.info(f"[RAG SERVICE] Using global fallback from DB: {fallback_model}")
-                    else:
-                        # Если в БД нет fallback, используем дефолт из .env
-                        from app.core.config import settings as app_settings
-                        fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
-                        logger.info(f"[RAG SERVICE] Using default fallback from .env: {fallback_model}")
+            
+            # Генерация ответа через LLM
+            # Получаем глобальные настройки моделей из БД
+            from app.models.llm_model import GlobalModelSettings
+            from sqlalchemy import select
+            # logger уже определен на уровне модуля
+            
+            settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+            global_settings = settings_result.scalar_one_or_none()
+            
+            logger.info(f"[RAG SERVICE] Global settings from DB: primary={global_settings.primary_model_id if global_settings else 'None'}, fallback={global_settings.fallback_model_id if global_settings else 'None'}")
+            
+            # Определяем primary и fallback модели
+            # Приоритет: 1) модель проекта, 2) глобальные настройки из БД, 3) дефолты из .env
+            primary_model = None
+            fallback_model = None
+            
+            if project.llm_model:
+                # Если у проекта есть своя модель, используем её как primary
+                primary_model = project.llm_model
+                logger.info(f"[RAG SERVICE] Using project model: {primary_model}")
+                # Fallback берем из глобальных настроек БД
+                if global_settings and global_settings.fallback_model_id:
+                    fallback_model = global_settings.fallback_model_id
+                    logger.info(f"[RAG SERVICE] Using global fallback from DB: {fallback_model}")
                 else:
-                    # Используем глобальные настройки из БД
-                    if global_settings:
+                    # Если в БД нет fallback, используем дефолт из .env
+                    from app.core.config import settings as app_settings
+                    fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+                    logger.info(f"[RAG SERVICE] Using default fallback from .env: {fallback_model}")
+            else:
+                # Используем глобальные настройки из БД
+                if global_settings:
                     primary_model = global_settings.primary_model_id
                     fallback_model = global_settings.fallback_model_id
                     logger.info(f"[RAG SERVICE] Using global models from DB: primary={primary_model}, fallback={fallback_model}")
@@ -600,21 +609,21 @@ class RAGService:
                 if not fallback_model:
                     fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
                     logger.info(f"[RAG SERVICE] Using default fallback from .env: {fallback_model}")
-                
-                # Создаем клиент с моделями
-                llm_client = OpenRouterClient(
-                    model_primary=primary_model,
-                    model_fallback=fallback_model
+            
+            # Создаем клиент с моделями
+            llm_client = OpenRouterClient(
+                model_primary=primary_model,
+                model_fallback=fallback_model
+            )
+            max_tokens = project.max_response_length // 4  # Приблизительная оценка токенов
+            
+            # Генерируем ответ
+            try:
+                raw_answer = await llm_client.chat_completion(
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=0.7
                 )
-                max_tokens = project.max_response_length // 4  # Приблизительная оценка токенов
-                
-                # Генерируем ответ
-                try:
-                    raw_answer = await llm_client.chat_completion(
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=0.7
-                    )
                 
                 # Проверяем, не является ли ответ отказом
                 answer_text = raw_answer.strip().lower()
@@ -627,7 +636,7 @@ class RAGService:
                 # Если ответ содержит отказ и у нас есть метаданные - генерируем сводку
                 if any(phrase in answer_text for phrase in refusal_phrases) and metadata_context:
                     logger.info(f"[RAG SERVICE] Answer contains refusal, generating document summary as fallback")
-                    answer = await self._generate_document_summary_fallback(
+                    answer = await self.fallbacks.generate_document_summary_fallback(
                         question=question,
                         metadata_context=metadata_context,
                         project=project,
@@ -659,7 +668,7 @@ class RAGService:
                 
                 if metadata_context:
                     try:
-                        answer = await self._generate_document_summary_fallback(
+                        answer = await self.fallbacks.generate_document_summary_fallback(
                             question=question,
                             metadata_context=metadata_context,
                             project=project,
@@ -673,7 +682,7 @@ class RAGService:
                 if not answer:
                     logger.info(f"[RAG SERVICE] Trying sub-agent for full document processing")
                     try:
-                        answer = await self._process_full_documents_with_subagent(
+                        answer = await self.fallbacks.process_full_documents_with_subagent(
                             question=question,
                             project=project,
                             llm_client=llm_client,
@@ -686,7 +695,7 @@ class RAGService:
                 if not answer:
                     logger.info(f"[RAG SERVICE] Trying late chunking approach")
                     try:
-                        answer = await self._late_chunking_fallback(
+                        answer = await self.fallbacks.late_chunking_fallback(
                             question=question,
                             project=project,
                             llm_client=llm_client,
@@ -698,7 +707,7 @@ class RAGService:
                 # Fallback 4: Если все еще нет ответа, используем AI агента для генерации ответа
                 if not answer:
                     try:
-                        answer = await self._generate_ai_agent_fallback(
+                        answer = await self.fallbacks.generate_ai_agent_fallback(
                             question=question,
                             project=project,
                             llm_client=llm_client,
@@ -710,745 +719,74 @@ class RAGService:
                 
                 # Fallback 5: Базовый ответ на основе названия проекта
                 if not answer:
-                    answer = await self._generate_basic_fallback(
+                    answer = await self.fallbacks.generate_basic_fallback(
                         question=question,
                         project=project
                     )
                 
-                # Только в самом крайнем случае возвращаем сообщение об ошибке
-                if not answer:
-                    logger.error(f"[RAG SERVICE] All fallback mechanisms failed for question: {question}")
-                    answer = "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору."
-                
-                # Сохранение сообщений в историю
-                await self._save_message(user_id, question, "user")
-                await self._save_message(user_id, answer, "assistant")
-                
-                # Zapisujemy odpowiedź do cache
-                if project:
-                    await cache_service.set_rag_response(question, answer, str(project.id))
-                
-                # Zapisujemy metryki
-                duration = time.time() - start_time
-                rag_metrics.record_query_duration(
-                    duration=duration,
-                    project_id=str(project.id) if project else None,
-                    status="success"
-                )
-                rag_metrics.increment_query(
-                    project_id=str(project.id) if project else None,
-                    status="success"
-                )
-                span.set_attribute("duration", duration)
-                span.set_attribute("status", "success")
-                
-                return answer
-            except Exception as e:
-                duration = time.time() - start_time
-                logger.error(f"[RAG SERVICE] Error in generate_answer: {e}", exc_info=True)
-                span.record_exception(e)
-                span.set_attribute("status", "error")
-                span.set_attribute("error.message", str(e))
-                
-                # Metryki dla błędu
-                rag_metrics.record_query_duration(
-                    duration=duration,
-                    project_id=str(project.id) if project else None,
-                    status="error"
-                )
-                rag_metrics.increment_query(
-                    project_id=str(project.id) if project else None,
-                    status="error"
-                )
-                
-                # В случае критической ошибки возвращаем базовый ответ
-                if not answer:
-                    answer = "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору."
-                # Сохраняем сообщения даже при ошибке
-                try:
-                    await self._save_message(user_id, question, "user")
-                    await self._save_message(user_id, answer, "assistant")
-                except:
-                    pass
-                return answer
-    
-    async def _advanced_chunk_search(
-        self,
-        question: str,
-        collection_name: str,
-        project_id: UUID,
-        top_k: int = 5,
-        strategy: Optional[Dict] = None
-    ) -> tuple:
-        """
-        Расширенный поиск чанков с использованием множественных техник:
-        1. Hybrid Search (Semantic + Keyword/BM25)
-        2. Query Expansion и Multiple Retrievals
-        3. Iteracyjne wyszukiwanie z reformulacją query
-        4. Keyword search как fallback
-        
-        Args:
-            question: Вопрос пользователя
-            collection_name: Имя коллекции в векторной БД
-            project_id: ID проекта
-            top_k: Количество результатов
-            strategy: Стратегия от AI агента
+            # Только в самом крайнем случае возвращаем сообщение об ошибке
+            if not answer:
+                logger.error(f"[RAG SERVICE] All fallback mechanisms failed for question: {question}")
+                answer = "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору."
             
-        Returns:
-            Tuple (chunk_texts, similar_chunks) - найденные чанки
-        """
-        chunk_texts = []
-        similar_chunks = []
-        all_found_chunks = {}  # Для дедупликации по тексту
-        
-        try:
-            # ТЕХНИКА 1: Hybrid Search (Semantic + BM25)
-            logger.info(f"[RAG SERVICE] Technique 1: Hybrid Search (Semantic + BM25)")
+            # Сохранение сообщений в историю
+            await self.helpers.save_message(user_id, question, "user")
+            await self.helpers.save_message(user_id, answer, "assistant")
+            
+            # Zapisujemy odpowiedź do cache
+            if project:
+                await cache_service.set_rag_response(question, answer, str(project.id))
+            
+            # Zapisujemy metryki
+            duration = time.time() - start_time
+            rag_metrics.record_query_duration(
+                duration=duration,
+                project_id=str(project.id) if project else None,
+                status="success"
+            )
+            rag_metrics.increment_query(
+                project_id=str(project.id) if project else None,
+                status="success"
+            )
+            span.set_attribute("duration", duration)
+            span.set_attribute("status", "success")
+            
+            return answer
+        except Exception as e:
+            duration = time.time() - start_time
+            logger.error(f"[RAG SERVICE] Error in generate_answer: {e}", exc_info=True)
+            span.record_exception(e)
+            span.set_attribute("status", "error")
+            span.set_attribute("error.message", str(e))
+            
+            # Metryki dla błędu
+            rag_metrics.record_query_duration(
+                duration=duration,
+                project_id=str(project.id) if project else None,
+                status="error"
+            )
+            rag_metrics.increment_query(
+                project_id=str(project.id) if project else None,
+                status="error"
+            )
+            
+            # В случае критической ошибки возвращаем базовый ответ
+            if not answer:
+                answer = "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору."
+            # Сохраняем сообщения даже при ошибке
             try:
-                qdrant_loader = QdrantLoader(collection_name=collection_name)
-                hybrid_results = await qdrant_loader.search(
-                    query=question,
-                    top_k=top_k * 2,
-                    score_threshold=0.4,  # Более низкий порог для большего охвата
-                    search_strategy="hybrid",
-                    dense_weight=0.5,
-                    bm25_weight=0.5,
-                    project_id=str(project_id)
-                )
-                
-                for result in hybrid_results:
-                    text = result.get("text", "")
-                    if text and len(text) > 20:  # Минимальная длина чанка
-                        text_key = text[:100]  # Ключ для дедупликации
-                        if text_key not in all_found_chunks:
-                            score = result.get("score", 0.5)
-                            all_found_chunks[text_key] = {
-                                "text": text,
-                                "source": result.get("source_url", result.get("filename", "Документ")),
-                                "score": score,
-                                "method": "hybrid"
-                            }
-                            similar_chunks.append({
-                                "payload": {"chunk_text": text},
-                                "score": score
-                            })
-                
-                if all_found_chunks:
-                    logger.info(f"[RAG SERVICE] Hybrid search found {len(all_found_chunks)} unique chunks")
-            except Exception as e:
-                logger.warning(f"[RAG SERVICE] Hybrid search failed: {e}")
-            
-            # ТЕХНИКА 2: Query Expansion и Multiple Retrievals
-            if len(all_found_chunks) < top_k:
-                logger.info(f"[RAG SERVICE] Technique 2: Query Expansion and Multiple Retrievals")
-                try:
-                    # Создаем варианты запроса
-                    query_variants = self._expand_query(question)
-                    
-                    for variant in query_variants:
-                        if len(all_found_chunks) >= top_k * 2:
-                            break
-                        
-                        try:
-                            variant_embedding = await self.embedding_service.create_embedding(variant)
-                            variant_chunks = await self.vector_store.search_similar(
-                                collection_name=collection_name,
-                                query_vector=variant_embedding,
-                                limit=top_k,
-                                score_threshold=0.3  # Еще более низкий порог для вариантов
-                            )
-                            
-                            for chunk in variant_chunks:
-                                payload = chunk.get("payload", {})
-                                text = payload.get("chunk_text", "")
-                                if text and len(text) > 20:
-                                    text_key = text[:100]
-                                    if text_key not in all_found_chunks:
-                                        score = chunk.get("score", 0.4) * 0.9  # Немного снижаем score для вариантов
-                                        all_found_chunks[text_key] = {
-                                            "text": text,
-                                            "source": payload.get("filename", payload.get("source_url", "Документ")),
-                                            "score": score,
-                                            "method": "query_expansion"
-                                        }
-                                        similar_chunks.append({
-                                            "payload": payload,
-                                            "score": score
-                                        })
-                        except Exception as e:
-                            logger.debug(f"[RAG SERVICE] Query variant '{variant}' failed: {e}")
-                            continue
-                    
-                    if all_found_chunks:
-                        logger.info(f"[RAG SERVICE] Query expansion found {len(all_found_chunks)} total unique chunks")
-                except Exception as e:
-                    logger.warning(f"[RAG SERVICE] Query expansion failed: {e}")
-            
-            # ТЕХНИКА 3: Iteracyjne wyszukiwanie z reformulacją query через LLM + follow-up вопросы
-            if len(all_found_chunks) < top_k:
-                logger.info(f"[RAG SERVICE] Technique 3: Iterative search with query reformulation and follow-up questions")
-                try:
-                    # Первая итерация: переформулируем запрос через LLM
-                    reformulated_queries = await self._reformulate_query(question, project_id)
-                    
-                    for reformulated in reformulated_queries:
-                        if len(all_found_chunks) >= top_k * 3:
-                            break
-                        
-                        try:
-                            reform_embedding = await self.embedding_service.create_embedding(reformulated)
-                            reform_chunks = await self.vector_store.search_similar(
-                                collection_name=collection_name,
-                                query_vector=reform_embedding,
-                                limit=top_k,
-                                score_threshold=0.35
-                            )
-                            
-                            for chunk in reform_chunks:
-                                payload = chunk.get("payload", {})
-                                text = payload.get("chunk_text", "")
-                                if text and len(text) > 20:
-                                    text_key = text[:100]
-                                    if text_key not in all_found_chunks:
-                                        score = chunk.get("score", 0.4) * 0.85
-                                        all_found_chunks[text_key] = {
-                                            "text": text,
-                                            "source": payload.get("filename", payload.get("source_url", "Документ")),
-                                            "score": score,
-                                            "method": "iterative_reformulation"
-                                        }
-                                        similar_chunks.append({
-                                            "payload": payload,
-                                            "score": score
-                                        })
-                        except Exception as e:
-                            logger.debug(f"[RAG SERVICE] Reformulated query '{reformulated}' failed: {e}")
-                            continue
-                    
-                    # Вторая итерация: генерируем follow-up вопросы на основе найденных фрагментов
-                    if len(all_found_chunks) > 0 and len(all_found_chunks) < top_k:
-                        logger.info(f"[RAG SERVICE] Generating follow-up questions based on found chunks")
-                        try:
-                            # Берем первые несколько найденных чанков для анализа
-                            sample_chunks = list(all_found_chunks.values())[:3]
-                            follow_up_queries = await self._generate_followup_questions(question, sample_chunks, project_id)
-                            
-                            for follow_up in follow_up_queries:
-                                if len(all_found_chunks) >= top_k * 2:
-                                    break
-                                
-                                try:
-                                    follow_embedding = await self.embedding_service.create_embedding(follow_up)
-                                    follow_chunks = await self.vector_store.search_similar(
-                                        collection_name=collection_name,
-                                        query_vector=follow_embedding,
-                                        limit=top_k // 2,
-                                        score_threshold=0.3
-                                    )
-                                    
-                                    for chunk in follow_chunks:
-                                        payload = chunk.get("payload", {})
-                                        text = payload.get("chunk_text", "")
-                                        if text and len(text) > 20:
-                                            text_key = text[:100]
-                                            if text_key not in all_found_chunks:
-                                                score = chunk.get("score", 0.3) * 0.8
-                                                all_found_chunks[text_key] = {
-                                                    "text": text,
-                                                    "source": payload.get("filename", payload.get("source_url", "Документ")),
-                                                    "score": score,
-                                                    "method": "iterative_followup"
-                                                }
-                                                similar_chunks.append({
-                                                    "payload": payload,
-                                                    "score": score
-                                                })
-                                except Exception as e:
-                                    logger.debug(f"[RAG SERVICE] Follow-up query '{follow_up}' failed: {e}")
-                                    continue
-                        except Exception as e:
-                            logger.warning(f"[RAG SERVICE] Follow-up questions generation failed: {e}")
-                    
-                    if all_found_chunks:
-                        logger.info(f"[RAG SERVICE] Iterative search found {len(all_found_chunks)} total unique chunks")
-                except Exception as e:
-                    logger.warning(f"[RAG SERVICE] Iterative search failed: {e}")
-            
-            # ТЕХНИКА 4: Keyword Search как дополнительный fallback
-            if len(all_found_chunks) < top_k:
-                logger.info(f"[RAG SERVICE] Technique 4: Keyword search fallback")
-                try:
-                    keyword_chunks = await self._keyword_search_chunks(
-                        question=question,
-                        collection_name=collection_name,
-                        project_id=project_id,
-                        top_k=top_k
-                    )
-                    
-                    for chunk_data in keyword_chunks:
-                        text = chunk_data.get("text", "")
-                        if text and len(text) > 20:
-                            text_key = text[:100]
-                            if text_key not in all_found_chunks:
-                                all_found_chunks[text_key] = chunk_data
-                                similar_chunks.append({
-                                    "payload": {"chunk_text": text},
-                                    "score": chunk_data.get("score", 0.3)
-                                })
-                    
-                    if keyword_chunks:
-                        logger.info(f"[RAG SERVICE] Keyword search found {len(keyword_chunks)} additional chunks")
-                except Exception as e:
-                    logger.warning(f"[RAG SERVICE] Keyword search failed: {e}")
-            
-            # Сортируем и берем лучшие результаты для reranking
-            chunk_texts_list = sorted(
-                all_found_chunks.values(),
-                key=lambda x: x.get("score", 0),
-                reverse=True
-            )[:top_k * 3]  # Берем больше для reranking
-            
-            # RERANKING: Переранжируем результаты для улучшения релевантности
-            if chunk_texts_list:
-                logger.info(f"[RAG SERVICE] Reranking {len(chunk_texts_list)} chunks for better relevance")
-                chunk_texts = self.reranker.rerank(
-                    question=question,
-                    chunks=chunk_texts_list,
-                    top_k=top_k * 2  # После reranking берем лучшие
-                )
-                logger.info(f"[RAG SERVICE] Reranking completed: {len(chunk_texts)} top chunks selected")
-            else:
-                chunk_texts = []
-            
-            logger.info(f"[RAG SERVICE] Advanced search completed: {len(chunk_texts)} final chunks")
-            
-        except Exception as e:
-            logger.error(f"[RAG SERVICE] Advanced chunk search error: {e}", exc_info=True)
-        
-        return chunk_texts, similar_chunks[:top_k * 2]
+                await self.helpers.save_message(user_id, question, "user")
+                await self.helpers.save_message(user_id, answer, "assistant")
+            except:
+                pass
+            return answer
     
-    def _expand_query(self, question: str) -> List[str]:
-        """
-        Расширяет запрос на несколько вариантов для лучшего поиска
-        
-        Args:
-            question: Оригинальный вопрос
-            
-        Returns:
-            Список вариантов запроса
-        """
-        variants = [question]  # Всегда включаем оригинал
-        
-        # Извлекаем ключевые слова
-        import re
-        words = re.findall(r'\b\w+\b', question.lower())
-        keywords = [w for w in words if len(w) > 3][:5]
-        
-        if keywords:
-            # Вариант 1: Только ключевые слова
-            variants.append(" ".join(keywords))
-            
-            # Вариант 2: Вопрос без стоп-слов
-            stop_words = {"что", "как", "где", "когда", "почему", "кто", "какой", "какая", "какое", "the", "a", "an", "is", "are", "was", "were"}
-            filtered_words = [w for w in words if w not in stop_words and len(w) > 2]
-            if filtered_words:
-                variants.append(" ".join(filtered_words))
-        
-        # Вариант 3: Упрощенная версия (первые слова)
-        if len(words) > 3:
-            variants.append(" ".join(words[:5]))
-        
-        return list(set(variants))[:5]  # Максимум 5 вариантов
     
-    async def _reformulate_query(self, question: str, project_id: UUID) -> List[str]:
-        """
-        Переформулирует запрос через LLM для лучшего поиска
-        
-        Args:
-            question: Оригинальный вопрос
-            project_id: ID проекта
-            
-        Returns:
-            Список переформулированных запросов
-        """
-        try:
-            from app.llm.openrouter_client import OpenRouterClient
-            from app.models.llm_model import GlobalModelSettings
-            from sqlalchemy import select
-            
-            # Получаем модель для переформулировки
-            settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
-            global_settings = settings_result.scalar_one_or_none()
-            
-            primary_model = global_settings.primary_model_id if global_settings else None
-            fallback_model = global_settings.fallback_model_id if global_settings else None
-            
-            if not primary_model:
-                from app.core.config import settings as app_settings
-                primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
-                fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
-            
-            llm_client = OpenRouterClient(
-                model_primary=primary_model,
-                model_fallback=fallback_model
-            )
-            
-            reformulate_prompt = f"""Переформулируй следующий вопрос в 2-3 разных варианта для поиска информации в документах.
-Каждый вариант должен быть оптимизирован для поиска релевантных фрагментов текста.
-
-Оригинальный вопрос: {question}
-
-Верни только варианты вопросов, каждый с новой строки, без нумерации и дополнительных комментариев."""
-            
-            messages = [
-                {"role": "system", "content": "Ты помощник, который переформулирует вопросы для лучшего поиска информации."},
-                {"role": "user", "content": reformulate_prompt}
-            ]
-            
-            response = await llm_client.chat_completion(
-                messages=messages,
-                max_tokens=200,
-                temperature=0.7
-            )
-            
-            # Парсим ответ - каждая строка это вариант
-            reformulated = [line.strip() for line in response.strip().split("\n") if line.strip() and len(line.strip()) > 10]
-            return reformulated[:3]  # Максимум 3 варианта
-            
-        except Exception as e:
-            logger.warning(f"[RAG SERVICE] Query reformulation failed: {e}")
-            return []
     
-    async def _keyword_search_chunks(
-        self,
-        question: str,
-        collection_name: str,
-        project_id: UUID,
-        top_k: int = 5
-    ) -> List[Dict]:
-        """
-        Keyword search по чанкам в БД
-        
-        Args:
-            question: Вопрос пользователя
-            collection_name: Имя коллекции
-            project_id: ID проекта
-            top_k: Количество результатов
-            
-        Returns:
-            Список найденных чанков
-        """
-        try:
-            from app.models.document import Document, DocumentChunk
-            from sqlalchemy import select, text
-            import re
-            
-            # Извлекаем ключевые слова
-            keywords = set(re.findall(r'\b\w+\b', question.lower()))
-            keywords = {w for w in keywords if len(w) > 3}  # Слова длиннее 3 символов
-            
-            if not keywords:
-                return []
-            
-            # Ищем чанки содержащие ключевые слова
-            try:
-                result = await self.db.execute(
-                    select(DocumentChunk)
-                    .join(Document)
-                    .where(Document.project_id == project_id)
-                    .where(DocumentChunk.chunk_text.isnot(None))
-                    .where(DocumentChunk.chunk_text != "")
-                    .limit(top_k * 3)
-                )
-                db_chunks = result.scalars().all()
-            except Exception:
-                # Fallback на raw SQL
-                result = await self.db.execute(
-                    text("""
-                        SELECT dc.id, dc.chunk_text, d.filename
-                        FROM document_chunks dc
-                        JOIN documents d ON dc.document_id = d.id
-                        WHERE d.project_id = :project_id
-                        AND dc.chunk_text IS NOT NULL
-                        AND dc.chunk_text != ''
-                        LIMIT :limit
-                    """),
-                    {"project_id": str(project_id), "limit": top_k * 3}
-                )
-                rows = result.all()
-                db_chunks = []
-                for row in rows:
-                    chunk = DocumentChunk()
-                    chunk.id = row[0]
-                    chunk.chunk_text = row[1]
-                    doc = Document()
-                    doc.filename = row[2]
-                    chunk.document = doc
-                    db_chunks.append(chunk)
-            
-            # Ранжируем по количеству совпадающих ключевых слов
-            scored_chunks = []
-            for chunk in db_chunks:
-                chunk_text_lower = chunk.chunk_text.lower()
-                matches = sum(1 for kw in keywords if kw in chunk_text_lower)
-                if matches > 0:
-                    score = min(0.9, 0.3 + (matches / len(keywords)) * 0.6)
-                    scored_chunks.append({
-                        "text": chunk.chunk_text,
-                        "source": chunk.document.filename if chunk.document else "Документ",
-                        "score": score,
-                        "method": "keyword_search"
-                    })
-            
-            # Сортируем по score
-            scored_chunks.sort(key=lambda x: x["score"], reverse=True)
-            return scored_chunks[:top_k]
-            
-        except Exception as e:
-            logger.warning(f"[RAG SERVICE] Keyword search error: {e}")
-            return []
     
-    async def _generate_document_summary_fallback(
-        self,
-        question: str,
-        metadata_context: str,
-        project,
-        llm_client=None,
-        max_tokens: int = 1000
-    ) -> str:
-        """
-        Генерирует сводку документов на основе метаданных как fallback,
-        когда RAG не находит релевантной информации
-        
-        Args:
-            question: Вопрос пользователя
-            metadata_context: Контекст из метаданных документов
-            project: Объект проекта
-            llm_client: Клиент LLM (если None, создается новый)
-            max_tokens: Максимальное количество токенов
-            
-        Returns:
-            Сводка документов на основе метаданных
-        """
-        try:
-            # Создаем клиент LLM если не передан
-            if llm_client is None:
-                from app.llm.openrouter_client import OpenRouterClient
-                from app.models.llm_model import GlobalModelSettings
-                from sqlalchemy import select
-                
-                settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
-                global_settings = settings_result.scalar_one_or_none()
-                
-                primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
-                fallback_model = global_settings.fallback_model_id if global_settings else None
-                
-                if not primary_model:
-                    from app.core.config import settings as app_settings
-                    primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
-                    fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
-                
-                llm_client = OpenRouterClient(
-                    model_primary=primary_model,
-                    model_fallback=fallback_model
-                )
-            
-            # Пытаемся извлечь дополнительный контент из документов
-            additional_content = ""
-            try:
-                from app.models.document import Document
-                from sqlalchemy import select, text
-                
-                try:
-                    result = await self.db.execute(
-                        select(Document)
-                        .where(Document.project_id == project.id)
-                        .where(Document.content.isnot(None))
-                        .where(Document.content != "")
-                        .where(Document.content.notin_(["Обработка...", "Обработан"]))
-                        .limit(5)
-                    )
-                    documents = result.scalars().all()
-                except Exception:
-                    result = await self.db.execute(
-                        text("""
-                            SELECT filename, content 
-                            FROM documents 
-                            WHERE project_id = :project_id 
-                            AND content IS NOT NULL 
-                            AND content != '' 
-                            AND content NOT IN ('Обработка...', 'Обработан')
-                            LIMIT 5
-                        """),
-                        {"project_id": str(project.id)}
-                    )
-                    rows = result.all()
-                    documents = []
-                    for row in rows:
-                        doc = Document()
-                        doc.filename = row[0]
-                        doc.content = row[1]
-                        documents.append(doc)
-                
-                if documents:
-                    content_parts = []
-                    for doc in documents:
-                        if doc.content and len(doc.content) > 100:
-                            # Берем первые 500 символов из каждого документа
-                            preview = doc.content[:500]
-                            if len(doc.content) > 500:
-                                preview += "..."
-                            content_parts.append(f"Файл '{doc.filename}':\n{preview}")
-                    
-                    if content_parts:
-                        additional_content = "\n\nЧастичное содержимое документов:\n\n" + "\n\n".join(content_parts)
-            except Exception as content_error:
-                logger.warning(f"[RAG SERVICE] Error extracting additional content: {content_error}")
-            
-            # Создаем промпт для генерации сводки
-            summary_prompt = f"""На основе информации о загруженных документах ответь на вопрос пользователя.
-Используй ВСЮ доступную информацию: названия файлов, ключевые слова, метаданные, и даже частичное содержимое.
-
-ИНФОРМАЦИЯ О ДОКУМЕНТАХ:
-{metadata_context}
-{additional_content}
-
-ВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}
-
-ИНСТРУКЦИЯ:
-- Используй названия файлов для понимания тематики документов
-- Используй ключевые слова для определения содержания
-- Если есть частичное содержимое, используй его для более точного ответа
-- Создай информативный ответ на основе всех доступных данных
-- НЕ говори "нет информации" - всегда можно дать ответ на основе метаданных и названий файлов
-- Будь конкретным и информативным
-
-ОТВЕТ:"""
-            
-            messages = [
-                {
-                    "role": "system",
-                    "content": "Ты - полезный ассистент, который всегда находит способ ответить на вопросы пользователей. Используй любую доступную информацию: названия файлов, ключевые слова, метаданные, частичное содержимое. Отвечай на русском языке, будь дружелюбным и информативным. НИКОГДА не говори 'нет информации' - всегда можно дать полезный ответ на основе доступных данных."
-                },
-                {
-                    "role": "user",
-                    "content": summary_prompt
-                }
-            ]
-            
-            # Генерируем сводку
-            response = await llm_client.chat_completion(
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=0.7
-            )
-            
-            logger.info(f"[RAG SERVICE] Generated document summary fallback (length: {len(response)})")
-            return response.strip()
-            
-        except Exception as e:
-            logger.error(f"[RAG SERVICE] Error generating document summary fallback: {e}", exc_info=True)
-            # В крайнем случае возвращаем базовую информацию из метаданных
-            return f"На основе доступной информации о документах:\n\n{metadata_context}\n\nК сожалению, полное содержимое документов еще обрабатывается, но вы можете задать вопросы о конкретных файлах по их названиям."
     
-    async def _generate_ai_agent_fallback(
-        self,
-        question: str,
-        project,
-        llm_client,
-        max_tokens: int,
-        conversation_history: List[Dict[str, str]] = None
-    ) -> str:
-        """
-        Генерирует ответ через AI агента как fallback механизм
-        
-        Args:
-            question: Вопрос пользователя
-            project: Объект проекта
-            llm_client: Клиент LLM
-            max_tokens: Максимальное количество токенов
-            conversation_history: История диалога
-            
-        Returns:
-            Ответ от AI агента
-        """
-        try:
-            from app.services.rag_agent import RAGAgent
-            rag_agent = RAGAgent(llm_client)
-            
-            # Используем агента для генерации ответа на основе общих знаний
-            agent_prompt = f"""Вопрос пользователя: {question}
-
-Используй свои знания и контекст проекта '{project.name}' для ответа на вопрос.
-Будь полезным и информативным, даже если у тебя нет доступа к конкретным документам.
-
-Ответ:"""
-            
-            messages = [
-                {"role": "system", "content": f"{project.prompt_template}\n\nТы - полезный ассистент, который отвечает на вопросы пользователей."},
-                {"role": "user", "content": agent_prompt}
-            ]
-            
-            if conversation_history:
-                recent_history = conversation_history[-4:]
-                messages = [messages[0]] + recent_history + [messages[1]]
-            
-            response = await llm_client.chat_completion(
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=0.7
-            )
-            
-            logger.info(f"[RAG SERVICE] Generated AI agent fallback (length: {len(response)})")
-            return response.strip()
-            
-        except Exception as e:
-            logger.warning(f"[RAG SERVICE] AI agent fallback failed: {e}")
-            return None
     
-    async def _generate_basic_fallback(
-        self,
-        question: str,
-        project
-    ) -> str:
-        """
-        Генерирует базовый ответ на основе названия проекта
-        
-        Args:
-            question: Вопрос пользователя
-            project: Объект проекта
-            
-        Returns:
-            Базовый ответ
-        """
-        try:
-            # Пытаемся получить хотя бы список документов
-            from app.models.document import Document
-            from sqlalchemy import select
-            
-            result = await self.db.execute(
-                select(Document)
-                .where(Document.project_id == project.id)
-                .limit(5)
-            )
-            documents = result.scalars().all()
-            
-            if documents:
-                doc_names = [doc.filename for doc in documents if doc.filename]
-                doc_list = "\n".join([f"- {name}" for name in doc_names[:5]])
-                
-                return f"""В проекте '{project.name}' загружены следующие документы:
-
-{doc_list}
-
-Документы могут быть еще в процессе обработки. Попробуйте задать вопрос о конкретном документе по его названию."""
-            else:
-                return f"""В проекте '{project.name}' пока нет загруженных документов. 
-Пожалуйста, загрузите документы, чтобы я мог ответить на ваши вопросы."""
-                
-        except Exception as e:
-            logger.warning(f"[RAG SERVICE] Basic fallback failed: {e}")
-            return f"Извините, произошла ошибка при обработке вашего вопроса в проекте '{project.name}'. Пожалуйста, попробуйте переформулировать вопрос."
+    
     
     async def generate_answer_fast(
         self,
@@ -1468,11 +806,11 @@ class RAGService:
             Короткий ответ на вопрос
         """
         # Получение пользователя и проекта
-        user = await self._get_user(user_id)
+        user = await self.helpers.get_user(user_id)
         if not user:
             raise ValueError("Пользователь не найден")
         
-        project = await self._get_project(user.project_id)
+        project = await self.helpers.get_project(user.project_id)
         if not project:
             raise ValueError("Проект не найден")
         
@@ -1497,7 +835,7 @@ class RAGService:
                 documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
                 if documents_metadata:
                     metadata_context = metadata_service.create_metadata_context(documents_metadata)
-                    return await self._generate_document_summary_fallback(
+                    return await self.fallbacks.generate_document_summary_fallback(
                         question=question,
                         metadata_context=metadata_context,
                         project=project,
@@ -1516,7 +854,7 @@ class RAGService:
                 documents_metadata = await metadata_service.get_documents_metadata(project.id, self.db)
                 if documents_metadata:
                     metadata_context = metadata_service.create_metadata_context(documents_metadata)
-                    return await self._generate_document_summary_fallback(
+                    return await self.fallbacks.generate_document_summary_fallback(
                         question=question,
                         metadata_context=metadata_context,
                         project=project,
@@ -1530,7 +868,7 @@ class RAGService:
             if not answer:
                 logger.info(f"[RAG SERVICE FAST] Trying sub-agent for full document processing")
                 try:
-                    answer = await self._process_full_documents_with_subagent(
+                    answer = await self.fallbacks.process_full_documents_with_subagent(
                         question=question,
                         project=project,
                         llm_client=None,
@@ -1543,7 +881,7 @@ class RAGService:
             if not answer:
                 logger.info(f"[RAG SERVICE FAST] Trying late chunking approach")
                 try:
-                    answer = await self._late_chunking_fallback(
+                    answer = await self.fallbacks.late_chunking_fallback(
                         question=question,
                         project=project,
                         llm_client=None,
@@ -1633,449 +971,18 @@ class RAGService:
         )
         
         # Сохранение сообщений в историю
-        await self._save_message(user_id, question, "user")
-        await self._save_message(user_id, answer, "assistant")
+        await self.helpers.save_message(user_id, question, "user")
+        await self.helpers.save_message(user_id, answer, "assistant")
         
         return answer
     
-    async def _generate_followup_questions(
-        self,
-        question: str,
-        sample_chunks: List[Dict],
-        project_id: UUID
-    ) -> List[str]:
-        """
-        Генерирует follow-up вопросы на основе найденных фрагментов для итеративного поиска
-        
-        Args:
-            question: Оригинальный вопрос
-            sample_chunks: Примеры найденных чанков
-            project_id: ID проекта
-            
-        Returns:
-            Список follow-up вопросов
-        """
-        try:
-            from app.llm.openrouter_client import OpenRouterClient
-            from app.models.llm_model import GlobalModelSettings
-            from sqlalchemy import select
-            
-            # Получаем модель для генерации вопросов
-            settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
-            global_settings = settings_result.scalar_one_or_none()
-            
-            primary_model = global_settings.primary_model_id if global_settings else None
-            fallback_model = global_settings.fallback_model_id if global_settings else None
-            
-            if not primary_model:
-                from app.core.config import settings as app_settings
-                primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
-                fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
-            
-            llm_client = OpenRouterClient(
-                model_primary=primary_model,
-                model_fallback=fallback_model
-            )
-            
-            # Формируем контекст из найденных чанков
-            chunks_text = "\n\n".join([chunk.get("text", "")[:300] for chunk in sample_chunks[:3]])
-            
-            followup_prompt = f"""На основе следующего вопроса и найденных фрагментов документов, сгенерируй 2-3 дополнительных вопроса для более глубокого поиска информации.
-
-Оригинальный вопрос: {question}
-
-Найденные фрагменты:
-{chunks_text}
-
-Сгенерируй вопросы, которые помогут найти более релевантную информацию. Каждый вопрос с новой строки, без нумерации."""
-            
-            messages = [
-                {"role": "system", "content": "Ты помощник, который генерирует дополнительные вопросы для улучшения поиска информации."},
-                {"role": "user", "content": followup_prompt}
-            ]
-            
-            response = await llm_client.chat_completion(
-                messages=messages,
-                max_tokens=200,
-                temperature=0.7
-            )
-            
-            # Парсим вопросы
-            followup_questions = [line.strip() for line in response.strip().split("\n") if line.strip() and len(line.strip()) > 10]
-            return followup_questions[:3]  # Максимум 3 вопроса
-            
-        except Exception as e:
-            logger.warning(f"[RAG SERVICE] Follow-up questions generation failed: {e}")
-            return []
     
-    async def _process_full_documents_with_subagent(
-        self,
-        question: str,
-        project,
-        llm_client=None,
-        max_tokens: int = 500
-    ) -> Optional[str]:
-        """
-        Sub-agent для обработки целых документов как fallback механизм
-        
-        Args:
-            question: Вопрос пользователя
-            project: Объект проекта
-            llm_client: Клиент LLM (если None, создается новый)
-            max_tokens: Максимальное количество токенов
-            
-        Returns:
-            Ответ на основе целых документов или None
-        """
-        try:
-            from app.models.document import Document
-            from sqlalchemy import select
-            
-            # Получаем документы проекта
-            result = await self.db.execute(
-                select(Document)
-                .where(Document.project_id == project.id)
-                .where(Document.content.isnot(None))
-                .where(Document.content != "")
-                .where(Document.content.notin_(["Обработка...", "Обработан"]))
-                .limit(3)  # Обрабатываем максимум 3 документа
-            )
-            documents = result.scalars().all()
-            
-            if not documents:
-                return None
-            
-            # Создаем клиент LLM если не передан
-            if llm_client is None:
-                from app.llm.openrouter_client import OpenRouterClient
-                from app.models.llm_model import GlobalModelSettings
-                from sqlalchemy import select
-                
-                settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
-                global_settings = settings_result.scalar_one_or_none()
-                
-                primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
-                fallback_model = global_settings.fallback_model_id if global_settings else None
-                
-                if not primary_model:
-                    from app.core.config import settings as app_settings
-                    primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
-                    fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
-                
-                llm_client = OpenRouterClient(
-                    model_primary=primary_model,
-                    model_fallback=fallback_model
-                )
-            
-            # Обрабатываем каждый документ отдельно (sub-agent подход)
-            document_responses = []
-            for doc in documents:
-                if doc.content and len(doc.content) > 100:
-                    # Берем первые 4000 символов из каждого документа (для экономии токенов)
-                    doc_content = doc.content[:4000]
-                    if len(doc.content) > 4000:
-                        doc_content += "..."
-                    
-                    subagent_prompt = f"""Вопрос пользователя: {question}
-
-Полный документ '{doc.filename}':
-{doc_content}
-
-Ответь на вопрос на основе этого документа. Если информации нет, так и скажи."""
-                    
-                    messages = [
-                        {"role": "system", "content": "Ты - sub-agent, который анализирует целые документы для ответа на вопросы. Отвечай кратко и по делу."},
-                        {"role": "user", "content": subagent_prompt}
-                    ]
-                    
-                    try:
-                        response = await llm_client.chat_completion(
-                            messages=messages,
-                            max_tokens=max_tokens // len(documents),  # Делим токены между документами
-                            temperature=0.7
-                        )
-                        
-                        # Проверяем, не является ли ответ отказом
-                        response_lower = response.strip().lower()
-                        refusal_phrases = ["нет информации", "не могу ответить", "не нашел", "не найдено"]
-                        if not any(phrase in response_lower for phrase in refusal_phrases):
-                            document_responses.append(f"Из документа '{doc.filename}': {response.strip()}")
-                    except Exception as doc_error:
-                        logger.debug(f"[RAG SERVICE] Sub-agent failed for doc {doc.filename}: {doc_error}")
-                        continue
-            
-            if document_responses:
-                combined_response = "\n\n".join(document_responses)
-                logger.info(f"[RAG SERVICE] Sub-agent processed {len(document_responses)} documents")
-                return combined_response
-            
-            return None
-            
-        except Exception as e:
-            logger.warning(f"[RAG SERVICE] Sub-agent fallback failed: {e}")
-            return None
     
-    async def _late_chunking_fallback(
-        self,
-        question: str,
-        project,
-        llm_client=None,
-        max_tokens: int = 500
-    ) -> Optional[str]:
-        """
-        Late Chunking fallback - обработка через long-context embedding
-        
-        Args:
-            question: Вопрос пользователя
-            project: Объект проекта
-            llm_client: Клиент LLM (если None, создается новый)
-            max_tokens: Максимальное количество токенов
-            
-        Returns:
-            Ответ на основе late chunking или None
-        """
-        try:
-            from app.models.document import Document
-            from sqlalchemy import select
-            import numpy as np
-            
-            # Получаем документы проекта
-            result = await self.db.execute(
-                select(Document)
-                .where(Document.project_id == project.id)
-                .where(Document.content.isnot(None))
-                .where(Document.content != "")
-                .where(Document.content.notin_(["Обработка...", "Обработан"]))
-                .limit(2)  # Обрабатываем максимум 2 документа
-            )
-            documents = result.scalars().all()
-            
-            if not documents:
-                return None
-            
-            # Создаем эмбеддинг вопроса
-            question_embedding = await self.embedding_service.create_embedding(question)
-            
-            # Для каждого документа создаем эмбеддинг всего документа (late chunking)
-            best_doc = None
-            best_score = 0.0
-            
-            for doc in documents:
-                if doc.content and len(doc.content) > 100:
-                    # Создаем эмбеддинг всего документа (первые 8000 символов для экономии)
-                    doc_content = doc.content[:8000]
-                    doc_embedding = await self.embedding_service.create_embedding(doc_content)
-                    
-                    # Вычисляем косинусное сходство
-                    similarity = np.dot(question_embedding, doc_embedding) / (
-                        np.linalg.norm(question_embedding) * np.linalg.norm(doc_embedding)
-                    )
-                    
-                    if similarity > best_score:
-                        best_score = similarity
-                        best_doc = doc
-            
-            # Если нашли релевантный документ, используем его
-            if best_doc and best_score > 0.3:
-                if llm_client is None:
-                    from app.llm.openrouter_client import OpenRouterClient
-                    from app.models.llm_model import GlobalModelSettings
-                    from sqlalchemy import select
-                    
-                    settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
-                    global_settings = settings_result.scalar_one_or_none()
-                    
-                    primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
-                    fallback_model = global_settings.fallback_model_id if global_settings else None
-                    
-                    if not primary_model:
-                        from app.core.config import settings as app_settings
-                        primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
-                        fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
-                    
-                    llm_client = OpenRouterClient(
-                        model_primary=primary_model,
-                        model_fallback=fallback_model
-                    )
-                
-                # Используем первые 5000 символов документа
-                doc_content = best_doc.content[:5000]
-                if len(best_doc.content) > 5000:
-                    doc_content += "..."
-                
-                late_chunking_prompt = f"""Вопрос пользователя: {question}
-
-Документ '{best_doc.filename}' (релевантность: {best_score:.2f}):
-{doc_content}
-
-Ответь на вопрос на основе этого документа."""
-                
-                messages = [
-                    {"role": "system", "content": "Ты - ассистент, который отвечает на вопросы на основе документов. Отвечай кратко и информативно."},
-                    {"role": "user", "content": late_chunking_prompt}
-                ]
-                
-                response = await llm_client.chat_completion(
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=0.7
-                )
-                
-                logger.info(f"[RAG SERVICE] Late chunking found relevant document with score {best_score:.2f}")
-                return response.strip()
-            
-            return None
-            
-        except Exception as e:
-            logger.warning(f"[RAG SERVICE] Late chunking fallback failed: {e}")
-            return None
     
-    async def _get_user(self, user_id: UUID) -> Optional[User]:
-        """Получить пользователя"""
-        result = await self.db.execute(select(User).where(User.id == user_id))
-        return result.scalar_one_or_none()
     
-    async def _get_project(self, project_id: UUID) -> Optional[Project]:
-        """Получить проект"""
-        result = await self.db.execute(select(Project).where(Project.id == project_id))
-        return result.scalar_one_or_none()
     
-    async def _get_conversation_history(self, user_id: UUID, limit: int = 6) -> List[Dict[str, str]]:
-        """Получить историю диалога"""
-        result = await self.db.execute(
-            select(Message)
-            .where(Message.user_id == user_id)
-            .order_by(desc(Message.created_at))
-            .limit(limit)
-        )
-        messages = list(result.scalars().all())
-        
-        # Преобразование в формат для LLM (обратный порядок - от старых к новым)
-        history = []
-        for msg in reversed(messages):
-            history.append({
-                "role": msg.role,
-                "content": msg.content
-            })
-        
-        return history
     
-    async def _save_message(self, user_id: UUID, content: str, role: str):
-        """Сохранить сообщение в историю"""
-        message = Message(
-            user_id=user_id,
-            content=content,
-            role=role
-        )
-        self.db.add(message)
-        await self.db.commit()
     
-    async def _get_document_summaries(self, project_id: UUID, limit: int = 5) -> List[str]:
-        """
-        Получает summaries документов проекта для использования в RAG
-        
-        Args:
-            project_id: ID проекта
-            limit: Максимальное количество summaries
-        
-        Returns:
-            Список summaries документов
-        """
-        try:
-            from app.models.document import Document
-            from app.services.document_summary_service import DocumentSummaryService
-            
-            # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
-            try:
-                # Пробуем обычный запрос
-                result = await self.db.execute(
-                    select(Document)
-                    .where(Document.project_id == project_id)
-                    .limit(limit * 2)  # Берем больше, чтобы выбрать те, у которых есть summary
-                )
-                documents = result.scalars().all()
-            except Exception as db_error:
-                # Если ошибка из-за отсутствия поля summary, используем raw SQL
-                error_str = str(db_error).lower()
-                if "summary" in error_str or "column" in error_str:
-                    logger.warning(f"[RAG SERVICE] Summary column not found in DB, using raw SQL query")
-                    from sqlalchemy import text
-                    try:
-                        result = await self.db.execute(
-                            text("SELECT id, project_id, filename, content, file_type, created_at FROM documents WHERE project_id = :project_id LIMIT :limit"),
-                            {"project_id": str(project_id), "limit": limit * 2}
-                        )
-                        # Преобразуем результаты в объекты Document вручную
-                        documents = []
-                        for row in result:
-                            doc = Document()
-                            doc.id = row[0]
-                            doc.project_id = row[1]
-                            doc.filename = row[2]
-                            doc.content = row[3] if row[3] else ""
-                            doc.file_type = row[4]
-                            doc.created_at = row[5]
-                            # Поле summary отсутствует - устанавливаем None через setattr
-                            try:
-                                setattr(doc, 'summary', None)
-                            except:
-                                pass
-                            documents.append(doc)
-                    except Exception as sql_error:
-                        logger.error(f"[RAG SERVICE] Error with raw SQL query: {sql_error}")
-                        documents = []
-                else:
-                    # Другая ошибка - пробрасываем дальше
-                    raise
-            
-            if not documents:
-                return []
-            
-            summary_service = DocumentSummaryService(self.db)
-            summaries = []
-            
-            for doc in documents[:limit]:
-                # Приоритет 1: используем существующий summary (проверяем безопасно)
-                doc_summary = getattr(doc, 'summary', None)
-                if doc_summary and doc_summary.strip():
-                    # Форматируем как в рабочем скрипте: "Фрагмент X (источник: filename): summary"
-                    summaries.append({
-                        "text": doc_summary,
-                        "source": doc.filename,
-                        "score": 1.0
-                    })
-                else:
-                    # Приоритет 2: пытаемся создать summary (только если поле существует в БД)
-                    try:
-                        # Проверяем, существует ли поле summary в модели
-                        if hasattr(Document, 'summary'):
-                            summary = await summary_service.generate_summary(doc.id)
-                            if summary and summary.strip():
-                                summaries.append({
-                                    "text": summary,
-                                    "source": doc.filename,
-                                    "score": 1.0
-                                })
-                                continue
-                    except Exception as e:
-                        logger.warning(f"Error generating summary for doc {doc.id}: {e}")
-                    
-                    # Приоритет 3: используем содержимое (первые 500 символов)
-                    if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
-                        content = doc.content[:500]
-                        if content.strip():
-                            summaries.append({
-                                "text": content,
-                                "source": doc.filename,
-                                "score": 0.8
-                            })
-            
-            logger.info(f"[RAG SERVICE] Retrieved {len(summaries)} document summaries for project {project_id}")
-            return summaries
-            
-        except Exception as e:
-            logger.error(f"[RAG SERVICE] Error getting document summaries: {e}", exc_info=True)
-            return []
     
     async def generate_suggested_questions(
         self,
@@ -2214,12 +1121,12 @@ class RAGService:
                             except Exception as e:
                                 logger.warning(f"Error generating summary for doc {doc.id}: {e}")
                             
-                            # Приоритет 3: используем содержимое напрямую
+                        # Приоритет 3: используем содержимое напрямую
                         if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
                             # Берем первые 1000 символов из содержимого
                             content = doc.content[:1000]
                             if content.strip():
-                                    chunk_texts.append(f"Документ '{doc.filename}': {content}")
+                                chunk_texts.append(f"Документ '{doc.filename}': {content}")
             
             if not chunk_texts:
                 logger.warning(f"[RAG SERVICE] No content found for project {project_id} - documents may still be processing")
@@ -2328,6 +1235,23 @@ class RAGService:
             logger.error(f"[RAG SERVICE] Error generating suggested questions: {e}", exc_info=True)
             return []
     
+    async def generate_suggested_questions(
+        self,
+        project_id: UUID,
+        limit: int = 5
+    ) -> List[str]:
+        """
+        Генерировать предложенные вопросы на основе загруженных документов
+        
+        Args:
+            project_id: ID проекта
+            limit: Количество предложенных вопросов
+        
+        Returns:
+            Список предложенных вопросов
+        """
+        return await self.suggestions.generate_suggested_questions(project_id, limit)
+    
     async def _generate_answer_with_nlp_summarization(
         self,
         user_id: UUID,
@@ -2365,7 +1289,7 @@ class RAGService:
                 return "В проекте нет документов для анализа."
             
             # Получаем историю диалога
-            conversation_history = await self._get_conversation_history(user_id, limit=10)
+            conversation_history = await self.helpers.get_conversation_history(user_id, limit=10)
             
             # Получаем настройки моделей
             settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
@@ -2551,8 +1475,8 @@ class RAGService:
                             chunks=[]
                         )
                         
-                        await self._save_message(user_id, question, "user")
-                        await self._save_message(user_id, answer, "assistant")
+                        await self.helpers.save_message(user_id, question, "user")
+                        await self.helpers.save_message(user_id, answer, "assistant")
                         
                         logger.info(f"[RAG SERVICE] Fallback 4 SUCCESS: Generated answer using filename and general knowledge")
                         return answer
@@ -2672,8 +1596,8 @@ class RAGService:
             )
             
             # Сохраняем сообщения в историю
-            await self._save_message(user_id, question, "user")
-            await self._save_message(user_id, answer, "assistant")
+            await self.helpers.save_message(user_id, question, "user")
+            await self.helpers.save_message(user_id, answer, "assistant")
             
             logger.info(f"[RAG SERVICE] NLP-enhanced summarization answer generated for single document")
             return answer

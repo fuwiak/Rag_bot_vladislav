@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Sidebar from '../components/Sidebar'
+import LanguageSwitcher from '../components/LanguageSwitcher'
 import { cache, cacheKeys } from '../lib/cache'
+import { useI18n } from '../lib/i18n/context'
 
 interface Project {
   id: string
@@ -17,6 +19,7 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const router = useRouter()
+  const { t } = useI18n()
 
   useEffect(() => {
     fetchProjects()
@@ -103,7 +106,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-fb-gray">
-        <div className="text-fb-text-secondary text-lg">Загрузка...</div>
+        <div className="text-fb-text-secondary text-lg">{t('common.loading')}</div>
       </div>
     )
   }
@@ -123,10 +126,11 @@ export default function DashboardPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
                 </div>
-                <h1 className="text-2xl font-bold text-fb-blue hidden sm:block">RAG Bot Admin</h1>
+                <h1 className="text-2xl font-bold text-fb-blue hidden sm:block">{t('dashboard.appName')}</h1>
               </Link>
             </div>
             <div className="flex items-center space-x-4">
+              <LanguageSwitcher />
               <button
                 onClick={handleLogout}
                 className="text-fb-text-secondary hover:text-fb-text px-4 py-2 text-sm font-medium rounded-lg hover:bg-fb-gray-dark transition-colors flex items-center space-x-2"
@@ -134,7 +138,7 @@ export default function DashboardPage() {
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
-                <span>Выйти</span>
+                <span>{t('common.logout')}</span>
               </button>
             </div>
           </div>
@@ -144,12 +148,12 @@ export default function DashboardPage() {
       <div className="ml-64">
         <main className="max-w-7xl mx-auto py-4 px-4 sm:px-6 lg:px-8">
         <div className="mb-4 flex justify-between items-center">
-          <h2 className="text-2xl font-bold text-fb-text">Проекты</h2>
+          <h2 className="text-2xl font-bold text-fb-text">{t('dashboard.title')}</h2>
           <Link
             href="/projects/new"
             className="bg-fb-blue hover:bg-fb-blue-dark text-white px-6 py-3 rounded-lg font-semibold shadow-md transition-colors duration-200"
           >
-            + Создать проект
+            + {t('dashboard.createProject')}
           </Link>
         </div>
 
@@ -159,13 +163,13 @@ export default function DashboardPage() {
               <svg className="mx-auto h-12 w-12 text-fb-text-secondary mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
-              <h3 className="text-xl font-semibold text-fb-text mb-2">Нет проектов</h3>
-              <p className="text-fb-text-secondary mb-4">Создайте первый проект для начала работы</p>
+              <h3 className="text-xl font-semibold text-fb-text mb-2">{t('dashboard.noProjects')}</h3>
+              <p className="text-fb-text-secondary mb-4">{t('dashboard.noProjectsDescription')}</p>
               <Link
                 href="/projects/new"
                 className="inline-block bg-fb-blue hover:bg-fb-blue-dark text-white px-6 py-3 rounded-lg font-semibold transition-colors duration-200"
               >
-                Создать проект
+                {t('dashboard.createProject')}
               </Link>
             </div>
           </div>

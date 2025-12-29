@@ -2,9 +2,11 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useI18n } from '../lib/i18n/context'
 
 export default function Sidebar() {
   const pathname = usePathname()
+  const { t } = useI18n()
 
   const isActive = (path: string) => {
     return pathname === path || pathname?.startsWith(path + '/')
@@ -12,7 +14,7 @@ export default function Sidebar() {
 
   const menuItems = [
     {
-      name: 'Проекты',
+      name: t('sidebar.projects'),
       path: '/dashboard',
       icon: (
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -21,7 +23,7 @@ export default function Sidebar() {
       ),
     },
     {
-      name: 'Все пользователи',
+      name: t('sidebar.allUsers'),
       path: '/users',
       icon: (
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -30,7 +32,7 @@ export default function Sidebar() {
       ),
     },
     {
-      name: 'Управление ботами',
+      name: t('sidebar.botManagement'),
       path: '/telegram-bots',
       icon: (
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -39,7 +41,7 @@ export default function Sidebar() {
       ),
     },
     {
-      name: 'Управление моделями',
+      name: t('sidebar.modelManagement'),
       path: '/models',
       icon: (
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
