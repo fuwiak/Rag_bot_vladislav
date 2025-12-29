@@ -34,10 +34,10 @@ export default function LoginPage() {
       // Сохраняем токен
       if (typeof window !== 'undefined') {
         localStorage.setItem('token', data.access_token)
-      }
+    }
 
       // Перенаправляем на dashboard
-      router.push('/dashboard')
+        router.push('/dashboard')
     } catch (err) {
       console.error('Login error:', err)
       setError('Ошибка подключения к серверу')

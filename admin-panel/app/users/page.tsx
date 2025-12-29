@@ -95,7 +95,7 @@ export default function UsersPage() {
       })
       setProjects(projectsMap)
       setProjectsList(projectsData)
-      
+
       // Сохраняем проекты в кэш
       cache.set(cacheKeys.projects, projectsData, 2 * 60 * 1000)
 
@@ -104,7 +104,7 @@ export default function UsersPage() {
         apiFetch(`/api/users/project/${project.id}`)
           .then(res => res.ok ? res.json() : [])
           .catch((err) => {
-            console.error(`Ошибка загрузки пользователей проекта ${project.id}:`, err)
+          console.error(`Ошибка загрузки пользователей проекта ${project.id}:`, err)
             return []
           })
       )

@@ -130,7 +130,7 @@ asyncio.run(apply_manual())\n\
     "\n\
     }\n\
   }\n\
-fi\n\
+  fi\n\
 echo "Starting application..."\n\
 exec "$@"' > /entrypoint.sh && \
     chmod +x /entrypoint.sh

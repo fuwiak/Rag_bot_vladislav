@@ -52,7 +52,7 @@ async def get_current_admin(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Администратор не найден"
-        )
+    )
     
     return admin
 

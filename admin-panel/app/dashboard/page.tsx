@@ -218,7 +218,7 @@ export default function DashboardPage() {
             ))}
           </div>
         )}
-        </main>
+      </main>
       </div>
       
       <ResetPasswordModal
