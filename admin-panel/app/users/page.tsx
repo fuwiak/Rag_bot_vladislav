@@ -98,7 +98,7 @@ export default function UsersPage() {
       cache.set(cacheKeys.projects, projectsData, 2 * 60 * 1000)
 
       // ✅ РАВНОПАРАЛЛЕЛЬНЫЕ запросы вместо последовательных
-      const userPromises = projectsData.map(project =>
+      const userPromises = projectsData.map((project: Project) =>
         apiFetch(`/api/users/project/${project.id}`)
           .then(res => res.ok ? res.json() : [])
           .catch((err) => {
