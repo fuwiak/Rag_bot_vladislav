@@ -19,7 +19,8 @@
     "projects": "Projects",
     "allUsers": "All Users",
     "botManagement": "Bot Management",
-    "modelManagement": "Model Management"
+    "modelManagement": "Model Management",
+    "ragDiagnostics": "RAG Diagnostics"
   },
   "dashboard": {
     "title": "Projects",
