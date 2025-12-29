@@ -296,8 +296,8 @@ class RAGService:
                                     .limit(10)
                                 )
                                 documents = result.scalars().all()
-                        except Exception:
-                            # Fallback на raw SQL
+                            except Exception:
+                                # Fallback на raw SQL
                             result = await self.db.execute(
                                 text("""
                                     SELECT id, filename, content, file_type 
