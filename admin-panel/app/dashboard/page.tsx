@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Sidebar from '../components/Sidebar'
 import LanguageSwitcher from '../components/LanguageSwitcher'
+import ResetPasswordModal from '../components/ResetPasswordModal'
 import { cache, cacheKeys } from '../lib/cache'
 import { useI18n } from '../lib/i18n/context'
 
@@ -18,6 +19,7 @@ interface Project {
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
+  const [showResetPassword, setShowResetPassword] = useState(false)
   const router = useRouter()
   const { t } = useI18n()
 
@@ -99,8 +101,8 @@ export default function DashboardPage() {
   }
 
   const handleLogout = () => {
-    // В режиме без логина просто обновляем страницу
-    window.location.reload()
+    localStorage.removeItem('token')
+    router.push('/login')
   }
 
   if (loading) {
@@ -131,6 +133,16 @@ export default function DashboardPage() {
             </div>
             <div className="flex items-center space-x-4">
               <LanguageSwitcher />
+              <button
+                onClick={() => setShowResetPassword(true)}
+                className="text-fb-text-secondary hover:text-fb-text px-4 py-2 text-sm font-medium rounded-lg hover:bg-fb-gray-dark transition-colors flex items-center space-x-2"
+                title="Сброс пароля"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+                <span className="hidden sm:inline">Сброс пароля</span>
+              </button>
               <button
                 onClick={handleLogout}
                 className="text-fb-text-secondary hover:text-fb-text px-4 py-2 text-sm font-medium rounded-lg hover:bg-fb-gray-dark transition-colors flex items-center space-x-2"
@@ -206,8 +218,13 @@ export default function DashboardPage() {
             ))}
           </div>
         )}
-      </main>
+        </main>
       </div>
+      
+      <ResetPasswordModal
+        isOpen={showResetPassword}
+        onClose={() => setShowResetPassword(false)}
+      />
     </div>
   )
 }

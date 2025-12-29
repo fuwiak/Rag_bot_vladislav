@@ -6,7 +6,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.schemas.auth import LoginRequest, LoginResponse
+from app.schemas.auth import LoginRequest, LoginResponse, ResetPasswordRequest, ResetPasswordResponse
 from app.services.auth_service import AuthService
 
 router = APIRouter()
@@ -19,16 +19,24 @@ async def login(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Авторизация администратора - БЕЗ ПРОВЕРКИ ПАРОЛЯ
+    Авторизация администратора
     """
     import logging
     logger = logging.getLogger(__name__)
     
     auth_service = AuthService(db)
-    # Создаем токен для любого username - БЕЗ ПРОВЕРКИ
-    username = login_data.username or 'admin'
-    logger.warning(f"Login without password check for username: {username}")
-    token = auth_service.create_access_token(username)
+    
+    # Проверяем учетные данные
+    token = await auth_service.authenticate(login_data.username, login_data.password)
+    
+    if not token:
+        logger.warning(f"Failed login attempt for username: {login_data.username}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверное имя пользователя или пароль"
+        )
+    
+    logger.info(f"Successful login for username: {login_data.username}")
     return LoginResponse(access_token=token, token_type="bearer")
 
 
@@ -78,6 +86,75 @@ async def create_admin_endpoint(
         "username": "admin",
         "password": "admin"
     }
+
+
+@router.post("/reset-password", response_model=ResetPasswordResponse)
+async def reset_password(
+    reset_data: ResetPasswordRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Сброс пароля администратора
+    Требует текущий пароль для подтверждения
+    """
+    import logging
+    from jose import JWTError, jwt
+    from app.core.config import settings
+    from app.models.admin_user import AdminUser
+    from sqlalchemy import select
+    
+    logger = logging.getLogger(__name__)
+    
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Требуется авторизация"
+        )
+    
+    try:
+        # Декодируем токен
+        payload = jwt.decode(credentials.credentials, settings.ADMIN_SECRET_KEY, algorithms=["HS256"])
+        username = payload.get("sub")
+        
+        if not username:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Неверный токен"
+            )
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный токен"
+        )
+    
+    # Получаем администратора
+    auth_service = AuthService(db)
+    admin = await auth_service.get_admin_by_username(username)
+    
+    if not admin:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Администратор не найден"
+        )
+    
+    # Проверяем текущий пароль
+    if not auth_service.verify_password(reset_data.current_password, admin.password_hash):
+        logger.warning(f"Failed password reset attempt for username: {username}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный текущий пароль"
+        )
+    
+    # Обновляем пароль
+    admin.password_hash = auth_service.get_password_hash(reset_data.new_password)
+    await db.commit()
+    
+    logger.info(f"Password reset successful for username: {username}")
+    return ResetPasswordResponse(
+        message="Пароль успешно изменен",
+        username=username
+    )
 
 
 

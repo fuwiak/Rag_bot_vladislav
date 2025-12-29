@@ -81,12 +81,21 @@ class AuthService:
     
     async def authenticate(self, username: str, password: str) -> Optional[str]:
         """
-        Аутентификация пользователя (PASSWORD DISABLED - always succeeds)
+        Аутентификация пользователя
         
         Returns:
-            JWT токен (always succeeds, password not checked)
+            JWT токен если авторизация успешна, None если неверные данные
         """
-        # PASSWORD DISABLED - always return token
+        # Получаем администратора по username
+        admin = await self.get_admin_by_username(username)
+        if not admin:
+            return None
+        
+        # Проверяем пароль
+        if not self.verify_password(password, admin.password_hash):
+            return None
+        
+        # Создаем токен
         return self.create_access_token(username)
     
     async def get_admin_by_username(self, username: str) -> Optional[AdminUser]:

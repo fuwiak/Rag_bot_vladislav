@@ -15,3 +15,15 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
+
+class ResetPasswordRequest(BaseModel):
+    """Запрос на сброс пароля"""
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=1, max_length=255)
+
+
+class ResetPasswordResponse(BaseModel):
+    """Ответ на сброс пароля"""
+    message: str
+    username: str
+
