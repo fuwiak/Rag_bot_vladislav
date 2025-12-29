@@ -424,16 +424,16 @@ class RAGService:
                                                 best_score = similarity
                                                 best_doc = doc
                             
-                            # Если нашли релевантный документ, используем его первые 5000 символов как чанк
-                                        if best_doc and best_score > 0.3:
+                                    # Если нашли релевантный документ, используем его первые 5000 символов как чанк
+                                    if best_doc and best_score > 0.3:
                                         doc_content = best_doc.content[:5000]
                                         if len(best_doc.content) > 5000:
-                                        doc_content += "..."
-                                
+                                            doc_content += "..."
+                                        
                                         chunk_texts.append({
-                                        "text": doc_content,
-                                        "source": best_doc.filename,
-                                        "score": best_score
+                                            "text": doc_content,
+                                            "source": best_doc.filename,
+                                            "score": best_score
                                         })
                                         logger.info(f"[RAG SERVICE] Late chunking found relevant document '{best_doc.filename}' with score {best_score:.2f}")
                         except Exception as late_error:
