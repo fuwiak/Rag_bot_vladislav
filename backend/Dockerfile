@@ -129,8 +129,8 @@ async def apply_manual():\n\
 asyncio.run(apply_manual())\n\
     "\n\
     }\n\
-  fi\n\
-}\n\
+  }\n\
+fi\n\
 echo "Starting application..."\n\
 exec "$@"' > /entrypoint.sh && \
     chmod +x /entrypoint.sh
