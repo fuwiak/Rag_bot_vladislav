@@ -410,7 +410,7 @@ class RAGService:
                                     best_score = 0.0
                                 
                                     for doc in documents:
-                                    if doc.content and len(doc.content) > 100:
+                                        if doc.content and len(doc.content) > 100:
                                         # Создаем эмбеддинг всего документа (первые 8000 символов)
                                         doc_content = doc.content[:8000]
                                         doc_embedding = await self.embedding_service.create_embedding(doc_content)
@@ -437,7 +437,7 @@ class RAGService:
                                         })
                                         logger.info(f"[RAG SERVICE] Late chunking found relevant document '{best_doc.filename}' with score {best_score:.2f}")
                         except Exception as late_error:
-                                    logger.warning(f"[RAG SERVICE] Late chunking failed: {late_error}")
+                            logger.warning(f"[RAG SERVICE] Late chunking failed: {late_error}")
                 
                 # Инициализируем chunks_for_prompt для использования в блоке else
                 chunks_for_prompt = []
