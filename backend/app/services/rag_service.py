@@ -402,14 +402,14 @@ class RAGService:
                                 documents = result.scalars().all()
                             
                                 if documents:
-                                # Создаем эмбеддинг вопроса
-                                question_embedding = await self.embedding_service.create_embedding(question)
+                                    # Создаем эмбеддинг вопроса
+                                    question_embedding = await self.embedding_service.create_embedding(question)
                                 
                                 # Для каждого документа создаем эмбеддинг всего документа
-                                best_doc = None
-                                best_score = 0.0
+                                    best_doc = None
+                                    best_score = 0.0
                                 
-                                for doc in documents:
+                                    for doc in documents:
                                     if doc.content and len(doc.content) > 100:
                                         # Создаем эмбеддинг всего документа (первые 8000 символов)
                                         doc_content = doc.content[:8000]
@@ -425,19 +425,19 @@ class RAGService:
                                             best_doc = doc
                             
                             # Если нашли релевантный документ, используем его первые 5000 символов как чанк
-                                if best_doc and best_score > 0.3:
-                                doc_content = best_doc.content[:5000]
-                                if len(best_doc.content) > 5000:
+                                    if best_doc and best_score > 0.3:
+                                    doc_content = best_doc.content[:5000]
+                                    if len(best_doc.content) > 5000:
                                     doc_content += "..."
                                 
-                                chunk_texts.append({
+                                    chunk_texts.append({
                                     "text": doc_content,
                                     "source": best_doc.filename,
                                     "score": best_score
-                                })
-                                logger.info(f"[RAG SERVICE] Late chunking found relevant document '{best_doc.filename}' with score {best_score:.2f}")
+                                    })
+                                    logger.info(f"[RAG SERVICE] Late chunking found relevant document '{best_doc.filename}' with score {best_score:.2f}")
                         except Exception as late_error:
-                                logger.warning(f"[RAG SERVICE] Late chunking failed: {late_error}")
+                                    logger.warning(f"[RAG SERVICE] Late chunking failed: {late_error}")
                 
                 # Инициализируем chunks_for_prompt для использования в блоке else
                 chunks_for_prompt = []
