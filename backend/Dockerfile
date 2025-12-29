@@ -48,13 +48,22 @@ echo "Waiting for database..."\n\
 python -c "import asyncio, sys; sys.path.insert(0, '\''/app'\''); from app.core.database import wait_for_db; asyncio.run(wait_for_db(max_retries=10, retry_interval=2))"\n\
 echo "Applying Alembic migrations..."\n\
 cd /app\n\
-# Применяем все head ревизии (если есть несколько веток)\n\
-alembic upgrade heads 2>&1 | tee /tmp/migration.log || {\n\
-  echo "Migration failed, checking current state..."\n\
-  alembic current 2>&1 || true\n\
-  echo "Retrying migration..."\n\
-  sleep 3\n\
-  alembic upgrade heads 2>&1 | tee -a /tmp/migration.log || {\n\
+# Sprawdzamy czy są multiple heads\n\
+HEADS_COUNT=$(alembic heads -q 2>/dev/null | wc -l || echo "0")\n\
+if [ "$HEADS_COUNT" -gt 1 ]; then\n\
+  echo "Multiple heads detected ($HEADS_COUNT), upgrading each separately..."\n\
+  for head in $(alembic heads -q 2>/dev/null); do\n\
+    echo "Upgrading to head: $head"\n\
+    alembic upgrade $head 2>&1 | tee -a /tmp/migration.log || true\n\
+  done\n\
+else\n\
+  # Применяем все head ревизии (если есть несколько веток)\n\
+  alembic upgrade heads 2>&1 | tee /tmp/migration.log || {\n\
+    echo "Migration failed, checking current state..."\n\
+    alembic current 2>&1 || true\n\
+    echo "Retrying migration..."\n\
+    sleep 3\n\
+    alembic upgrade heads 2>&1 | tee -a /tmp/migration.log || {\n\
     echo "Migration failed again, trying to apply manually..."\n\
     python -c "\n\
 import asyncio\n\
@@ -119,7 +128,8 @@ async def apply_manual():\n\
             await db.rollback()\n\
 asyncio.run(apply_manual())\n\
     "\n\
-  }\n\
+    }\n\
+  fi\n\
 }\n\
 echo "Starting application..."\n\
 exec "$@"' > /entrypoint.sh && \
