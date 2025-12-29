@@ -290,12 +290,12 @@ class RAGService:
                                 result = await self.db.execute(
                                     select(Document)
                                     .where(Document.project_id == project.id)
-                                .where(Document.content.isnot(None))
-                                .where(Document.content != "")
-                                .where(Document.content.notin_(["Обработка...", "Обработан"]))
-                                .limit(10)
-                            )
-                            documents = result.scalars().all()
+                                    .where(Document.content.isnot(None))
+                                    .where(Document.content != "")
+                                    .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                                    .limit(10)
+                                )
+                                documents = result.scalars().all()
                         except Exception:
                             # Fallback на raw SQL
                             result = await self.db.execute(
