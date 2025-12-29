@@ -43,28 +43,38 @@ export default function TelegramBotsPage() {
     fetchBotsInfo()
   }, [router])
 
-  const fetchBotsInfo = async () => {
+  const fetchBotsInfo = async (useCache = true) => {
     console.log('[FETCH BOTS] Starting fetchBotsInfo...')
     try {
       setError('')
+      
+      // Проверяем кэш сначала
+      if (useCache) {
+        const { cache, cacheKeys } = await import('../lib/cache')
+        const cachedBots = cache.get<BotInfo[]>(cacheKeys.botsInfo)
+        if (cachedBots) {
+          // Показываем кэшированные данные сразу
+          setBotsInfo(cachedBots)
+          setLoading(false)
+          // Обновляем данные в фоне
+          fetchBotsInfo(false)
+          return
+        }
+      }
+      
       setLoading(true)
       const { apiFetch } = await import('../lib/api-helpers')
+      const { cache, cacheKeys } = await import('../lib/cache')
       const { getBackendUrl } = await import('../lib/api-helpers')
       const backendUrl = await getBackendUrl()
       console.log('[FETCH BOTS] Backend URL:', backendUrl)
 
-      // Добавляем timestamp для предотвращения кэширования
-      const url = `/api/bots/info?t=${Date.now()}`
+      // ✅ УБРАЛИ timestamp и cache: 'no-store' - разрешаем кэширование
+      const url = `/api/bots/info`
       console.log('[FETCH BOTS] Full URL:', `${backendUrl}${url}`)
       
-      const response = await apiFetch(url, {
-        cache: 'no-store',
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0'
-        }
-      })
+      const response = await apiFetch(url)
+      // Убрали все заголовки блокирующие кэш
 
       console.log('[FETCH BOTS] Response status:', response.status)
       console.log('[FETCH BOTS] Response ok:', response.ok)
@@ -85,6 +95,10 @@ export default function TelegramBotsPage() {
           })
         })
         setBotsInfo(data)
+        
+        // Сохраняем в кэш на 1 минуту
+        cache.set(cacheKeys.botsInfo, data, 60 * 1000)
+        
         console.log('[FETCH BOTS] Bots info state updated')
       } else {
         const errorData = await response.json().catch(() => ({ detail: 'Ошибка загрузки информации о ботах' }))
@@ -95,6 +109,18 @@ export default function TelegramBotsPage() {
       console.error('[FETCH BOTS] Error:', err)
       console.error('[FETCH BOTS] Error stack:', err instanceof Error ? err.stack : 'No stack trace')
       const errorMessage = err instanceof Error ? err.message : 'Неизвестная ошибка'
+      
+      // При ошибке используем кэш, если есть
+      try {
+        const { cache, cacheKeys } = await import('../lib/cache')
+        const cachedBots = cache.get<BotInfo[]>(cacheKeys.botsInfo)
+        if (cachedBots) {
+          setBotsInfo(cachedBots)
+        }
+      } catch (cacheErr) {
+        console.error('[FETCH BOTS] Cache error:', cacheErr)
+      }
+      
       if (errorMessage.includes('Failed to fetch')) {
         // Получаем реальный URL, который используется
         const { getBackendUrl } = await import('../lib/api-helpers')
@@ -226,9 +252,12 @@ export default function TelegramBotsPage() {
       console.log('[BOT TOKEN] Waiting 500ms before fetching updated bots info...')
       await new Promise(resolve => setTimeout(resolve, 500))
       
-      // Обновляем список ботов ПОСЛЕ закрытия модального окна
+      // Обновляем список ботов ПОСЛЕ закрытия модального окна (без кэша)
       console.log('[BOT TOKEN] Fetching updated bots info...')
-      await fetchBotsInfo()
+      // Очищаем кэш перед обновлением
+      const { cache, cacheKeys } = await import('../lib/cache')
+      cache.delete(cacheKeys.botsInfo)
+      await fetchBotsInfo(false) // false = без кэша, wymusza odświeżenie
       
       // Проверяем, что данные обновились
       console.log('[BOT TOKEN] Checking if bot token was saved...')
@@ -244,9 +273,9 @@ export default function TelegramBotsPage() {
       // Бот автоматически активируется при сохранении токена (bot_is_active="true" устанавливается в verify endpoint)
       console.log('[BOT TOKEN] Bot should be auto-activated by backend (bot_is_active="true")')
       
-      // Обновляем список еще раз после активации
+      // Обновляем список еще раз после активации (без кэша)
       await new Promise(resolve => setTimeout(resolve, 500))
-      await fetchBotsInfo()
+      await fetchBotsInfo(false) // false = без кэша, wymusza odświeżenie
       
       // Показываем сообщение об успехе
       console.log('[BOT TOKEN] Showing success message')
@@ -274,7 +303,10 @@ export default function TelegramBotsPage() {
       if (response.ok) {
         const data = await response.json()
         console.log('[START BOT] Bot started successfully:', data)
-        await fetchBotsInfo()
+        // Очищаем кэш перед обновлением
+        const { cache, cacheKeys } = await import('../lib/cache')
+        cache.delete(cacheKeys.botsInfo)
+        await fetchBotsInfo(false) // false = без кэша, wymusza odświeżenie
         alert(`✅ Бот активирован!\n\n${data.message || 'Бот будет запущен бот-сервисом автоматически в течение 20 секунд.'}`)
       } else {
         const errorData = await response.json()
@@ -303,7 +335,10 @@ export default function TelegramBotsPage() {
       if (response.ok) {
         const data = await response.json()
         console.log('[STOP BOT] Bot stopped successfully:', data)
-        await fetchBotsInfo()
+        // Очищаем кэш перед обновлением
+        const { cache, cacheKeys } = await import('../lib/cache')
+        cache.delete(cacheKeys.botsInfo)
+        await fetchBotsInfo(false) // false = без кэша, wymusza odświeżenie
         alert(`✅ Бот деактивирован!\n\n${data.message || 'Бот будет остановлен бот-сервисом автоматически в течение 20 секунд.'}`)
       } else {
         const errorData = await response.json()

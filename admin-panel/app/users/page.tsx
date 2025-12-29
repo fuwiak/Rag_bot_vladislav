@@ -50,13 +50,36 @@ export default function UsersPage() {
     fetchData()
   }, [router])
 
-  const fetchData = async () => {
+  const fetchData = async (useCache = true) => {
     try {
       setError('')
-      const { getApiUrl } = await import('../lib/api-helpers')
+      
+      // Проверяем кэш сначала
+      if (useCache) {
+        const { cache, cacheKeys } = await import('../lib/cache')
+        const cachedUsers = cache.get<User[]>(cacheKeys.allUsers)
+        const cachedProjects = cache.get<Project[]>(cacheKeys.projects)
+        
+        if (cachedUsers && cachedProjects) {
+          // Показываем кэшированные данные сразу
+          const projectsMap: Record<string, Project> = {}
+          cachedProjects.forEach((project: Project) => {
+            projectsMap[project.id] = project
+          })
+          setProjects(projectsMap)
+          setProjectsList(cachedProjects)
+          setUsers(cachedUsers)
+          setLoading(false)
+          // Обновляем данные в фоне
+          fetchData(false)
+          return
+        }
+      }
+
+      const { apiFetch } = await import('../lib/api-helpers')
+      const { cache, cacheKeys } = await import('../lib/cache')
 
       // Загружаем все проекты
-      const { apiFetch } = await import('../lib/api-helpers')
       const projectsRes = await apiFetch('/api/projects')
 
       if (!projectsRes.ok) {
@@ -70,24 +93,49 @@ export default function UsersPage() {
       })
       setProjects(projectsMap)
       setProjectsList(projectsData)
+      
+      // Сохраняем проекты в кэш
+      cache.set(cacheKeys.projects, projectsData, 2 * 60 * 1000)
 
-      // Загружаем всех пользователей из всех проектов
-      const allUsers: User[] = []
-      for (const project of projectsData) {
-        try {
-          const usersRes = await apiFetch(`/api/users/project/${project.id}`)
-          if (usersRes.ok) {
-            const usersData = await usersRes.json()
-            allUsers.push(...usersData)
-          }
-        } catch (err) {
-          console.error(`Ошибка загрузки пользователей проекта ${project.id}:`, err)
-        }
-      }
+      // ✅ РАВНОПАРАЛЛЕЛЬНЫЕ запросы вместо последовательных
+      const userPromises = projectsData.map(project =>
+        apiFetch(`/api/users/project/${project.id}`)
+          .then(res => res.ok ? res.json() : [])
+          .catch((err) => {
+            console.error(`Ошибка загрузки пользователей проекта ${project.id}:`, err)
+            return []
+          })
+      )
+      
+      // Выполняем все запросы параллельно
+      const usersResults = await Promise.all(userPromises)
+      const allUsers = usersResults.flat()
+      
       setUsers(allUsers)
+      
+      // Сохраняем в кэш на 2 минуты
+      cache.set(cacheKeys.allUsers, allUsers, 2 * 60 * 1000)
     } catch (err) {
       setError('Ошибка загрузки данных: ' + (err instanceof Error ? err.message : 'Неизвестная ошибка'))
       console.error('Fetch error:', err)
+      
+      // При ошибке используем кэш, если есть
+      try {
+        const { cache, cacheKeys } = await import('../lib/cache')
+        const cachedUsers = cache.get<User[]>(cacheKeys.allUsers)
+        const cachedProjects = cache.get<Project[]>(cacheKeys.projects)
+        if (cachedUsers && cachedProjects) {
+          const projectsMap: Record<string, Project> = {}
+          cachedProjects.forEach((project: Project) => {
+            projectsMap[project.id] = project
+          })
+          setProjects(projectsMap)
+          setProjectsList(cachedProjects)
+          setUsers(cachedUsers)
+        }
+      } catch (cacheErr) {
+        console.error('Cache error:', cacheErr)
+      }
     } finally {
       setLoading(false)
     }
@@ -106,7 +154,10 @@ export default function UsersPage() {
         method: 'DELETE',
       })
       if (response.ok) {
-        fetchData()
+        // Очищаем кэш перед обновлением
+        const { cache, cacheKeys } = await import('../lib/cache')
+        cache.delete(cacheKeys.allUsers)
+        fetchData(false) // false = без кэша, wymusza odświeżenie
       } else {
         alert(t('users.deleteError'))
       }
@@ -125,7 +176,10 @@ export default function UsersPage() {
         body: JSON.stringify({ status: newStatus }),
       })
       if (response.ok) {
-        fetchData()
+        // Очищаем кэш перед обновлением
+        const { cache, cacheKeys } = await import('../lib/cache')
+        cache.delete(cacheKeys.allUsers)
+        fetchData(false) // false = без кэша, wymusza odświeżenie
       } else {
         alert(t('users.statusUpdateError'))
       }
@@ -176,7 +230,10 @@ export default function UsersPage() {
         setEditUserUsername('')
         setEditUserProjectId('')
         setEditUserStatus('active')
-        fetchData()
+        // Очищаем кэш перед обновлением
+        const { cache, cacheKeys } = await import('../lib/cache')
+        cache.delete(cacheKeys.allUsers)
+        fetchData(false) // false = без кэша, wymusza odświeżenie
       } else {
         const errorData = await response.json()
         setError(errorData.detail || 'Ошибка обновления пользователя')
@@ -386,7 +443,10 @@ export default function UsersPage() {
                   setNewUserPhone('')
                   setNewUserUsername('')
                   setNewUserProjectId('')
-                  fetchData()
+                  // Очищаем кэш перед обновлением
+                  const { cache, cacheKeys } = await import('../lib/cache')
+                  cache.delete(cacheKeys.allUsers)
+                  fetchData(false) // false = без кэша, wymusza odświeżenie
                 } else {
                   const errorData = await response.json()
                   setError(errorData.detail || 'Ошибка создания пользователя')
