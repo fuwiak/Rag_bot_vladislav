@@ -1,9 +1,10 @@
 """
 Сервис для создания эмбеддингов
 """
-from typing import List
+from typing import List, Optional
 import httpx
 import time
+import logging
 
 from app.core.config import settings
 from app.services.cache_service import cache_service
@@ -11,18 +12,46 @@ from app.observability.metrics import rag_metrics
 from app.observability.otel_setup import get_tracer
 
 tracer = get_tracer(__name__)
+logger = logging.getLogger(__name__)
+
+# Попытка импортировать SentenceTransformer для локальных embeddings
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    logger.warning("sentence-transformers не установлен. Локальные embeddings недоступны. Установите: pip install sentence-transformers")
 
 
 class EmbeddingService:
     """Сервис для работы с эмбеддингами"""
     
-    def __init__(self):
+    def __init__(self, use_local: bool = False):
+        """
+        Args:
+            use_local: Если True, использует локальные embeddings (SentenceTransformer) вместо API
+        """
         self.api_key = settings.OPENROUTER_API_KEY
         self.model = settings.EMBEDDING_MODEL
+        self.use_local = use_local
+        self._local_model: Optional[SentenceTransformer] = None
+        
+        if use_local and SENTENCE_TRANSFORMERS_AVAILABLE:
+            try:
+                # Используем ту же модель что в prostym kodzie
+                logger.info("Loading local embedding model: paraphrase-multilingual-MiniLM-L12-v2")
+                self._local_model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+                logger.info("Local embedding model loaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to load local embedding model: {e}, falling back to API")
+                self.use_local = False
+        elif use_local and not SENTENCE_TRANSFORMERS_AVAILABLE:
+            logger.warning("Local embeddings requested but sentence-transformers not available, using API")
+            self.use_local = False
     
     async def create_embedding(self, text: str) -> List[float]:
         """
-        Создать эмбеддинг для текста через OpenRouter (z cache)
+        Создать эмбеддинг для текста (локально или через OpenRouter)
         
         Args:
             text: Текст для создания эмбеддинга
@@ -33,8 +62,9 @@ class EmbeddingService:
         start_time = time.time()
         
         with tracer.start_as_current_span("embedding.create") as span:
-            span.set_attribute("model", self.model)
+            span.set_attribute("model", self.model if not self.use_local else "local-sentence-transformer")
             span.set_attribute("text_length", len(text))
+            span.set_attribute("use_local", self.use_local)
             
             # Sprawdzamy cache
             cached_embedding = await cache_service.get_embedding(text)
@@ -48,7 +78,30 @@ class EmbeddingService:
             rag_metrics.record_cache_miss("embedding")
             span.set_attribute("cache_hit", False)
             
-            # Generujemy embedding
+            # Локальные embeddings (jak w prostym kodzie)
+            if self.use_local and self._local_model:
+                try:
+                    # SentenceTransformer работает синхронnie, więc używamy run_in_executor
+                    import asyncio
+                    loop = asyncio.get_event_loop()
+                    embedding = await loop.run_in_executor(
+                        None,
+                        lambda: self._local_model.encode(text, normalize_embeddings=True).tolist()
+                    )
+                    
+                    # Zapisujemy do cache
+                    await cache_service.set_embedding(text, embedding)
+                    
+                    duration = time.time() - start_time
+                    rag_metrics.record_embedding_generation(duration, "local-sentence-transformer")
+                    span.set_attribute("duration", duration)
+                    
+                    return embedding
+                except Exception as e:
+                    logger.warning(f"Local embedding failed: {e}, falling back to API")
+                    # Fallback do API
+            
+            # Generujemy embedding przez API
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     "https://openrouter.ai/api/v1/embeddings",
@@ -88,8 +141,9 @@ class EmbeddingService:
         start_time = time.time()
         
         with tracer.start_as_current_span("embedding.create_batch") as span:
-            span.set_attribute("model", self.model)
+            span.set_attribute("model", self.model if not self.use_local else "local-sentence-transformer")
             span.set_attribute("batch_size", len(texts))
+            span.set_attribute("use_local", self.use_local)
             
             # Pobieramy z cache
             cached_embeddings = await cache_service.get_embeddings_batch(texts)
@@ -99,7 +153,38 @@ class EmbeddingService:
             embeddings_to_return = []
             
             if texts_to_generate:
-                # Generujemy brakujące embeddings
+                # Локальные embeddings (jak w prostym kodzie)
+                if self.use_local and self._local_model:
+                    try:
+                        import asyncio
+                        loop = asyncio.get_event_loop()
+                        new_embeddings = await loop.run_in_executor(
+                            None,
+                            lambda: self._local_model.encode(texts_to_generate, normalize_embeddings=True).tolist()
+                        )
+                        
+                        # Zapisujemy do cache
+                        await cache_service.set_embeddings_batch(texts_to_generate, new_embeddings)
+                        
+                        # Łączymy z cached
+                        embedding_map = dict(zip(texts_to_generate, new_embeddings))
+                        for text in texts:
+                            if text in cached_embeddings and cached_embeddings[text]:
+                                embeddings_to_return.append(cached_embeddings[text])
+                            else:
+                                embeddings_to_return.append(embedding_map[text])
+                        
+                        duration = time.time() - start_time
+                        rag_metrics.record_embedding_generation(duration, "local-sentence-transformer")
+                        span.set_attribute("duration", duration)
+                        span.set_attribute("cache_hits", len(texts) - len(texts_to_generate))
+                        
+                        return embeddings_to_return
+                    except Exception as e:
+                        logger.warning(f"Local batch embedding failed: {e}, falling back to API")
+                        # Fallback do API
+                
+                # Generujemy brakujące embeddings przez API
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     response = await client.post(
                         "https://openrouter.ai/api/v1/embeddings",

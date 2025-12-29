@@ -867,6 +867,166 @@ class RAGService:
     
     
     
+    async def generate_answer_simple(
+        self,
+        user_id: UUID,
+        question: str,
+        top_k: int = 5,
+        use_local_embeddings: bool = True
+    ) -> str:
+        """
+        Простой режим RAG (jak prosty kod z Jupyter Notebook)
+        - Bezpośredni search w Qdrant
+        - Prosty prompt
+        - Bez AI Agent, fallbacków, metadanych
+        - Opcjonalnie lokalne embeddings
+        
+        Args:
+            user_id: ID пользователя
+            question: Вопрос пользователя
+            top_k: Количество релевантных чанков
+            use_local_embeddings: Использовать локальные embeddings (SentenceTransformer)
+        
+        Returns:
+            Ответ на вопрос
+        """
+        logger.info(f"[RAG SERVICE SIMPLE] Simple mode for question: {question[:50]}...")
+        
+        # Получение пользователя и проекта
+        user = await self.helpers.get_user(user_id)
+        if not user:
+            raise ValueError(get_constant("constants.errors.user_not_found", "Пользователь не найден"))
+        
+        project = await self.helpers.get_project(user.project_id)
+        if not project:
+            raise ValueError(get_constant("constants.errors.project_not_found", "Проект не найден"))
+        
+        # Проверяем, есть ли документы в проекте
+        from app.models.document import Document, DocumentChunk
+        from sqlalchemy import select, func
+        
+        docs_count_result = await self.db.execute(
+            select(func.count(Document.id))
+            .where(Document.project_id == project.id)
+        )
+        documents_count = docs_count_result.scalar() or 0
+        
+        if documents_count == 0:
+            return "В проекте нет загруженных документов. Загрузите документы для использования RAG."
+        
+        # Проверяем, есть ли chunks в Qdrant
+        collection_name = f"project_{project.id}"
+        collection_exists = await self.vector_store.collection_exists(collection_name)
+        
+        if not collection_exists:
+            # Проверяем, есть ли chunks в БД (документ может быть в процессе обработки)
+            chunks_count_result = await self.db.execute(
+                select(func.count(DocumentChunk.id))
+                .join(Document)
+                .where(Document.project_id == project.id)
+            )
+            chunks_count = chunks_count_result.scalar() or 0
+            
+            if chunks_count == 0:
+                return "Документы еще обрабатываются. Пожалуйста, подождите несколько секунд и попробуйте снова."
+            else:
+                return "Документы обрабатываются. Пожалуйста, подождите несколько секунд и попробуйте снова."
+        
+        # Создаем embedding для вопроса
+        # Используем локальные embeddings если доступны
+        if use_local_embeddings:
+            embedding_service = EmbeddingService(use_local=True)
+        else:
+            embedding_service = self.embedding_service
+        
+        question_embedding = await embedding_service.create_embedding(question)
+        
+        # Простой поиск в Qdrant (jak w prostym kodzie)
+        similar_chunks = await self.vector_store.search_similar(
+            collection_name=collection_name,
+            query_vector=question_embedding,
+            limit=top_k,
+            score_threshold=0.0  # Берем wszystkie, nawet z niskim score
+        )
+        
+        if not similar_chunks or len(similar_chunks) == 0:
+            return "Не найдено релевантной информации в базе."
+        
+        # Формируем контекст (jak w prostym kodzie)
+        context_parts = []
+        for i, chunk in enumerate(similar_chunks, 1):
+            chunk_text = chunk.get("payload", {}).get("chunk_text", "")
+            if not chunk_text:
+                # Если нет в payload, получаем из БД
+                chunk_id = chunk.get("payload", {}).get("chunk_id")
+                if chunk_id:
+                    try:
+                        chunk_result = await self.db.execute(
+                            select(DocumentChunk).where(DocumentChunk.id == UUID(chunk_id))
+                        )
+                        db_chunk = chunk_result.scalar_one_or_none()
+                        if db_chunk:
+                            chunk_text = db_chunk.chunk_text
+                    except Exception:
+                        pass
+            
+            if chunk_text:
+                score = chunk.get("score", 0.0)
+                source = chunk.get("payload", {}).get("source", "Документ")
+                context_parts.append(
+                    f"Фрагмент {i} (источник: {source}, релевантность: {score:.2f}):\n{chunk_text}"
+                )
+        
+        if not context_parts:
+            return "Не найдено релевантной информации в базе."
+        
+        context = "\n\n".join(context_parts)
+        
+        # Простой промпт (jak w prostym kodzie)
+        prompt = f"""На основе следующих фрагментов документов ответь на вопрос пользователя.
+Если ответа нет в контексте, так и скажи.
+
+КОНТЕКСТ:
+{context}
+
+ВОПРОС: {question}
+
+ОТВЕТ:"""
+        
+        # Генерируем ответ через LLM
+        from app.models.llm_model import GlobalModelSettings
+        from sqlalchemy import select
+        settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+        global_settings = settings_result.scalar_one_or_none()
+        
+        primary_model = project.llm_model or (global_settings.primary_model_id if global_settings else None)
+        fallback_model = global_settings.fallback_model_id if global_settings else None
+        
+        if not primary_model:
+            from app.core.config import settings as app_settings
+            primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+            fallback_model = fallback_model or app_settings.OPENROUTER_MODEL_FALLBACK
+        
+        llm_client = OpenRouterClient(
+            model_primary=primary_model,
+            model_fallback=fallback_model
+        )
+        
+        messages = [{"role": "user", "content": prompt}]
+        
+        logger.info(f"[RAG SERVICE SIMPLE] Generating answer with {primary_model}")
+        answer = await llm_client.chat_completion(
+            messages=messages,
+            max_tokens=1000,
+            temperature=0.7
+        )
+        
+        # Сохраняем сообщения
+        await self.helpers.save_message(user_id, question, "user")
+        await self.helpers.save_message(user_id, answer, "assistant")
+        
+        return answer
+    
     async def generate_answer_fast(
         self,
         user_id: UUID,

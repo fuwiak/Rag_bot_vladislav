@@ -231,25 +231,50 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                     logger.error(f"[QUESTION HANDLER] GENERAL MODE: Error for user {user_id}: {general_error}", exc_info=True)
                     answer = "Извините, произошла ошибка при обработке вашего вопроса. Попробуйте позже."
             else:
-                # Режим RAG - пытаемся использовать документы
-                # Создаем задачу с таймаутом
+                # Режим RAG - сначала пробуем простой режим (jak prosty kod)
+                # Если не работает, пробуем полный RAG
                 try:
+                    logger.info(f"[QUESTION HANDLER] Trying simple RAG mode first for user {user_id}")
                     answer = await asyncio.wait_for(
-                        rag_service.generate_answer(user_id, question),
-                        timeout=10.0  # Увеличено до 10 секунд
+                        rag_service.generate_answer_simple(user_id, question, top_k=5, use_local_embeddings=True),
+                        timeout=15.0
                     )
-                    logger.info(f"[QUESTION HANDLER] RAG answer generated successfully for user {user_id}")
+                    logger.info(f"[QUESTION HANDLER] Simple RAG answer generated successfully for user {user_id}")
                 except asyncio.TimeoutError:
-                    logger.warning(f"[QUESTION HANDLER] Timeout for user {user_id}, trying fast answer")
+                    logger.warning(f"[QUESTION HANDLER] Simple RAG timeout for user {user_id}, trying full RAG")
                     try:
-                        answer = await rag_service.generate_answer_fast(user_id, question)
-                        logger.info(f"[QUESTION HANDLER] Fast RAG answer generated for user {user_id}")
-                    except Exception as fast_error:
-                        logger.warning(f"[QUESTION HANDLER] Fast RAG also failed for user {user_id}: {fast_error}, using LLM fallback")
+                        answer = await asyncio.wait_for(
+                            rag_service.generate_answer(user_id, question),
+                            timeout=10.0
+                        )
+                        logger.info(f"[QUESTION HANDLER] Full RAG answer generated successfully for user {user_id}")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"[QUESTION HANDLER] Full RAG timeout for user {user_id}, trying fast answer")
+                        try:
+                            answer = await rag_service.generate_answer_fast(user_id, question)
+                            logger.info(f"[QUESTION HANDLER] Fast RAG answer generated for user {user_id}")
+                        except Exception as fast_error:
+                            logger.warning(f"[QUESTION HANDLER] Fast RAG also failed for user {user_id}: {fast_error}, using LLM fallback")
+                            use_fallback = True
+                    except Exception as rag_error:
+                        logger.error(f"[QUESTION HANDLER] Full RAG error for user {user_id}: {rag_error}, trying fast", exc_info=True)
+                        try:
+                            answer = await rag_service.generate_answer_fast(user_id, question)
+                            logger.info(f"[QUESTION HANDLER] Fast RAG answer generated after full RAG error for user {user_id}")
+                        except Exception as fast_error2:
+                            logger.error(f"[QUESTION HANDLER] Fast RAG also failed: {fast_error2}, using LLM fallback")
+                            use_fallback = True
+                except Exception as simple_error:
+                    logger.warning(f"[QUESTION HANDLER] Simple RAG failed for user {user_id}: {simple_error}, trying full RAG")
+                    try:
+                        answer = await asyncio.wait_for(
+                            rag_service.generate_answer(user_id, question),
+                            timeout=10.0
+                        )
+                        logger.info(f"[QUESTION HANDLER] Full RAG answer generated after simple RAG error for user {user_id}")
+                    except Exception as rag_error:
+                        logger.error(f"[QUESTION HANDLER] Full RAG also failed for user {user_id}: {rag_error}, using LLM fallback", exc_info=True)
                         use_fallback = True
-                except Exception as rag_error:
-                    logger.error(f"[QUESTION HANDLER] RAG error for user {user_id}: {rag_error}, using LLM fallback", exc_info=True)
-                    use_fallback = True
             
             # Fallback: используем прямой LLM, но ВСЕГДА с настройками проекта и промптом
             if use_fallback or not answer:
