@@ -914,22 +914,35 @@ class RAGService:
         if documents_count == 0:
             return "В проекте нет загруженных документов. Загрузите документы для использования RAG."
         
-        # Проверяем, есть ли chunks в Qdrant
+        # Проверяем, есть ли chunks в Qdrant и czy są przetworzone
         collection_name = f"project_{project.id}"
         collection_exists = await self.vector_store.collection_exists(collection_name)
         
         if not collection_exists:
-            # Проверяем, есть ли chunks в БД (документ может быть в процессе обработки)
-            chunks_count_result = await self.db.execute(
+            # Проверяем, есть ли chunks в БД с qdrant_point_id (czy są przetworzone)
+            processed_chunks_result = await self.db.execute(
+                select(func.count(DocumentChunk.id))
+                .join(Document)
+                .where(Document.project_id == project.id)
+                .where(DocumentChunk.qdrant_point_id.isnot(None))
+            )
+            processed_chunks = processed_chunks_result.scalar() or 0
+            
+            # Sprawdzamy też czy są chunks bez qdrant_point_id (w trakcie przetwarzania)
+            total_chunks_result = await self.db.execute(
                 select(func.count(DocumentChunk.id))
                 .join(Document)
                 .where(Document.project_id == project.id)
             )
-            chunks_count = chunks_count_result.scalar() or 0
+            total_chunks = total_chunks_result.scalar() or 0
             
-            if chunks_count == 0:
+            if total_chunks == 0:
                 return "Документы еще обрабатываются. Пожалуйста, подождите несколько секунд и попробуйте снова."
+            elif processed_chunks == 0:
+                return "Документы обрабатываются (chunks созданы, но embeddings еще не готовы). Пожалуйста, подождите несколько секунд и попробуйте снова."
             else:
+                # Chunks są, ale kolekcja nie istnieje - próbujemy utworzyć
+                logger.warning(f"[RAG SERVICE SIMPLE] Collection {collection_name} doesn't exist but {processed_chunks} chunks have qdrant_point_id")
                 return "Документы обрабатываются. Пожалуйста, подождите несколько секунд и попробуйте снова."
         
         # Создаем embedding для вопроса
