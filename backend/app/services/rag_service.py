@@ -379,8 +379,6 @@ class RAGService:
                                         logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content previews")
                                 except Exception as preview_error:
                                     logger.warning(f"[RAG SERVICE] Error extracting previews: {preview_error}")
-                            except Exception as extract_error:
-                                logger.warning(f"[RAG SERVICE] Error extracting content from documents: {extract_error}")
                     
                     # Если все еще нет чанков после всех техник, пробуем Late Chunking
                     if not chunk_texts:
