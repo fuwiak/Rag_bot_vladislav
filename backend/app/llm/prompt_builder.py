@@ -2,26 +2,16 @@
 Построение промптов для LLM
 """
 from typing import List, Dict
+from app.core.prompt_config import get_prompt, get_constant, get_default
 
 
 class PromptBuilder:
     """Построитель промптов"""
     
-    DEFAULT_TEMPLATE = """Ты помощник, который отвечает на вопросы пользователя.
-
-Контекст из документов (если доступен):
-{chunks}
-
-Вопрос пользователя: {question}
-
-Правила:
-1. Если есть контекст из документов, отвечай в первую очередь на его основе
-2. Если контекста нет или информации недостаточно, можешь использовать свои знания, но укажи это
-3. Будь кратким и структурированным
-4. Максимальная длина ответа: {max_length} символов
-5. Если используешь информацию из документов, укажи это
-
-Ответ:"""
+    @property
+    def DEFAULT_TEMPLATE(self) -> str:
+        """Дефолтный шаблон промпта из config.yaml"""
+        return get_prompt("prompts.default_template")
     
     def build_prompt(
         self,
@@ -52,29 +42,28 @@ class PromptBuilder:
             is_summaries = any("Документ '" in chunk for chunk in chunks)
             if is_summaries:
                 # Это summaries - форматируем как summaries документов
+                summaries_prefix = get_constant("constants.context.summaries_prefix", "")
+                summaries_suffix = get_constant("constants.context.summaries_suffix", "")
                 context = "\n\n".join([f"{chunk}" for chunk in chunks])
-                context = f"Краткие содержания документов:\n\n{context}\n\nИспользуй эту информацию для ответа на вопрос."
+                context = f"{summaries_prefix}{context}{summaries_suffix}"
             else:
                 # Это обычные чанки
                 context = "\n\n".join([f"[Чанк {i+1}]\n{chunk}" for i, chunk in enumerate(chunks)])
-        else:
-            # Если нет чанков, но есть метаданные - используем их
-            if metadata_context:
-                context = f"""Метаданные загруженных документов (документы могут еще обрабатываться):
-
-{metadata_context}
-
-ВАЖНО: Используй эту информацию для ответа на вопрос пользователя. 
-- Если вопрос касается конкретных файлов (например, "что в файле X.pdf"), используй названия файлов из метаданных
-- Если вопрос о ключевых словах или темах, используй ключевые слова из метаданных
-- Если вопрос о содержании документов, можешь ответить на основе названий файлов и ключевых слов
-- Если информации недостаточно, укажи, что документы еще обрабатываются, но можешь дать ответ на основе доступных метаданных"""
             else:
-                context = "Контекст из документов отсутствует. Отвечай на основе своих знаний, но учитывай настройки проекта."
+                # Если нет чанков, но есть метаданные - используем их
+            if metadata_context:
+                metadata_prefix = get_constant("constants.context.metadata_prefix", "")
+                metadata_instruction = get_constant("constants.context.metadata_instruction", "")
+                context = f"""{metadata_prefix}{metadata_context}
+
+{metadata_instruction}"""
+            else:
+                context = get_constant("constants.context.no_chunks", "Контекст из документов отсутствует. Отвечай на основе своих знаний, но учитывай настройки проекта.")
         
         # Добавляем метаданные к контексту, если они есть и есть чанки (для дополнительного контекста)
         if metadata_context and chunks:
-            context += f"\n\nДополнительная информация о документах проекта:\n{metadata_context}\n\nИспользуй эту информацию для более полного ответа."
+            additional_metadata = get_constant("constants.context.additional_metadata", "")
+            context += additional_metadata.format(metadata_context=metadata_context)
         
         # Замена плейсхолдеров в шаблоне
         system_prompt = prompt_template.format(

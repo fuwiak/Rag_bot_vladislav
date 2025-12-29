@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.vector_db.vector_store import VectorStore
 from app.llm.openrouter_client import OpenRouterClient
 from app.observability.structured_logging import get_logger
+from app.core.prompt_config import get_prompt
 
 logger = get_logger(__name__)
 
@@ -241,7 +242,7 @@ class RAGSuggestions:
 Сгенерируй только вопросы, без дополнительных комментариев:"""
             
             messages = [
-                {"role": "system", "content": "Ты помощник, который генерирует вопросы на основе документов."},
+                {"role": "system", "content": get_prompt("prompts.system.question_generator")},
                 {"role": "user", "content": prompt}
             ]
             
@@ -500,7 +501,7 @@ class RAGSuggestions:
 Сгенерируй только вопросы, без дополнительных комментариев:"""
             
             messages = [
-                {"role": "system", "content": "Ты помощник, который генерирует вопросы на основе документов."},
+                {"role": "system", "content": get_prompt("prompts.system.question_generator")},
                 {"role": "user", "content": prompt}
             ]
             

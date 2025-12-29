@@ -9,6 +9,7 @@ from app.models.project import Project
 from app.services.embedding_service import EmbeddingService
 from app.llm.openrouter_client import OpenRouterClient
 from app.observability.structured_logging import get_logger
+from app.core.prompt_config import get_prompt, get_constant, get_default
 
 logger = get_logger(__name__)
 
@@ -77,11 +78,16 @@ class RAGFallbacks:
                         .where(Document.project_id == project.id)
                         .where(Document.content.isnot(None))
                         .where(Document.content != "")
-                        .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                        .where(Document.content.notin_([
+                            get_constant("constants.document_status.processing", "Обработка..."),
+                            get_constant("constants.document_status.processed", "Обработан")
+                        ]))
                         .limit(5)
                     )
                     documents = result.scalars().all()
                 except Exception:
+                    processing_status = get_constant("constants.document_status.processing", "Обработка...")
+                    processed_status = get_constant("constants.document_status.processed", "Обработан")
                     result = await self.db.execute(
                         text("""
                             SELECT filename, content 
@@ -89,10 +95,14 @@ class RAGFallbacks:
                             WHERE project_id = :project_id 
                             AND content IS NOT NULL 
                             AND content != '' 
-                            AND content NOT IN ('Обработка...', 'Обработан')
+                            AND content NOT IN (:processing_status, :processed_status)
                             LIMIT 5
                         """),
-                        {"project_id": str(project.id)}
+                        {
+                            "project_id": str(project.id),
+                            "processing_status": processing_status,
+                            "processed_status": processed_status
+                        }
                     )
                     rows = result.all()
                     documents = []
@@ -118,29 +128,17 @@ class RAGFallbacks:
                 logger.warning(f"[RAG FALLBACKS] Error extracting additional content: {content_error}")
             
             # Создаем промпт для генерации сводки
-            summary_prompt = f"""На основе информации о загруженных документах ответь на вопрос пользователя.
-Используй ВСЮ доступную информацию: названия файлов, ключевые слова, метаданные, и даже частичное содержимое.
-
-ИНФОРМАЦИЯ О ДОКУМЕНТАХ:
-{metadata_context}
-{additional_content}
-
-ВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}
-
-ИНСТРУКЦИЯ:
-- Используй названия файлов для понимания тематики документов
-- Используй ключевые слова для определения содержания
-- Если есть частичное содержимое, используй его для более точного ответа
-- Создай информативный ответ на основе всех доступных данных
-- НЕ говори "нет информации" - всегда можно дать ответ на основе метаданных и названий файлов
-- Будь конкретным и информативным
-
-ОТВЕТ:"""
+            summary_prompt = get_prompt(
+                "prompts.fallback.document_summary",
+                metadata_context=metadata_context,
+                additional_content=additional_content,
+                question=question
+            )
             
             messages = [
                 {
                     "role": "system",
-                    "content": "Ты - полезный ассистент, который всегда находит способ ответить на вопросы пользователей. Используй любую доступную информацию: названия файлов, ключевые слова, метаданные, частичное содержимое. Отвечай на русском языке, будь дружелюбным и информативным. НИКОГДА не говори 'нет информации' - всегда можно дать полезный ответ на основе доступных данных."
+                    "content": get_prompt("prompts.system.aggressive_fallback")
                 },
                 {
                     "role": "user",
@@ -161,7 +159,7 @@ class RAGFallbacks:
         except Exception as e:
             logger.error(f"[RAG FALLBACKS] Error generating document summary fallback: {e}", exc_info=True)
             # В крайнем случае возвращаем базовую информацию из метаданных
-            return f"На основе доступной информации о документах:\n\n{metadata_context}\n\nК сожалению, полное содержимое документов еще обрабатывается, но вы можете задать вопросы о конкретных файлах по их названиям."
+            return get_constant("constants.errors.documents_processing_metadata", "").format(metadata_context=metadata_context) or f"На основе доступной информации о документах:\n\n{metadata_context}\n\nК сожалению, полное содержимое документов еще обрабатывается, но вы можете задать вопросы о конкретных файлах по их названиям."
     
 
     
@@ -191,15 +189,10 @@ class RAGFallbacks:
             rag_agent = RAGAgent(llm_client)
             
             # Используем агента для генерации ответа на основе общих знаний
-            agent_prompt = f"""Вопрос пользователя: {question}
-
-Используй свои знания и контекст проекта '{project.name}' для ответа на вопрос.
-Будь полезным и информативным, даже если у тебя нет доступа к конкретным документам.
-
-Ответ:"""
+            agent_prompt = get_prompt("prompts.fallback.ai_agent", question=question, project_name=project.name)
             
             messages = [
-                {"role": "system", "content": f"{project.prompt_template}\n\nТы - полезный ассистент, который отвечает на вопросы пользователей."},
+                {"role": "system", "content": f"{project.prompt_template}\n\n{get_prompt('prompts.system.basic_assistant')}"},
                 {"role": "user", "content": agent_prompt}
             ]
             
@@ -253,18 +246,18 @@ class RAGFallbacks:
                 doc_names = [doc.filename for doc in documents if doc.filename]
                 doc_list = "\n".join([f"- {name}" for name in doc_names[:5]])
                 
-                return f"""В проекте '{project.name}' загружены следующие документы:
+                return get_constant("constants.fallback_messages.documents_list", "").format(project_name=project.name, doc_list=doc_list) or f"""В проекте '{project.name}' загружены следующие документы:
 
 {doc_list}
 
 Документы могут быть еще в процессе обработки. Попробуйте задать вопрос о конкретном документе по его названию."""
             else:
-                return f"""В проекте '{project.name}' пока нет загруженных документов. 
+                return get_constant("constants.errors.no_documents_loaded", "").format(project_name=project.name) or f"""В проекте '{project.name}' пока нет загруженных документов. 
 Пожалуйста, загрузите документы, чтобы я мог ответить на ваши вопросы."""
                 
         except Exception as e:
             logger.warning(f"[RAG FALLBACKS] Basic fallback failed: {e}")
-            return f"Извините, произошла ошибка при обработке вашего вопроса в проекте '{project.name}'. Пожалуйста, попробуйте переформулировать вопрос."
+            return get_constant("constants.errors.project_error", "").format(project_name=project.name) or f"Извините, произошла ошибка при обработке вашего вопроса в проекте '{project.name}'. Пожалуйста, попробуйте переформулировать вопрос."
     
 
     
@@ -297,7 +290,10 @@ class RAGFallbacks:
                 .where(Document.project_id == project.id)
                 .where(Document.content.isnot(None))
                 .where(Document.content != "")
-                .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                .where(Document.content.notin_([
+                    get_constant("constants.document_status.processing", "Обработка..."),
+                    get_constant("constants.document_status.processed", "Обработан")
+                ]))
                 .limit(3)  # Обрабатываем максимум 3 документа
             )
             documents = result.scalars().all()
@@ -336,15 +332,15 @@ class RAGFallbacks:
                     if len(doc.content) > 4000:
                         doc_content += "..."
                     
-                    subagent_prompt = f"""Вопрос пользователя: {question}
-
-Полный документ '{doc.filename}':
-{doc_content}
-
-Ответь на вопрос на основе этого документа. Если информации нет, так и скажи."""
+                    subagent_prompt = get_prompt(
+                        "prompts.fallback.sub_agent",
+                        question=question,
+                        filename=doc.filename,
+                        content=doc_content
+                    )
                     
                     messages = [
-                        {"role": "system", "content": "Ты - sub-agent, который анализирует целые документы для ответа на вопросы. Отвечай кратко и по делу."},
+                        {"role": "system", "content": get_prompt("prompts.system.sub_agent")},
                         {"role": "user", "content": subagent_prompt}
                     ]
                     
@@ -357,7 +353,7 @@ class RAGFallbacks:
                         
                         # Проверяем, не является ли ответ отказом
                         response_lower = response.strip().lower()
-                        refusal_phrases = ["нет информации", "не могу ответить", "не нашел", "не найдено"]
+                        refusal_phrases = get_constant("constants.refusal_phrases", ["нет информации", "не могу ответить", "не нашел", "не найдено"])
                         if not any(phrase in response_lower for phrase in refusal_phrases):
                             document_responses.append(f"Из документа '{doc.filename}': {response.strip()}")
                     except Exception as doc_error:
@@ -407,7 +403,10 @@ class RAGFallbacks:
                 .where(Document.project_id == project.id)
                 .where(Document.content.isnot(None))
                 .where(Document.content != "")
-                .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                .where(Document.content.notin_([
+                    get_constant("constants.document_status.processing", "Обработка..."),
+                    get_constant("constants.document_status.processed", "Обработан")
+                ]))
                 .limit(2)  # Обрабатываем максимум 2 документа
             )
             documents = result.scalars().all()
@@ -465,15 +464,16 @@ class RAGFallbacks:
                 if len(best_doc.content) > 5000:
                     doc_content += "..."
                 
-                late_chunking_prompt = f"""Вопрос пользователя: {question}
-
-Документ '{best_doc.filename}' (релевантность: {best_score:.2f}):
-{doc_content}
-
-Ответь на вопрос на основе этого документа."""
+                late_chunking_prompt = get_prompt(
+                    "prompts.fallback.late_chunking",
+                    question=question,
+                    filename=best_doc.filename,
+                    score=best_score,
+                    content=doc_content
+                )
                 
                 messages = [
-                    {"role": "system", "content": "Ты - ассистент, который отвечает на вопросы на основе документов. Отвечай кратко и информативно."},
+                    {"role": "system", "content": get_prompt("prompts.system.late_chunking")},
                     {"role": "user", "content": late_chunking_prompt}
                 ]
                 

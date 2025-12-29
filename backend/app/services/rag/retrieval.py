@@ -10,6 +10,7 @@ from app.services.embedding_service import EmbeddingService
 from app.rag.qdrant_loader import QdrantLoader
 from app.services.reranker_service import RerankerService
 from app.observability.structured_logging import get_logger
+from app.core.prompt_config import get_prompt
 
 logger = get_logger(__name__)
 
@@ -354,7 +355,7 @@ class RAGRetrieval:
 Верни только варианты вопросов, каждый с новой строки, без нумерации и дополнительных комментариев."""
             
             messages = [
-                {"role": "system", "content": "Ты помощник, который переформулирует вопросы для лучшего поиска информации."},
+                {"role": "system", "content": get_prompt("prompts.system.question_reformulator")},
                 {"role": "user", "content": reformulate_prompt}
             ]
             
@@ -515,7 +516,7 @@ class RAGRetrieval:
 Сгенерируй вопросы, которые помогут найти более релевантную информацию. Каждый вопрос с новой строки, без нумерации."""
             
             messages = [
-                {"role": "system", "content": "Ты помощник, который генерирует дополнительные вопросы для улучшения поиска информации."},
+                {"role": "system", "content": get_prompt("prompts.system.additional_questions_generator")},
                 {"role": "user", "content": followup_prompt}
             ]
             

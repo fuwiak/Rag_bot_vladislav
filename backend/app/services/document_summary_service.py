@@ -12,6 +12,7 @@ from app.llm.openrouter_client import OpenRouterClient
 from app.models.project import Project
 from app.models.llm_model import GlobalModelSettings
 from app.core.config import settings as app_settings
+from app.core.prompt_config import get_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +146,7 @@ class DocumentSummaryService:
             messages = [
                 {
                     "role": "system",
-                    "content": "Ты помощник, который создает краткие содержания документов. Отвечай только summary, без дополнительных комментариев."
+                    "content": get_prompt("prompts.system.summary_generator")
                 },
                 {
                     "role": "user",

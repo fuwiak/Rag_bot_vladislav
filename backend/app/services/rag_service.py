@@ -26,6 +26,7 @@ from app.services.rag.retrieval import RAGRetrieval
 from app.services.rag.fallbacks import RAGFallbacks
 from app.services.rag.helpers import RAGHelpers
 from app.services.rag.suggestions import RAGSuggestions
+from app.core.prompt_config import get_prompt, get_constant, get_default
 
 logger = get_logger(__name__)
 
@@ -99,11 +100,11 @@ class RAGService:
             with tracer.start_as_current_span("rag.get_user_and_project"):
                 user = await self.helpers.get_user(user_id)
             if not user:
-                raise ValueError("Пользователь не найден")
+                raise ValueError(get_constant("constants.errors.user_not_found", "Пользователь не найден"))
             
             project = await self.helpers.get_project(user.project_id)
             if not project:
-                raise ValueError("Проект не найден")
+                raise ValueError(get_constant("constants.errors.project_not_found", "Проект не найден"))
             
             set_project_id(str(project.id))
             span.set_attribute("project_id", str(project.id))
@@ -301,12 +302,17 @@ class RAGService:
                                 .where(Document.project_id == project.id)
                                 .where(Document.content.isnot(None))
                                 .where(Document.content != "")
-                                .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                                .where(Document.content.notin_([
+                                    get_constant("constants.document_status.processing", "Обработка..."),
+                                    get_constant("constants.document_status.processed", "Обработан")
+                                ]))
                                 .limit(10)
                             )
                             documents = result.scalars().all()
                         except Exception:
                             # Fallback на raw SQL
+                            processing_status = get_constant("constants.document_status.processing", "Обработка...")
+                            processed_status = get_constant("constants.document_status.processed", "Обработан")
                             result = await self.db.execute(
                                 text("""
                                     SELECT id, filename, content, file_type 
@@ -314,10 +320,14 @@ class RAGService:
                                     WHERE project_id = :project_id 
                                     AND content IS NOT NULL 
                                     AND content != '' 
-                                    AND content NOT IN ('Обработка...', 'Обработан')
+                                    AND content NOT IN (:processing_status, :processed_status)
                                     LIMIT 10
                                 """),
-                                {"project_id": str(project.id)}
+                                {
+                                    "project_id": str(project.id),
+                                    "processing_status": processing_status,
+                                    "processed_status": processed_status
+                                }
                             )
                             rows = result.all()
                             documents = []
@@ -405,7 +415,10 @@ class RAGService:
                                 .where(Document.project_id == project.id)
                                 .where(Document.content.isnot(None))
                                 .where(Document.content != "")
-                                .where(Document.content.notin_(["Обработка...", "Обработан"]))
+                                .where(Document.content.notin_([
+                                    get_constant("constants.document_status.processing", "Обработка..."),
+                                    get_constant("constants.document_status.processed", "Обработан")
+                                ]))
                                 .limit(2)
                             )
                             documents = result.scalars().all()
@@ -462,14 +475,7 @@ class RAGService:
                 if metadata_context and not chunk_texts:
                     # Просто используем метаданные - это работает как предложенные вопросы
                     logger.info(f"[RAG SERVICE] Content question with metadata only - using direct metadata approach")
-                    context = f"""Информация о загруженных документах:
-
-{metadata_context}
-
-ИНСТРУКЦИЯ: На основе этой информации ответь на вопрос пользователя. 
-- Если вопрос о summary каждого файла, создай краткое описание каждого файла на основе его названия и ключевых слов
-- Используй названия файлов и ключевые слова для понимания содержания
-- Будь конкретным и информативным"""
+                    context = get_prompt("prompts.content_question.metadata_only", metadata_context=metadata_context)
                     
                     enhanced_prompt = f"""Вопрос пользователя: {question}
 
@@ -478,7 +484,7 @@ class RAGService:
 Ответ:"""
                     
                     messages = [
-                        {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей на основе информации о загруженных документах. Отвечай на русском языке, будь дружелюбным и информативным. Используй названия файлов и ключевые слова для создания описаний."},
+                        {"role": "system", "content": get_prompt("prompts.system.metadata_assistant")},
                         {"role": "user", "content": enhanced_prompt}
                     ]
                 elif chunk_texts:
@@ -499,41 +505,25 @@ class RAGService:
                     if metadata_context:
                         context += f"\n\nДополнительная информация о документах:\n{metadata_context}"
                     
-                    enhanced_prompt = f"""На основе следующих фрагментов документов ответь на вопрос пользователя.
-Если ответа нет в контексте, так и скажи.
-
-КОНТЕКСТ:
-{context}
-
-ВОПРОС: {question}
-
-ОТВЕТ:"""
+                    enhanced_prompt = get_prompt("prompts.content_question.with_chunks", context=context, question=question)
                     
                     messages = [
-                        {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей на основе предоставленных документов. Отвечай на русском языке, будь дружелюбным и информативным."},
+                        {"role": "system", "content": get_prompt("prompts.system.document_assistant")},
                         {"role": "user", "content": enhanced_prompt}
                     ]
             elif metadata_context:
                 # Нет summaries, но есть метаданные - используем их
-                context = f"""Метаданные документов:
-
-{metadata_context}
-
-ВАЖНО: Используй эту информацию для ответа на вопрос. Если вопрос касается конкретного файла, используй название файла и ключевые слова из метаданных."""
+                context = get_prompt("prompts.metadata.prompt", metadata_context=metadata_context)
                 
-                enhanced_prompt = f"""Вопрос пользователя: {question}
-
-Используй информацию о документах выше для ответа.
-
-Ответ:"""
+                enhanced_prompt = get_prompt("prompts.metadata.user_prompt", question=question)
                 
                 messages = [
-                    {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей на основе информации о загруженных документах. Отвечай на русском языке, будь дружелюбным и информативным."},
+                    {"role": "system", "content": get_prompt("prompts.system.metadata_assistant")},
                     {"role": "user", "content": enhanced_prompt}
                 ]
             else:
                 # Нет ни summaries, ни метаданных
-                context = "Документы еще обрабатываются. Доступна только информация о загруженных файлах."
+                context = get_constant("constants.errors.documents_processing", "Документы еще обрабатываются. Доступна только информация о загруженных файлах.")
                 enhanced_prompt = f"""Вопрос: {question}
 
 Контекст: {context}
@@ -541,7 +531,7 @@ class RAGService:
 Ответ:"""
                 
                 messages = [
-                    {"role": "system", "content": "Ты - полезный ассистент, который отвечает на вопросы пользователей. Отвечай на русском языке, будь дружелюбным и информативным."},
+                    {"role": "system", "content": get_prompt("prompts.system.basic_assistant")},
                     {"role": "user", "content": enhanced_prompt}
                 ]
             
@@ -627,11 +617,11 @@ class RAGService:
                 
                 # Проверяем, не является ли ответ отказом
                 answer_text = raw_answer.strip().lower()
-                refusal_phrases = [
+                refusal_phrases = get_constant("constants.refusal_phrases", [
                     "нет информации", "не могу ответить", "не нашел", 
                     "не найдено", "нет данных", "недостаточно информации",
                     "нет релевантной информации", "не удалось найти"
-                ]
+                ])
                 
                 # Если ответ содержит отказ и у нас есть метаданные - генерируем сводку
                 if any(phrase in answer_text for phrase in refusal_phrases) and metadata_context:
@@ -727,7 +717,7 @@ class RAGService:
             # Только в самом крайнем случае возвращаем сообщение об ошибке
             if not answer:
                 logger.error(f"[RAG SERVICE] All fallback mechanisms failed for question: {question}")
-                answer = "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору."
+                answer = get_constant("constants.errors.processing_error", "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору.")
             
             # Сохранение сообщений в историю
             await self.helpers.save_message(user_id, question, "user")
@@ -772,7 +762,7 @@ class RAGService:
             
             # В случае критической ошибки возвращаем базовый ответ
             if not answer:
-                answer = "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору."
+                answer = get_constant("constants.errors.processing_error", "Извините, произошла ошибка при обработке вашего вопроса. Пожалуйста, попробуйте переформулировать вопрос или обратитесь к администратору.")
             # Сохраняем сообщения даже при ошибке
             try:
                 await self.helpers.save_message(user_id, question, "user")
@@ -808,11 +798,11 @@ class RAGService:
         # Получение пользователя и проекта
         user = await self.helpers.get_user(user_id)
         if not user:
-            raise ValueError("Пользователь не найден")
+            raise ValueError(get_constant("constants.errors.user_not_found", "Пользователь не найден"))
         
         project = await self.helpers.get_project(user.project_id)
         if not project:
-            raise ValueError("Проект не найден")
+            raise ValueError(get_constant("constants.errors.project_not_found", "Проект не найден"))
         
         # Создание эмбеддинга вопроса
         question_embedding = await self.embedding_service.create_embedding(question)
@@ -892,7 +882,7 @@ class RAGService:
             
             # Только в самом крайнем случае возвращаем финальное сообщение
             if not answer:
-                return "В загруженных документах нет информации по этому вопросу."
+                return get_constant("constants.errors.no_information", "В загруженных документах нет информации по этому вопросу.")
             
             return answer
         
@@ -900,14 +890,16 @@ class RAGService:
         chunk_texts = [chunk["payload"]["chunk_text"] for chunk in similar_chunks[:2]]  # Только 2 чанка
         
         # Построение упрощенного промпта
+        short_answer = get_constant("constants.fast_response.short_answer", "Отвечай кратко, не более 500 символов.")
+        question_prefix = get_constant("constants.fast_response.question_prefix", "Вопрос: {question}\n\nКонтекст:\n")
         messages = [
             {
                 "role": "system",
-                "content": f"{project.prompt_template}\n\nОтвечай кратко, не более 500 символов."
+                "content": f"{project.prompt_template}\n\n{short_answer}"
             },
             {
                 "role": "user",
-                "content": f"Вопрос: {question}\n\nКонтекст:\n" + "\n\n".join(chunk_texts)
+                "content": question_prefix.format(question=question) + "\n\n".join(chunk_texts)
             }
         ]
         
@@ -1122,7 +1114,9 @@ class RAGService:
                                 logger.warning(f"Error generating summary for doc {doc.id}: {e}")
                             
                         # Приоритет 3: используем содержимое напрямую
-                        if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
+                        processing_status = get_constant("constants.document_status.processing", "Обработка...")
+                        processed_status = get_constant("constants.document_status.processed", "Обработан")
+                        if doc.content and doc.content not in [processing_status, processed_status, ""]:
                             # Берем первые 1000 символов из содержимого
                             content = doc.content[:1000]
                             if content.strip():
@@ -1191,22 +1185,10 @@ class RAGService:
             )
             
             # Промпт для генерации вопросов
-            prompt = f"""На основе следующего контекста из документов, сгенерируй {limit} интересных и полезных вопросов, которые можно задать об этом содержимом.
-
-Контекст из документов:
-{context[:2000]}
-
-Требования к вопросам:
-1. Вопросы должны быть конкретными и релевантными содержимому
-2. Вопросы должны быть на русском языке
-3. Вопросы должны быть разными по тематике
-4. Каждый вопрос должен быть на отдельной строке
-5. Не используй нумерацию или маркеры
-
-Сгенерируй только вопросы, без дополнительных комментариев:"""
+            prompt = get_prompt("prompts.suggested_questions.prompt", limit=limit, context=context[:2000])
             
             messages = [
-                {"role": "system", "content": "Ты помощник, который генерирует вопросы на основе документов."},
+                {"role": "system", "content": get_prompt("prompts.system.question_generator")},
                 {"role": "user", "content": prompt}
             ]
             
@@ -1286,7 +1268,7 @@ class RAGService:
             document = result.scalar_one_or_none()
             
             if not document:
-                return "В проекте нет документов для анализа."
+                return get_constant("constants.errors.no_documents", "В проекте нет документов для анализа.")
             
             # Получаем историю диалога
             conversation_history = await self.helpers.get_conversation_history(user_id, limit=10)
@@ -1343,11 +1325,15 @@ class RAGService:
             logger.info(f"  - Filename: {document.filename}")
             logger.info(f"  - File type: {document.file_type}")
             logger.info(f"  - Content length: {content_length} characters")
-            logger.info(f"  - Content status: {'READY' if document_content and document_content not in ['Обработка...', 'Обработан', ''] else 'NOT_READY'}")
+            processing_status = get_constant("constants.document_status.processing", "Обработка...")
+            processed_status = get_constant("constants.document_status.processed", "Обработан")
+            logger.info(f"  - Content status: {'READY' if document_content and document_content not in [processing_status, processed_status, ''] else 'NOT_READY'}")
             logger.info(f"  - Content preview (first 500 chars): {content_preview}")
             
             # Логируем полное содержимое для Railway/Telegram bot (если не слишком большое)
-            if document_content and len(document_content) > 0 and document_content not in ["Обработка...", "Обработан", ""]:
+            processing_status = get_constant("constants.document_status.processing", "Обработка...")
+            processed_status = get_constant("constants.document_status.processed", "Обработан")
+            if document_content and len(document_content) > 0 and document_content not in [processing_status, processed_status, ""]:
                 if len(document_content) <= 5000:
                     logger.info(f"[RAG SERVICE] Full document content:\n{document_content}")
                 else:
@@ -1381,7 +1367,9 @@ class RAGService:
                     logger.warning(f"[RAG SERVICE] Fallback 1 ERROR: {chunk_error}")
                 
                 # Fallback 2: Если чанков нет, пытаемся получить метаданные и использовать их
-                if not document_content or document_content in ["Обработка...", "Обработан", ""]:
+                processing_status = get_constant("constants.document_status.processing", "Обработка...")
+                processed_status = get_constant("constants.document_status.processed", "Обработан")
+                if not document_content or document_content in [processing_status, processed_status, ""]:
                     try:
                         from app.services.document_metadata_service import DocumentMetadataService
                         metadata_service = DocumentMetadataService()
@@ -1414,7 +1402,9 @@ class RAGService:
                         logger.warning(f"[RAG SERVICE] Fallback 2 ERROR: {metadata_error}")
                 
                 # Fallback 3: Используем summary если есть
-                if not document_content or document_content in ["Обработка...", "Обработан", ""]:
+                processing_status = get_constant("constants.document_status.processing", "Обработка...")
+                processed_status = get_constant("constants.document_status.processed", "Обработан")
+                if not document_content or document_content in [processing_status, processed_status, ""]:
                     if doc_summary:
                         document_content = doc_summary
                         logger.info(f"[RAG SERVICE] Fallback 3 SUCCESS: Using document summary")
@@ -1422,7 +1412,9 @@ class RAGService:
                         logger.warning(f"[RAG SERVICE] Fallback 3 FAILED: No summary available")
                 
                 # Fallback 4: Используем название файла и общие знания LLM
-                if not document_content or document_content in ["Обработка...", "Обработан", ""]:
+                processing_status = get_constant("constants.document_status.processing", "Обработка...")
+                processed_status = get_constant("constants.document_status.processed", "Обработан")
+                if not document_content or document_content in [processing_status, processed_status, ""]:
                     logger.info(f"[RAG SERVICE] Fallback 4: Using filename and general knowledge")
                     # Создаем контекст на основе названия файла
                     filename_context = f"Документ '{document.filename}'"
@@ -1431,27 +1423,18 @@ class RAGService:
                     
                     # Используем LLM для генерации ответа на основе названия файла и вопроса
                     try:
-                        general_knowledge_prompt = f"""На основе названия документа '{document.filename}' и вопроса пользователя, 
-попробуй дать полезный ответ, используя общие знания о теме документа.
-
-ВОПРОС: {question}
-
-ИНСТРУКЦИЯ: 
-- Используй название файла для понимания тематики
-- Дай информативный ответ на основе общих знаний
-- Если не можешь ответить точно, дай общий ответ по теме
-- Будь полезным и информативным
-
-ОТВЕТ:"""
+                        general_knowledge_prompt = get_prompt(
+                            "prompts.fallback.general_knowledge",
+                            filename=document.filename,
+                            question=question
+                        )
                         
                         general_messages = [
                             {
                                 "role": "system",
                                 "content": f"""{project.prompt_template}
 
-Ты - полезный ассистент, который отвечает на вопросы пользователей. 
-Даже если у тебя нет полного содержимого документа, используй название файла и общие знания для ответа.
-Отвечай на русском языке, будь дружелюбным и информативным."""
+{get_prompt("prompts.system.nlp_minimal_context")}"""
                             },
                             {
                                 "role": "user",
@@ -1484,7 +1467,9 @@ class RAGService:
                         logger.warning(f"[RAG SERVICE] Fallback 4 ERROR: {general_error}")
                 
                 # Fallback 5: Последний резерв - используем хотя бы название файла
-                if not document_content or document_content in ["Обработка...", "Обработан", ""]:
+                processing_status = get_constant("constants.document_status.processing", "Обработка...")
+                processed_status = get_constant("constants.document_status.processed", "Обработан")
+                if not document_content or document_content in [processing_status, processed_status, ""]:
                     document_content = f"Документ '{document.filename}'"
                     if document.file_type:
                         document_content += f" (тип: {document.file_type})"
@@ -1497,7 +1482,7 @@ class RAGService:
             question_keywords = {w for w in question_keywords if len(w) > 3}  # Слова длиннее 3 символов
             
             # Если документ большой, используем первые 12000 символов (для long-context моделей)
-            max_content_length = 12000
+            max_content_length = get_default("defaults.document_max_length", 12000)
             if len(document_content) > max_content_length:
                 # Берем начало и конец документа для лучшего контекста
                 content_start = document_content[:max_content_length // 2]
@@ -1514,60 +1499,37 @@ class RAGService:
             keywords_str = ', '.join(list(question_keywords)[:10]) if question_keywords else 'общие'
             
             # Определяем, есть ли у нас полный контент или только минимальный
-            has_full_content = document_content and len(document_content) > 100 and document_content not in ["Обработка...", "Обработан", ""] and not document_content.startswith("Документ '")
+            processing_status = get_constant("constants.document_status.processing", "Обработка...")
+            processed_status = get_constant("constants.document_status.processed", "Обработан")
+            has_full_content = document_content and len(document_content) > 100 and document_content not in [processing_status, processed_status, ""] and not document_content.startswith("Документ '")
             
             if has_full_content:
                 # Полный контент доступен - используем стандартный NLP-enhanced промпт
-                nlp_prompt = f"""Ты - эксперт по анализу документов с использованием NLP техник.
-
-ДОКУМЕНТ: {document.filename}
-
-СОДЕРЖАНИЕ ДОКУМЕНТА:
-{document_content}
-
-{summary_part}ВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}
-
-ИНСТРУКЦИИ (NLP-Enhanced подход):
-1. Проанализируй вопрос и определи ключевые концепции: {keywords_str}
-2. Найди релевантные части документа, которые отвечают на вопрос
-3. Используй весь контекст документа для полного понимания
-4. Если вопрос касается конкретной информации, найди точные данные в документе
-5. Если вопрос общий, создай структурированный ответ на основе всего документа
-6. Выдели ключевые факты, цифры, даты, имена, если они есть в документе
-7. Будь точным и информативным, используй информацию из документа
-
-ОТВЕТ (на русском языке, структурированный и информативный):"""
+                nlp_prompt = get_prompt(
+                    "prompts.nlp_summarization.full_content",
+                    filename=document.filename,
+                    content=document_content,
+                    summary_part=summary_part,
+                    question=question,
+                    keywords=keywords_str
+                )
             else:
                 # Минимальный контент - используем специальный промпт с общими знаниями
                 logger.info(f"[RAG SERVICE] Using minimal context mode (filename/metadata only)")
-                nlp_prompt = f"""Ты - полезный ассистент, который отвечает на вопросы пользователей.
-
-ИНФОРМАЦИЯ О ДОКУМЕНТЕ:
-{document_content}
-{summary_part if summary_part else ''}
-
-ВАЖНО: Полное содержимое документа еще обрабатывается, но у тебя есть информация о документе выше.
-
-ВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}
-
-ИНСТРУКЦИИ:
-1. Используй название файла и доступную информацию для понимания тематики документа
-2. На основе названия файла и ключевых слов (если есть) попробуй понять, о чем документ
-3. Используй общие знания по теме документа для ответа на вопрос
-4. Будь информативным и полезным, даже если у тебя нет полного содержимого
-5. Если можешь дать общий ответ по теме на основе названия файла - сделай это
-6. Будь честным: если нужна конкретная информация из документа, скажи об этом
-
-ОТВЕТ (на русском языке, информативный и полезный):"""
+                nlp_prompt = get_prompt(
+                    "prompts.nlp_summarization.minimal_context",
+                    content=document_content,
+                    summary_part=summary_part if summary_part else '',
+                    question=question
+                )
             
+            nlp_system_prompt = get_prompt("prompts.system.nlp_expert")
             messages = [
                 {
                     "role": "system",
                     "content": f"""{project.prompt_template}
 
-Ты - эксперт по анализу документов, использующий NLP техники для глубокого понимания содержания. 
-Ты анализируешь документы целиком, выделяя ключевые концепции, сущности и связи между ними.
-Отвечай на русском языке, будь точным и информативным."""
+{nlp_system_prompt}"""
                 },
                 {
                     "role": "user",
@@ -1605,6 +1567,6 @@ class RAGService:
         except Exception as e:
             logger.error(f"[RAG SERVICE] Error in NLP-enhanced summarization: {e}", exc_info=True)
             # Fallback на обычный ответ
-            return "Извините, произошла ошибка при анализе документа. Пожалуйста, попробуйте переформулировать вопрос."
+            return get_constant("constants.errors.analysis_error", "Извините, произошла ошибка при анализе документа. Пожалуйста, попробуйте переформулировать вопрос.")
 
 
