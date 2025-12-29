@@ -319,10 +319,10 @@ class RAGService:
                                     doc.content = row[2]
                                     doc.file_type = row[3]
                                     documents.append(doc)
-                    
-                    # Используем DocumentChunker для разбивки на чанки с большим overlap (50-75%)
-                    # Overlapping Chunks z kontekstem - улучшенный chunking
-                    chunker = DocumentChunker(chunk_size=1000, chunk_overlap=500)  # 50% overlap
+                            
+                            # Используем DocumentChunker для разбивки на чанки с большим overlap (50-75%)
+                            # Overlapping Chunks z kontekstem - улучшенный chunking
+                            chunker = DocumentChunker(chunk_size=1000, chunk_overlap=500)  # 50% overlap
                     question_keywords = set(re.findall(r'\b\w+\b', question.lower()))
                     question_keywords = {w for w in question_keywords if len(w) > 3}
                     
