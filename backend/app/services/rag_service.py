@@ -411,18 +411,18 @@ class RAGService:
                                 
                                     for doc in documents:
                                         if doc.content and len(doc.content) > 100:
-                                        # Создаем эмбеддинг всего документа (первые 8000 символов)
-                                        doc_content = doc.content[:8000]
-                                        doc_embedding = await self.embedding_service.create_embedding(doc_content)
-                                        
-                                        # Вычисляем косинусное сходство
-                                        similarity = np.dot(question_embedding, doc_embedding) / (
-                                            np.linalg.norm(question_embedding) * np.linalg.norm(doc_embedding)
-                                        )
-                                        
-                                        if similarity > best_score:
-                                            best_score = similarity
-                                            best_doc = doc
+                                            # Создаем эмбеддинг всего документа (первые 8000 символов)
+                                            doc_content = doc.content[:8000]
+                                            doc_embedding = await self.embedding_service.create_embedding(doc_content)
+                                            
+                                            # Вычисляем косинусное сходство
+                                            similarity = np.dot(question_embedding, doc_embedding) / (
+                                                np.linalg.norm(question_embedding) * np.linalg.norm(doc_embedding)
+                                            )
+                                            
+                                            if similarity > best_score:
+                                                best_score = similarity
+                                                best_doc = doc
                             
                             # Если нашли релевантный документ, используем его первые 5000 символов как чанк
                                         if best_doc and best_score > 0.3:
