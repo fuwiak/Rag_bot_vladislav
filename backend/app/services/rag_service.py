@@ -442,7 +442,7 @@ class RAGService:
                 # Инициализируем chunks_for_prompt для использования в блоке else
                 chunks_for_prompt = []
                 for chunk in chunk_texts:
-                        if isinstance(chunk, dict):
+                    if isinstance(chunk, dict):
                         chunks_for_prompt.append(chunk.get("text", str(chunk)))
                     else:
                         chunks_for_prompt.append(chunk)
