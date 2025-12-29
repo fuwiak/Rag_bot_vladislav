@@ -350,9 +350,9 @@ class RAGService:
                             
                             if chunk_texts:
                                 logger.info(f"[RAG SERVICE] Extracted {len(chunk_texts)} content chunks using DocumentChunker")
-                    
-                    # Техника 3: Если все еще нет чанков, используем простой preview
-                    if not chunk_texts:
+                            
+                            # Техника 3: Если все еще нет чанков, используем простой preview
+                            if not chunk_texts:
                         try:
                             result = await self.db.execute(
                                 select(Document)
