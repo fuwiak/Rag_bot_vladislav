@@ -979,7 +979,8 @@ class RAGService:
                                 batch_points = []
                                 
                                 for (chunk, doc), embedding in zip(batch_chunks, embeddings):
-                                    point_id = str(chunk.id) if chunk.id else str(uuid4())
+                                    from uuid import uuid4 as gen_uuid4
+                                    point_id = str(chunk.id) if chunk.id else str(gen_uuid4())
                                     batch_points.append(PointStruct(
                                         id=point_id,
                                         vector=embedding,
