@@ -32,21 +32,24 @@ class LLMModelResponse(LLMModelBase):
 
 class GlobalModelSettingsUpdate(BaseModel):
     """Схема для обновления глобальных настроек"""
+    model_config = ConfigDict(protected_namespaces=())
+    
     primary_model_id: Optional[str] = None
     fallback_model_id: Optional[str] = None
 
 
 class GlobalModelSettingsResponse(BaseModel):
     """Схема ответа с глобальными настройками"""
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+    
     primary_model_id: Optional[str] = None
     fallback_model_id: Optional[str] = None
-    
-    class Config:
-        from_attributes = True
 
 
 class ModelTestRequest(BaseModel):
     """Схема для запроса тестирования модели"""
+    model_config = ConfigDict(protected_namespaces=())
+    
     model_id: str = Field(..., min_length=1, description="ID модели для тестирования")
     messages: List[Dict[str, str]] = Field(..., description="Список сообщений в формате [{\"role\": \"user\", \"content\": \"...\"}]")
     temperature: Optional[float] = Field(0.7, ge=0, le=2, description="Температура генерации")
@@ -55,6 +58,8 @@ class ModelTestRequest(BaseModel):
 
 class ModelTestResponse(BaseModel):
     """Схема ответа тестирования модели"""
+    model_config = ConfigDict(protected_namespaces=())
+    
     response: str = Field(..., description="Ответ от модели")
     model_id: str = Field(..., description="ID использованной модели")
 

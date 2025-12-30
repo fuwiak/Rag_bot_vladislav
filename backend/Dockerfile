@@ -9,8 +9,11 @@ WORKDIR /app
 ENV PATH=/root/.local/bin:$PATH
 
 # Установка зависимостей для сборки
+# sentence-transformers требует компилятор и дополнительные библиотеки
 RUN apt-get update && apt-get install -y \
     gcc \
+    g++ \
+    build-essential \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
