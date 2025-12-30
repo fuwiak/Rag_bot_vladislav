@@ -909,9 +909,33 @@ class RAGService:
         collection_name = f"project_{project.id}"
         collection_exists = await self.vector_store.collection_exists(collection_name)
         
+        # Если коллекция не существует, но есть chunks в базе - создаем коллекцию
+        if not collection_exists:
+            # Sprawdzamy czy są chunks в базе - если так, tworzymy kolekcję
+            total_chunks_result = await self.db.execute(
+                select(func.count(DocumentChunk.id))
+                .join(Document)
+                .where(Document.project_id == project.id)
+            )
+            total_chunks = total_chunks_result.scalar() or 0
+            
+            if total_chunks > 0:
+                # Są chunks в базе, но kolekcja не существует - tworzymy ją
+                logger.info(f"[RAG SERVICE SIMPLE] Creating collection {collection_name} for project {project.id} (found {total_chunks} chunks in DB)")
+                from app.core.config import settings
+                created = await self.vector_store.ensure_collection(
+                    collection_name=collection_name,
+                    vector_size=settings.EMBEDDING_DIMENSION
+                )
+                if created:
+                    collection_exists = True
+                    logger.info(f"[RAG SERVICE SIMPLE] ✅ Collection {collection_name} created successfully")
+                else:
+                    logger.warning(f"[RAG SERVICE SIMPLE] ⚠️ Failed to create collection {collection_name}")
+        
         similar_chunks = []
         
-        # Próbujemy użyć RAG z Qdrant jeśli kolekcja istnieje
+        # Próbujemy użyć RAG z Qdrant jeśli kolekcja существует
         if collection_exists:
             # Проверяем, есть ли chunks в БД с qdrant_point_id (czy są przetworzone)
             processed_chunks_result = await self.db.execute(
