@@ -26,6 +26,10 @@ aiohttp==3.9.1
 python-docx==1.1.0
 PyPDF2==3.0.1
 pdfplumber==0.10.3
+pymupdf==1.23.8  # PyMuPDF (fitz) - мощный PDF парсер
+pymupdf4llm==0.0.9  # Специальный парсер для LLM (Markdown конвертация)
+pytesseract==0.3.10  # OCR для сканированных PDF (опционально)
+Pillow==10.1.0  # Для обработки изображений в OCR
 pandas==2.1.4  # For Excel file parsing
 openpyxl==3.1.2  # Excel file support for pandas
 spacy==3.7.2  # Lightweight NLP for metadata extraction

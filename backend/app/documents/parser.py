@@ -73,61 +73,134 @@ class DocumentParser:
         return "\n".join(paragraphs)
     
     def _parse_pdf(self, content: bytes) -> str:
-        """Парсинг PDF файла (блокирующая операция, выполняется в thread pool)
+        """Парсинг PDF файла с множественными fallback-ами
         
-        Использует PyPDF2 как основной парсер, с fallback на pdfplumber для лучшей поддержки простых PDF.
+        Fallback-цепочка:
+        1. PyPDF2 (основной)
+        2. pdfplumber (лучше для простых PDF)
+        3. PyMuPDF/fitz (очень мощный парсер)
+        4. pymupdf4llm (специально для LLM)
+        5. OCR fallback (для сканированных PDF)
+        
+        Всегда показывает preview файла для диагностики
         """
+        import gc
+        
+        # Показываем preview файла для диагностики
+        file_size = len(content) / 1024  # KB
+        logger.info(f"[PDF PARSER] Начало парсинга PDF: размер {file_size:.2f} KB")
+        
+        # Проверяем, что файл действительно PDF
+        if not content.startswith(b'%PDF'):
+            logger.warning(f"[PDF PARSER] Файл не начинается с %PDF, возможно поврежден")
+            # Пробуем все равно парсить
+        
+        # Fallback 1: PyPDF2
+        try:
+            result = self._parse_pdf_with_pypdf2(content)
+            if result and len(result.strip()) > 50:  # Минимум 50 символов
+                logger.info(f"[PDF PARSER] ✅ PyPDF2 успешно: {len(result)} символов")
+                return result
+            else:
+                logger.warning(f"[PDF PARSER] PyPDF2 вернул мало текста ({len(result) if result else 0} символов), пробуем pdfplumber...")
+        except Exception as e:
+            logger.warning(f"[PDF PARSER] PyPDF2 failed: {e}, пробуем pdfplumber...")
+        
+        # Fallback 2: pdfplumber
+        try:
+            result = self._parse_pdf_with_pdfplumber(content)
+            if result and len(result.strip()) > 50:
+                logger.info(f"[PDF PARSER] ✅ pdfplumber успешно: {len(result)} символов")
+                return result
+            else:
+                logger.warning(f"[PDF PARSER] pdfplumber вернул мало текста ({len(result) if result else 0} символов), пробуем PyMuPDF...")
+        except Exception as e:
+            logger.warning(f"[PDF PARSER] pdfplumber failed: {e}, пробуем PyMuPDF...")
+        
+        # Fallback 3: PyMuPDF (fitz) - очень мощный парсер
+        try:
+            result = self._parse_pdf_with_pymupdf(content)
+            if result and len(result.strip()) > 50:
+                logger.info(f"[PDF PARSER] ✅ PyMuPDF успешно: {len(result)} символов")
+                return result
+            else:
+                logger.warning(f"[PDF PARSER] PyMuPDF вернул мало текста ({len(result) if result else 0} символов), пробуем pymupdf4llm...")
+        except Exception as e:
+            logger.warning(f"[PDF PARSER] PyMuPDF failed: {e}, пробуем pymupdf4llm...")
+        
+        # Fallback 4: pymupdf4llm (специально для LLM)
+        try:
+            result = self._parse_pdf_with_pymupdf4llm(content)
+            if result and len(result.strip()) > 50:
+                logger.info(f"[PDF PARSER] ✅ pymupdf4llm успешно: {len(result)} символов")
+                return result
+            else:
+                logger.warning(f"[PDF PARSER] pymupdf4llm вернул мало текста ({len(result) if result else 0} символов)")
+        except Exception as e:
+            logger.warning(f"[PDF PARSER] pymupdf4llm failed: {e}")
+        
+        # Fallback 5: OCR (для сканированных PDF) - опционально
+        try:
+            result = self._parse_pdf_with_ocr(content)
+            if result and len(result.strip()) > 50:
+                logger.info(f"[PDF PARSER] ✅ OCR успешно: {len(result)} символов")
+                return result
+        except Exception as e:
+            logger.warning(f"[PDF PARSER] OCR failed: {e}")
+        
+        # Если все fallback-ы не сработали
+        error_msg = f"Все методы парсинга PDF не смогли извлечь текст. Файл может быть сканированным изображением или поврежден."
+        logger.error(f"[PDF PARSER] ❌ {error_msg}")
+        raise ValueError(error_msg)
+    
+    def _parse_pdf_with_pypdf2(self, content: bytes) -> str:
+        """Парсинг PDF с PyPDF2"""
         import gc
         
         pdf_file = io.BytesIO(content)
         text_parts = []
         total_pages = 0
         empty_pages = 0
-        error_pages = 0
         
-        # Пробуем PyPDF2 сначала
         try:
-            pdf_reader = PyPDF2.PdfReader(pdf_file)
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
             total_pages = len(pdf_reader.pages)
+            logger.info(f"[PDF PARSER PyPDF2] Всего страниц: {total_pages}")
             
-            # Обрабатываем страницы по одной и освобождаем память
             for i, page in enumerate(pdf_reader.pages):
                 try:
                     text = page.extract_text()
                     if text and text.strip():
                         text_parts.append(text)
+                        # Показываем preview первой страницы
+                        if i == 0:
+                            preview = text[:500] if len(text) > 500 else text
+                            logger.info(f"[PDF PARSER PyPDF2] Preview страницы 1: {preview}...")
                     else:
                         empty_pages += 1
-                        logger.warning(f"PDF page {i+1}/{total_pages} returned empty text (PyPDF2)")
+                        logger.warning(f"[PDF PARSER PyPDF2] Страница {i+1}/{total_pages} пустая")
                 except Exception as e:
-                    error_pages += 1
-                    logger.warning(f"Error extracting text from page {i+1}/{total_pages} (PyPDF2): {e}")
+                    logger.warning(f"[PDF PARSER PyPDF2] Ошибка страницы {i+1}: {e}")
+                    empty_pages += 1
                     continue
                 
-                # Освобождаем память после каждой страницы
-                if i % 10 == 0:  # Каждые 10 страниц
+                if i % 10 == 0:
                     gc.collect()
             
-            # Освобождаем память после парсинга
             del pdf_reader
             del pdf_file
             gc.collect()
             
-            # Если PyPDF2 не извлек текст или слишком много пустых страниц, пробуем pdfplumber
-            if not text_parts or (empty_pages > total_pages * 0.5 and total_pages > 0):
-                logger.warning(f"PyPDF2 extracted {len(text_parts)} pages with text, {empty_pages} empty pages. Trying pdfplumber fallback...")
-                return self._parse_pdf_with_pdfplumber(content)
+            if not text_parts:
+                return ""
             
-            if empty_pages == total_pages and total_pages > 0:
-                logger.error(f"All {total_pages} pages returned empty text with PyPDF2. Trying pdfplumber fallback...")
-                return self._parse_pdf_with_pdfplumber(content)
-            
-            logger.info(f"PDF parsed successfully: {len(text_parts)} pages with text, {empty_pages} empty, {error_pages} errors (PyPDF2)")
-            return "\n\n".join(text_parts)
+            result = "\n\n".join(text_parts)
+            logger.info(f"[PDF PARSER PyPDF2] Извлечено {len(text_parts)} страниц, {empty_pages} пустых, всего {len(result)} символов")
+            return result
             
         except Exception as e:
-            logger.error(f"PyPDF2 failed to parse PDF: {e}. Trying pdfplumber fallback...")
-            return self._parse_pdf_with_pdfplumber(content)
+            logger.error(f"[PDF PARSER PyPDF2] Ошибка: {e}")
+            raise
     
     def _parse_pdf_with_pdfplumber(self, content: bytes) -> str:
         """Fallback парсер PDF используя pdfplumber (лучше для простых PDF)"""
@@ -135,8 +208,8 @@ class DocumentParser:
         try:
             import pdfplumber
         except ImportError:
-            logger.error("pdfplumber not installed. Install with: pip install pdfplumber")
-            raise ImportError("pdfplumber не установлен. Установите: pip install pdfplumber")
+            logger.warning("[PDF PARSER pdfplumber] pdfplumber не установлен")
+            raise ImportError("pdfplumber не установлен")
         
         pdf_file = io.BytesIO(content)
         text_parts = []
@@ -146,36 +219,175 @@ class DocumentParser:
         try:
             with pdfplumber.open(pdf_file) as pdf:
                 total_pages = len(pdf.pages)
+                logger.info(f"[PDF PARSER pdfplumber] Всего страниц: {total_pages}")
                 
                 for i, page in enumerate(pdf.pages):
-                    try:
-                        text = page.extract_text()
+            try:
+                text = page.extract_text()
                         if text and text.strip():
                             text_parts.append(text)
+                            # Preview первой страницы
+                            if i == 0:
+                                preview = text[:500] if len(text) > 500 else text
+                                logger.info(f"[PDF PARSER pdfplumber] Preview страницы 1: {preview}...")
                         else:
                             empty_pages += 1
-                            logger.warning(f"PDF page {i+1}/{total_pages} returned empty text (pdfplumber)")
+                            logger.warning(f"[PDF PARSER pdfplumber] Страница {i+1}/{total_pages} пустая")
                     except Exception as e:
-                        logger.warning(f"Error extracting text from page {i+1}/{total_pages} (pdfplumber): {e}")
+                        logger.warning(f"[PDF PARSER pdfplumber] Ошибка страницы {i+1}: {e}")
                         empty_pages += 1
                         continue
                     
-                    # Освобождаем память после каждой страницы
                     if i % 10 == 0:
                         gc.collect()
             
-            if empty_pages == total_pages and total_pages > 0:
-                logger.error(f"All {total_pages} pages returned empty text with pdfplumber. PDF may be scanned/image-based.")
+            if not text_parts:
+                return ""
             
-            logger.info(f"PDF parsed with pdfplumber: {len(text_parts)} pages with text, {empty_pages} empty")
-            return "\n\n".join(text_parts)
+            result = "\n\n".join(text_parts)
+            logger.info(f"[PDF PARSER pdfplumber] Извлечено {len(text_parts)} страниц, {empty_pages} пустых, всего {len(result)} символов")
+            return result
             
         except Exception as e:
-            logger.error(f"pdfplumber also failed to parse PDF: {e}")
+            logger.error(f"[PDF PARSER pdfplumber] Ошибка: {e}")
             raise
         finally:
             del pdf_file
             gc.collect()
+    
+    def _parse_pdf_with_pymupdf(self, content: bytes) -> str:
+        """Парсинг PDF с PyMuPDF (fitz) - очень мощный парсер"""
+        import gc
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            logger.warning("[PDF PARSER PyMuPDF] PyMuPDF не установлен. Установите: pip install pymupdf")
+            raise ImportError("PyMuPDF не установлен")
+        
+        pdf_file = io.BytesIO(content)
+        text_parts = []
+        total_pages = 0
+        
+        try:
+            doc = fitz.open(stream=pdf_file, filetype="pdf")
+            total_pages = len(doc)
+            logger.info(f"[PDF PARSER PyMuPDF] Всего страниц: {total_pages}")
+            
+            for i in range(total_pages):
+                try:
+                    page = doc[i]
+                    text = page.get_text()
+                    if text and text.strip():
+                    text_parts.append(text)
+                        # Preview первой страницы
+                        if i == 0:
+                            preview = text[:500] if len(text) > 500 else text
+                            logger.info(f"[PDF PARSER PyMuPDF] Preview страницы 1: {preview}...")
+                    else:
+                        logger.warning(f"[PDF PARSER PyMuPDF] Страница {i+1}/{total_pages} пустая")
+                except Exception as e:
+                    logger.warning(f"[PDF PARSER PyMuPDF] Ошибка страницы {i+1}: {e}")
+                    continue
+                
+                if i % 10 == 0:
+                    gc.collect()
+            
+            doc.close()
+            del pdf_file
+            gc.collect()
+            
+            if not text_parts:
+                return ""
+            
+            result = "\n\n".join(text_parts)
+            logger.info(f"[PDF PARSER PyMuPDF] Извлечено {len(text_parts)} страниц, всего {len(result)} символов")
+            return result
+            
+            except Exception as e:
+            logger.error(f"[PDF PARSER PyMuPDF] Ошибка: {e}")
+            raise
+    
+    def _parse_pdf_with_pymupdf4llm(self, content: bytes) -> str:
+        """Парсинг PDF с pymupdf4llm (специально для LLM)"""
+        import gc
+        try:
+            import pymupdf4llm
+        except ImportError:
+            logger.warning("[PDF PARSER pymupdf4llm] pymupdf4llm не установлен. Установите: pip install pymupdf4llm")
+            raise ImportError("pymupdf4llm не установлен")
+        
+        pdf_file = io.BytesIO(content)
+        
+        try:
+            # pymupdf4llm конвертирует PDF в Markdown для лучшей структуры
+            md_text = pymupdf4llm.to_markdown(pdf_file)
+            
+            if md_text and len(md_text.strip()) > 50:
+                preview = md_text[:500] if len(md_text) > 500 else md_text
+                logger.info(f"[PDF PARSER pymupdf4llm] Preview: {preview}...")
+                logger.info(f"[PDF PARSER pymupdf4llm] Извлечено {len(md_text)} символов в Markdown формате")
+                return md_text
+            else:
+                return ""
+            
+        except Exception as e:
+            logger.error(f"[PDF PARSER pymupdf4llm] Ошибка: {e}")
+            raise
+        finally:
+        del pdf_file
+        gc.collect()
+    
+    def _parse_pdf_with_ocr(self, content: bytes) -> str:
+        """OCR fallback для сканированных PDF (опционально)"""
+        import gc
+        try:
+            import pytesseract
+            from PIL import Image
+            import fitz  # PyMuPDF для конвертации PDF в изображения
+        except ImportError:
+            logger.warning("[PDF PARSER OCR] OCR библиотеки не установлены. Установите: pip install pytesseract pillow pymupdf")
+            raise ImportError("OCR библиотеки не установлены")
+        
+        pdf_file = io.BytesIO(content)
+        text_parts = []
+        
+        try:
+            doc = fitz.open(stream=pdf_file, filetype="pdf")
+            total_pages = len(doc)
+            logger.info(f"[PDF PARSER OCR] OCR обработка {total_pages} страниц...")
+            
+            for i in range(min(total_pages, 10)):  # Ограничиваем до 10 страниц для OCR
+                try:
+                    page = doc[i]
+                    # Конвертируем страницу в изображение
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x увеличение для лучшего качества
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    
+                    # OCR
+                    text = pytesseract.image_to_string(img, lang='rus+eng')
+                    if text and text.strip():
+                        text_parts.append(text)
+                        if i == 0:
+                            preview = text[:500] if len(text) > 500 else text
+                            logger.info(f"[PDF PARSER OCR] Preview страницы 1: {preview}...")
+                except Exception as e:
+                    logger.warning(f"[PDF PARSER OCR] Ошибка OCR страницы {i+1}: {e}")
+                    continue
+            
+            doc.close()
+            del pdf_file
+            gc.collect()
+            
+            if not text_parts:
+                return ""
+            
+            result = "\n\n".join(text_parts)
+            logger.info(f"[PDF PARSER OCR] OCR извлечено {len(text_parts)} страниц, всего {len(result)} символов")
+            return result
+            
+        except Exception as e:
+            logger.error(f"[PDF PARSER OCR] Ошибка: {e}")
+            raise
     
     def _parse_excel(self, content: bytes) -> str:
         """Парсинг Excel файла (блокирующая операция, выполняется в thread pool)"""
