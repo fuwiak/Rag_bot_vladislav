@@ -2,7 +2,7 @@
 RAG сервис - поиск релевантных фрагментов и генерация ответа
 """
 from typing import List, Dict, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 import logging
@@ -979,8 +979,7 @@ class RAGService:
                                 batch_points = []
                                 
                                 for (chunk, doc), embedding in zip(batch_chunks, embeddings):
-                                    from uuid import uuid4 as gen_uuid4
-                                    point_id = str(chunk.id) if chunk.id else str(gen_uuid4())
+                                    point_id = str(chunk.id) if chunk.id else str(uuid4())
                                     batch_points.append(PointStruct(
                                         id=point_id,
                                         vector=embedding,
