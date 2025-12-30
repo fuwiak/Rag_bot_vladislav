@@ -14,10 +14,10 @@ async def test_generate_answer_with_relevant_chunks(db_session):
     rag_service = RAGService(db)
     
     # Моки для теста
-    with patch.object(rag_service, '_get_user') as mock_user, \
-         patch.object(rag_service, '_get_project') as mock_project, \
-         patch.object(rag_service, '_get_conversation_history') as mock_history, \
-         patch.object(rag_service, '_save_message') as mock_save, \
+    with patch.object(rag_service.helpers, 'get_user') as mock_user, \
+         patch.object(rag_service.helpers, 'get_project') as mock_project, \
+         patch.object(rag_service.helpers, 'get_conversation_history') as mock_history, \
+         patch.object(rag_service.helpers, 'save_message') as mock_save, \
          patch.object(rag_service.embedding_service, 'create_embedding') as mock_embedding, \
          patch.object(rag_service.vector_store, 'search_similar') as mock_search, \
          patch('app.services.rag_service.OpenRouterClient') as MockLLMClient:
@@ -52,10 +52,10 @@ async def test_generate_answer_no_relevant_chunks(db_session):
     db = db_session
     rag_service = RAGService(db)
     
-    with patch.object(rag_service, '_get_user') as mock_user, \
-         patch.object(rag_service, '_get_project') as mock_project, \
-         patch.object(rag_service, '_get_conversation_history') as mock_history, \
-         patch.object(rag_service, '_save_message') as mock_save, \
+    with patch.object(rag_service.helpers, 'get_user') as mock_user, \
+         patch.object(rag_service.helpers, 'get_project') as mock_project, \
+         patch.object(rag_service.helpers, 'get_conversation_history') as mock_history, \
+         patch.object(rag_service.helpers, 'save_message') as mock_save, \
          patch.object(rag_service.embedding_service, 'create_embedding') as mock_embedding, \
          patch.object(rag_service.vector_store, 'search_similar') as mock_search:
         
@@ -83,10 +83,10 @@ async def test_generate_answer_respects_max_length(db_session):
     
     max_length = 100
     
-    with patch.object(rag_service, '_get_user') as mock_user, \
-         patch.object(rag_service, '_get_project') as mock_project, \
-         patch.object(rag_service, '_get_conversation_history') as mock_history, \
-         patch.object(rag_service, '_save_message') as mock_save, \
+    with patch.object(rag_service.helpers, 'get_user') as mock_user, \
+         patch.object(rag_service.helpers, 'get_project') as mock_project, \
+         patch.object(rag_service.helpers, 'get_conversation_history') as mock_history, \
+         patch.object(rag_service.helpers, 'save_message') as mock_save, \
          patch.object(rag_service.embedding_service, 'create_embedding') as mock_embedding, \
          patch.object(rag_service.vector_store, 'search_similar') as mock_search, \
          patch('app.services.rag_service.OpenRouterClient') as MockLLMClient:
@@ -125,10 +125,10 @@ async def test_project_isolation(db_session):
     project1_id = uuid4()
     project2_id = uuid4()
     
-    with patch.object(rag_service, '_get_user') as mock_user, \
-         patch.object(rag_service, '_get_project') as mock_project, \
-         patch.object(rag_service, '_get_conversation_history') as mock_history, \
-         patch.object(rag_service, '_save_message') as mock_save, \
+    with patch.object(rag_service.helpers, 'get_user') as mock_user, \
+         patch.object(rag_service.helpers, 'get_project') as mock_project, \
+         patch.object(rag_service.helpers, 'get_conversation_history') as mock_history, \
+         patch.object(rag_service.helpers, 'save_message') as mock_save, \
          patch.object(rag_service.embedding_service, 'create_embedding') as mock_embedding, \
          patch.object(rag_service.vector_store, 'search_similar') as mock_search:
         

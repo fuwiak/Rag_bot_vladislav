@@ -104,6 +104,7 @@ async def test_phone_collection_and_user_creation(db_session):
     message = MagicMock(spec=Message)
     message.contact = contact
     message.from_user = MagicMock(spec=TelegramUser)
+    message.from_user.id = 123456789  # Добавляем id для telegram_user_id
     message.from_user.username = "testuser"
     message.answer = AsyncMock()
     
