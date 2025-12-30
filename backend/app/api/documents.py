@@ -154,8 +154,27 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             parse_memory = process.memory_info().rss / 1024 / 1024
             logger.info(f"[Process] After parse, memory: {parse_memory:.2f}MB, text_length: {len(text)} chars")
             
-            # Разбивка на чанки (быстрая операция строк, не блокирует)
-            chunks = chunker.chunk_text(text)
+            # Разбивка на чанки - используем продвинутый chunker с fallback-ами
+            from app.documents.advanced_chunker import AdvancedChunker
+            advanced_chunker = AdvancedChunker(
+                default_chunk_size=800,
+                default_overlap=200,
+                min_chunk_size=100,
+                max_chunk_size=2000
+            )
+            
+            # Пробуем продвинутый chunking
+            chunks = await advanced_chunker.chunk_document(
+                text=text,
+                file_type=file_type,
+                file_content=file_content if file_type == "pdf" else None,
+                filename=filename
+            )
+            
+            # Fallback на простой chunker если продвинутый не сработал
+            if not chunks or len(chunks) == 0:
+                logger.warning(f"[Process] Advanced chunking failed, using simple chunker")
+                chunks = chunker.chunk_text(text)
             
             # НЕ удаляем text сразу - он нужен для финального обновления документа
             # Освободим его после финального обновления

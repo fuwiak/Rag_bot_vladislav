@@ -155,8 +155,27 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                 preview = document.content[:500] if len(document.content) > 500 else document.content
                 logger.info(f"[Celery] Document content preview (first 500 chars): {preview}...")
             
-            # Разбивка на чанки
-            chunks = chunker.chunk_text(text)
+            # Разбивка на чанки - используем продвинутый chunker с fallback-ами
+            from app.documents.advanced_chunker import AdvancedChunker
+            advanced_chunker = AdvancedChunker(
+                default_chunk_size=800,
+                default_overlap=200,
+                min_chunk_size=100,
+                max_chunk_size=2000
+            )
+            
+            # Пробуем продвинутый chunking
+            chunks = await advanced_chunker.chunk_document(
+                text=text,
+                file_type=file_type,
+                file_content=file_content if file_type == "pdf" else None,
+                filename=filename
+            )
+            
+            # Fallback на простой chunker если продвинутый не сработал
+            if not chunks or len(chunks) == 0:
+                logger.warning(f"[Celery] Advanced chunking failed, using simple chunker")
+                chunks = chunker.chunk_text(text)
             if not chunks:
                 logger.warning(f"[Celery] Документ {document_id} не содержит текста")
                 return
