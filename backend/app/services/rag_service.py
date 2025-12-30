@@ -909,29 +909,131 @@ class RAGService:
         collection_name = f"project_{project.id}"
         collection_exists = await self.vector_store.collection_exists(collection_name)
         
+        # Sprawdzamy ile chunks jest w bazie
+        total_chunks_result = await self.db.execute(
+            select(func.count(DocumentChunk.id))
+            .join(Document)
+            .where(Document.project_id == project.id)
+        )
+        total_chunks_in_db = total_chunks_result.scalar() or 0
+        
         # Если коллекция не существует, но есть chunks в базе - создаем коллекцию
-        if not collection_exists:
-            # Sprawdzamy czy są chunks в базе - если так, tworzymy kolekcję
-            total_chunks_result = await self.db.execute(
-                select(func.count(DocumentChunk.id))
-                .join(Document)
-                .where(Document.project_id == project.id)
+        if not collection_exists and total_chunks_in_db > 0:
+            logger.info(f"[RAG SERVICE SIMPLE] Creating collection {collection_name} for project {project.id} (found {total_chunks_in_db} chunks in DB)")
+            from app.core.config import settings
+            created = await self.vector_store.ensure_collection(
+                collection_name=collection_name,
+                vector_size=settings.EMBEDDING_DIMENSION
             )
-            total_chunks = total_chunks_result.scalar() or 0
-            
-            if total_chunks > 0:
-                # Są chunks в базе, но kolekcja не существует - tworzymy ją
-                logger.info(f"[RAG SERVICE SIMPLE] Creating collection {collection_name} for project {project.id} (found {total_chunks} chunks in DB)")
-                from app.core.config import settings
-                created = await self.vector_store.ensure_collection(
-                    collection_name=collection_name,
-                    vector_size=settings.EMBEDDING_DIMENSION
-                )
-                if created:
-                    collection_exists = True
-                    logger.info(f"[RAG SERVICE SIMPLE] ✅ Collection {collection_name} created successfully")
-                else:
-                    logger.warning(f"[RAG SERVICE SIMPLE] ⚠️ Failed to create collection {collection_name}")
+            if created:
+                collection_exists = True
+                logger.info(f"[RAG SERVICE SIMPLE] ✅ Collection {collection_name} created successfully")
+            else:
+                logger.warning(f"[RAG SERVICE SIMPLE] ⚠️ Failed to create collection {collection_name}")
+        
+        # AUTO-CREATE POINTS: Jeśli kolekcja istnieje, ale jest pusta, a są chunks w bazie - tworzymy punkty
+        if collection_exists and total_chunks_in_db > 0:
+            # Sprawdzamy ile punktów jest w Qdrant
+            try:
+                from app.vector_db.qdrant_client import qdrant_client
+                qdrant = qdrant_client.get_client()
+                scroll_result = qdrant.scroll(collection_name=collection_name, limit=1)
+                points_in_qdrant = len(scroll_result[0]) if scroll_result and scroll_result[0] else 0
+                
+                if points_in_qdrant == 0:
+                    logger.info(f"[RAG SERVICE SIMPLE] Collection {collection_name} is empty but has {total_chunks_in_db} chunks in DB. Auto-creating points...")
+                    
+                    # Pobieramy wszystkie chunks z bazy
+                    chunks_result = await self.db.execute(
+                        select(DocumentChunk, Document)
+                        .join(Document)
+                        .where(Document.project_id == project.id)
+                        .where(DocumentChunk.chunk_text.isnot(None))
+                        .where(DocumentChunk.chunk_text != "")
+                        .order_by(DocumentChunk.chunk_index)
+                    )
+                    chunks_data = chunks_result.all()
+                    
+                    if chunks_data:
+                        logger.info(f"[RAG SERVICE SIMPLE] Found {len(chunks_data)} chunks to process. Creating embeddings and points...")
+                        
+                        # Tworzymy embeddings i punkty w batchach
+                        BATCH_SIZE = 20
+                        points_created = 0
+                        
+                        for i in range(0, len(chunks_data), BATCH_SIZE):
+                            batch = chunks_data[i:i + BATCH_SIZE]
+                            batch_chunks = []
+                            batch_texts = []
+                            
+                            for chunk, doc in batch:
+                                batch_chunks.append((chunk, doc))
+                                batch_texts.append(chunk.chunk_text)
+                            
+                            # Tworzymy embeddings dla batcha
+                            try:
+                                embeddings = await self.embedding_service.create_embeddings_batch(batch_texts)
+                                
+                                # Tworzymy punkty dla batcha
+                                from qdrant_client.models import PointStruct
+                                batch_points = []
+                                
+                                for (chunk, doc), embedding in zip(batch_chunks, embeddings):
+                                    point_id = str(chunk.id) if chunk.id else str(uuid4())
+                                    batch_points.append(PointStruct(
+                                        id=point_id,
+                                        vector=embedding,
+                                        payload={
+                                            "document_id": str(doc.id),
+                                            "chunk_id": str(chunk.id),
+                                            "chunk_index": chunk.chunk_index,
+                                            "filename": doc.filename,
+                                            "chunk_text": chunk.chunk_text[:500]  # Ограничиваем для Qdrant
+                                        }
+                                    ))
+                                
+                                # Batch upsert do Qdrant
+                                qdrant.upsert(
+                                    collection_name=collection_name,
+                                    points=batch_points
+                                )
+                                
+                                # Aktualizujemy qdrant_point_id w bazie
+                                for chunk, doc in batch_chunks:
+                                    chunk.qdrant_point_id = chunk.id
+                                
+                                await self.db.flush()
+                                points_created += len(batch_points)
+                                
+                                logger.info(f"[RAG SERVICE SIMPLE] Created {points_created}/{len(chunks_data)} points in Qdrant...")
+                                
+                            except Exception as batch_error:
+                                logger.error(f"[RAG SERVICE SIMPLE] Error creating batch points: {batch_error}")
+                                # Próbujemy pojedynczo jako fallback
+                                for (chunk, doc), embedding in zip(batch_chunks, embeddings):
+                                    try:
+                                        point_id = await self.vector_store.store_vector(
+                                            collection_name=collection_name,
+                                            vector=embedding,
+                                            payload={
+                                                "document_id": str(doc.id),
+                                                "chunk_id": str(chunk.id),
+                                                "chunk_index": chunk.chunk_index,
+                                                "filename": doc.filename,
+                                                "chunk_text": chunk.chunk_text[:500]
+                                            }
+                                        )
+                                        chunk.qdrant_point_id = point_id
+                                        points_created += 1
+                                    except:
+                                        pass
+                        
+                        await self.db.commit()
+                        logger.info(f"[RAG SERVICE SIMPLE] ✅ Auto-created {points_created} points in Qdrant from {len(chunks_data)} chunks")
+                    else:
+                        logger.warning(f"[RAG SERVICE SIMPLE] No chunks found in DB to create points")
+            except Exception as check_error:
+                logger.warning(f"[RAG SERVICE SIMPLE] Error checking Qdrant points: {check_error}")
         
         similar_chunks = []
         
