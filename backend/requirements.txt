@@ -26,7 +26,7 @@ aiohttp==3.9.1
 python-docx==1.1.0
 PyPDF2==3.0.1
 pdfplumber==0.10.3
-pymupdf==1.23.8  # PyMuPDF (fitz) - мощный PDF парсер
+pymupdf>=1.24.2  # PyMuPDF (fitz) - мощный PDF парсер (требуется >=1.24.2 для pymupdf4llm)
 pymupdf4llm==0.0.9  # Специальный парсер для LLM (Markdown конвертация)
 pytesseract==0.3.10  # OCR для сканированных PDF (опционально)
 Pillow==10.1.0  # Для обработки изображений в OCR
