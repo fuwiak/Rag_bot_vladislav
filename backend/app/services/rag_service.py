@@ -1826,8 +1826,29 @@ class RAGService:
                     logger.info(f"[RAG SERVICE] Document content (last 5000 chars):\n...{document_content[-5000:]}")
             
             # FALLBACK СТРАТЕГИИ: если контента нет, используем несколько техник
+            # Dla małych plików content powinien być dostępny natychmiast, ale sprawdzamy z retry
             if not document_content or document_content in ["Обработка...", "Обработан", ""]:
-                logger.warning(f"[RAG SERVICE] Document content not ready, trying fallback strategies for document {document.id}")
+                # Retry logic: czekamy max 3 sekundy na przetworzenie dokumentu
+                import asyncio
+                max_retries = 6  # 6 prób po 0.5 sekundy = 3 sekundy
+                retry_count = 0
+                
+                while retry_count < max_retries and (not document_content or document_content in ["Обработка...", "Обработан", ""]):
+                    await asyncio.sleep(0.5)
+                    retry_count += 1
+                    
+                    # Pobieramy dokument ponownie
+                    result = await self.db.execute(
+                        select(Document).where(Document.id == document.id)
+                    )
+                    updated_doc = result.scalar_one_or_none()
+                    if updated_doc and updated_doc.content and updated_doc.content not in ["Обработка...", "Обработан", ""]:
+                        document_content = updated_doc.content
+                        logger.info(f"[RAG SERVICE] Document content became available after {retry_count * 0.5:.1f}s")
+                        break
+                
+                if not document_content or document_content in ["Обработка...", "Обработан", ""]:
+                    logger.warning(f"[RAG SERVICE] Document content not ready after {max_retries * 0.5}s, trying fallback strategies for document {document.id}")
                 
                 # Fallback 1: Пытаемся получить чанки из DocumentChunk таблицы
                 try:

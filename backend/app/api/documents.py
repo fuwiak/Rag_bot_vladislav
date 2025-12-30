@@ -415,7 +415,7 @@ async def upload_documents(
                 current_memory = process.memory_info().rss / 1024 / 1024
                 logger.info(f"[Upload] Memory after writing file: {current_memory:.2f}MB (delta: {current_memory - initial_memory:.2f}MB)")
             
-            # Создаем документ в БД сразу (временно с placeholder content)
+            # Создаем документ в БД сразу
             from app.models.document import Document
             document = Document(
                 project_id=project_id,
@@ -429,8 +429,45 @@ async def upload_documents(
             
             documents.append(document)
             
+            # КРИТИЧНО: Для małych plików (< 5MB) zapisujemy content synchronicznie PRZED Celery
+            # To pozwala RAG użyć dokumentu natychmiast
+            SMALL_FILE_THRESHOLD = 5 * 1024 * 1024  # 5MB
+            if total_size < SMALL_FILE_THRESHOLD:
+                try:
+                    logger.info(f"[Upload] Small file detected ({total_size / 1024 / 1024:.2f}MB), parsing synchronously for immediate RAG availability")
+                    from app.documents.parser import DocumentParser
+                    parser = DocumentParser()
+                    
+                    # Czytamy plik ponownie dla parsowania
+                    with open(temp_path, 'rb') as f:
+                        file_content = f.read()
+                    
+                    # Parsujemy synchronicznie
+                    text = await parser.parse(file_content, file_type)
+                    
+                    # Zapisujemy content natychmiast
+                    MAX_CONTENT_SIZE = 2_000_000
+                    if len(text) > MAX_CONTENT_SIZE:
+                        document.content = text[:MAX_CONTENT_SIZE] + f"\n\n[... документ обрезан, всего {len(text)} символов ...]"
+                    else:
+                        document.content = text
+                    
+                    await db.commit()
+                    await db.refresh(document)
+                    logger.info(f"[Upload] ✅ Content saved synchronously - {len(text)} chars, document ready for RAG")
+                    
+                    # Usuwamy file_content z pamięci
+                    del file_content
+                    del text
+                except Exception as sync_error:
+                    logger.warning(f"[Upload] Synchronous parsing failed, will use Celery: {sync_error}")
+                    # Jeśli synchroniczne parsowanie się nie powiodło, używamy Celery
+                    document.content = "Обработка..."
+                    await db.commit()
+            
             # Запускаем обработку через Celery в отдельном воркере
-            # Это предотвращает out of memory, так как обработка происходит в отдельном процессе
+            # Для małych plików Celery tylko przetworzy chunks, content już jest zapisany
+            # Для dużych plików Celery przetworzy wszystko
             from app.tasks.document_tasks import process_document_task
             logger.info(f"[Upload] Scheduling Celery task for document {document.id}, temp_file: {temp_path}")
             
