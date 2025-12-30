@@ -5,6 +5,9 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
+# Добавление локальных пакетов в PATH (для builder stage)
+ENV PATH=/root/.local/bin:$PATH
+
 # Установка зависимостей для сборки
 RUN apt-get update && apt-get install -y \
     gcc \
@@ -15,8 +18,8 @@ RUN apt-get update && apt-get install -y \
 # Build context всегда root проекта, поэтому указываем полный путь
 COPY backend/requirements.txt requirements.txt
 
-# Установка Python зависимостей
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Установка Python зависимостей (подавляем предупреждения о PATH)
+RUN pip install --no-cache-dir --user --no-warn-script-location -r requirements.txt
 
 # Stage 2: Runtime
 FROM python:3.11-slim
