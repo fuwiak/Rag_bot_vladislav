@@ -2,7 +2,7 @@
 Adaptive Retrieval - dynamiczne dostosowanie top_k i reranking thresholds
 """
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
