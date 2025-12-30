@@ -75,6 +75,50 @@ export default function RAGDiagnosticsPage() {
     }
   }
 
+  const manageCollection = async (action: 'create' | 'delete') => {
+    if (!selectedProject) {
+      alert('Выберите проект')
+      return
+    }
+
+    const confirmMessage = action === 'delete' 
+      ? 'Вы уверены, что хотите удалить коллекцию Qdrant? Все векторы будут удалены!'
+      : 'Создать новую коллекцию Qdrant для этого проекта?'
+    
+    if (!confirm(confirmMessage)) {
+      return
+    }
+
+    setLoading(true)
+
+    try {
+      const { apiFetch } = await import('../lib/api-helpers')
+      const response = await apiFetch(`/api/rag/collections/${action}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          project_id: selectedProject,
+          action: action,
+        }),
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        alert(`✅ ${data.message || (action === 'create' ? 'Коллекция создана' : 'Коллекция удалена')}`)
+      } else {
+        const error = await response.json()
+        alert(`Ошибка: ${error.detail || 'Неизвестная ошибка'}`)
+      }
+    } catch (error) {
+      console.error(`Error ${action}ing collection:`, error)
+      alert('Ошибка подключения к серверу')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const runDiagnostics = async () => {
     if (!selectedProject || !selectedUser || !question.trim()) {
       alert('Выберите проект, пользователя и введите вопрос')
@@ -216,13 +260,37 @@ export default function RAGDiagnosticsPage() {
                 />
               </div>
 
-              <button
-                onClick={runDiagnostics}
-                disabled={loading || !selectedProject || !selectedUser || !question.trim()}
-                className="w-full bg-fb-blue text-white px-4 py-2 rounded-lg hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-              >
-                {loading ? 'Запуск диагностики...' : 'Запустить диагностику'}
-              </button>
+              <div className="flex space-x-2">
+                <button
+                  onClick={runDiagnostics}
+                  disabled={loading || !selectedProject || !selectedUser || !question.trim()}
+                  className="flex-1 bg-fb-blue text-white px-4 py-2 rounded-lg hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                >
+                  {loading ? 'Запуск диагностики...' : 'Запустить диагностику'}
+                </button>
+              </div>
+
+              {selectedProject && (
+                <div className="mt-4 pt-4 border-t border-fb-gray-dark">
+                  <h3 className="text-sm font-semibold text-fb-text mb-2">Управление коллекцией Qdrant</h3>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => manageCollection('delete')}
+                      disabled={loading}
+                      className="flex-1 bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm"
+                    >
+                      Удалить коллекцию
+                    </button>
+                    <button
+                      onClick={() => manageCollection('create')}
+                      disabled={loading}
+                      className="flex-1 bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm"
+                    >
+                      Создать коллекцию
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

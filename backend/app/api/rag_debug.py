@@ -347,3 +347,80 @@ async def run_rag_diagnostics(
             execution_time=execution_time
         )
 
+
+class CollectionActionRequest(BaseModel):
+    """Request для действий с коллекцией"""
+    project_id: UUID
+    action: str  # "create" или "delete"
+
+
+@router.post("/collections/{action}")
+async def manage_collection(
+    action: str,
+    request: CollectionActionRequest,
+    db = Depends(get_db),
+    current_admin = Depends(get_current_admin)
+):
+    """
+    Создать или удалить коллекцию Qdrant для проекта
+    
+    Args:
+        action: "create" или "delete"
+        request: Запрос с project_id
+        db: Database session
+        current_admin: Admin user
+    
+    Returns:
+        Информация о выполненном действии
+    """
+    from app.vector_db.collections_manager import CollectionsManager
+    from app.vector_db.vector_store import VectorStore
+    from app.core.config import settings
+    
+    collection_name = f"project_{request.project_id}"
+    
+    try:
+        if action == "create":
+            # Создаем коллекцию
+            vector_store = VectorStore()
+            created = await vector_store.ensure_collection(
+                collection_name=collection_name,
+                vector_size=settings.EMBEDDING_DIMENSION
+            )
+            
+            if created:
+                return {
+                    "message": "Collection created successfully",
+                    "collection_name": collection_name,
+                    "vector_size": settings.EMBEDDING_DIMENSION,
+                    "action": "create"
+                }
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to create collection (may already exist)"
+                )
+        
+        elif action == "delete":
+            # Удаляем коллекцию
+            collections_manager = CollectionsManager()
+            await collections_manager.delete_collection(str(request.project_id))
+            
+            return {
+                "message": "Collection deleted successfully",
+                "collection_name": collection_name,
+                "action": "delete"
+            }
+        
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid action: {action}. Use 'create' or 'delete'"
+            )
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error managing collection: {str(e)}"
+        )
+
