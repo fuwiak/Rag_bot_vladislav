@@ -119,6 +119,45 @@ export default function RAGDiagnosticsPage() {
     }
   }
 
+  const reprocessDocuments = async () => {
+    if (!selectedProject) {
+      alert('Выберите проект')
+      return
+    }
+
+    if (!confirm('Переобработать все документы проекта и записать их в Qdrant? Это может занять некоторое время.')) {
+      return
+    }
+
+    setLoading(true)
+
+    try {
+      const { apiFetch } = await import('../lib/api-helpers')
+      const response = await apiFetch('/api/rag/reprocess-documents', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          project_id: selectedProject,
+        }),
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        alert(`✅ ${data.message}\nОбработано: ${data.processed}/${data.total}${data.errors ? `\nОшибки: ${data.errors.length}` : ''}`)
+      } else {
+        const error = await response.json()
+        alert(`Ошибка: ${error.detail || 'Неизвестная ошибка'}`)
+      }
+    } catch (error) {
+      console.error('Error reprocessing documents:', error)
+      alert('Ошибка подключения к серверу')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const runDiagnostics = async () => {
     if (!selectedProject || !selectedUser || !question.trim()) {
       alert('Выберите проект, пользователя и введите вопрос')
@@ -273,7 +312,7 @@ export default function RAGDiagnosticsPage() {
               {selectedProject && (
                 <div className="mt-4 pt-4 border-t border-fb-gray-dark">
                   <h3 className="text-sm font-semibold text-fb-text mb-2">Управление коллекцией Qdrant</h3>
-                  <div className="flex space-x-2">
+                  <div className="flex space-x-2 mb-2">
                     <button
                       onClick={() => manageCollection('delete')}
                       disabled={loading}
@@ -289,6 +328,13 @@ export default function RAGDiagnosticsPage() {
                       Создать коллекцию
                     </button>
                   </div>
+                  <button
+                    onClick={reprocessDocuments}
+                    disabled={loading}
+                    className="w-full bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors text-sm"
+                  >
+                    {loading ? 'Обработка...' : 'Переобработать все документы в коллекцию'}
+                  </button>
                 </div>
               )}
             </div>

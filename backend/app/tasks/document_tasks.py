@@ -117,26 +117,23 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             parser = DocumentParser()
             chunker = DocumentChunker()
             
-            # Парсинг документа
-            try:
-                text = await parser.parse(file_content, file_type)
-            except Exception as e:
-                logger.error(f"[Celery] Ошибка парсинга документа {document_id} ({filename}): {e}")
-                result = await db.execute(select(Document).where(Document.id == document_id))
-                document = result.scalar_one_or_none()
-                if document:
-                    document.content = f"Ошибка обработки: {str(e)[:200]}"
-                    await db.commit()
-                return
-            
-            # Получаем документ и обновляем его content
+            # Получаем документ ПЕРЕД парсингом, aby móc szybko zaktualizować content
             result = await db.execute(select(Document).where(Document.id == document_id))
             document = result.scalar_one_or_none()
             if not document:
                 logger.error(f"[Celery] Document {document_id} not found")
                 return
             
-            # Сохраняем полный контент документа (с разумным ограничением для очень больших файлов)
+            # Парсинг документа
+            try:
+                text = await parser.parse(file_content, file_type)
+            except Exception as e:
+                logger.error(f"[Celery] Ошибка парсинга документа {document_id} ({filename}): {e}")
+                document.content = f"Ошибка обработки: {str(e)[:200]}"
+                await db.commit()
+                return
+            
+            # КРИТИЧНО: Сохраняем content НЕМЕДЛЕННО после парсинга, чтобы RAG мог его использовать
             # Максимальный размер контента: 2MB текста (примерно 2,000,000 символов)
             MAX_CONTENT_SIZE = 2_000_000
             if len(text) > MAX_CONTENT_SIZE:
@@ -145,11 +142,13 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             else:
                 document.content = text
             
+            # КОММИТИМ СРАЗУ, чтобы content był dostępен для RAG
             await db.commit()
             await db.refresh(document)
             
-            logger.info(f"[Celery] Document parsed and saved - ID: {document_id}, Filename: {filename}, "
+            logger.info(f"[Celery] ✅ Document content saved IMMEDIATELY - ID: {document_id}, Filename: {filename}, "
                        f"Text length: {len(text)} chars, Content saved: {len(document.content)} chars")
+            logger.info(f"[Celery] Document is now READY for RAG queries")
             
             # Логируем превью контента для отладки
             if document.content:
@@ -171,6 +170,11 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             
             embedding_service = EmbeddingService()
             vector_store = VectorStore()
+            
+            # Batch processing для szybszego zapisu do Qdrant
+            BATCH_SIZE = 10  # Zapisujemy po 10 chunks naraz
+            batch_points = []
+            batch_chunks = []
             
             # Обрабатываем чанки по одному для минимального использования памяти
             for chunk_index, chunk_text in enumerate(chunks):
@@ -199,23 +203,62 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                     db.add(chunk)
                     await db.flush()  # Получаем ID чанка
                     
-                    # Сохраняем в Qdrant (ограничиваем payload для экономии памяти)
-                    try:
-                        point_id = await vector_store.store_vector(
-                            collection_name=f"project_{project_id}",
-                            vector=embedding,
-                            payload={
-                                "document_id": str(document_id),
-                                "chunk_id": str(chunk.id),
-                                "chunk_index": chunk_index,
-                                "chunk_text": chunk_text[:500]  # Ограничиваем для Qdrant
-                            }
-                        )
-                        chunk.qdrant_point_id = point_id
-                        await db.flush()  # Обновляем qdrant_point_id
-                    except Exception as e:
-                        logger.error(f"[Celery] Ошибка сохранения вектора в Qdrant для чанка {chunk_index}: {e}")
-                        # Продолжаем обработку, даже если Qdrant недоступен
+                    # Dodajemy do batcha dla szybszego zapisu do Qdrant
+                    from qdrant_client.models import PointStruct
+                    point_id = chunk.id  # Używamy chunk.id jako point_id
+                    batch_points.append(PointStruct(
+                        id=str(point_id),
+                        vector=embedding,
+                        payload={
+                            "document_id": str(document_id),
+                            "chunk_id": str(chunk.id),
+                            "chunk_index": chunk_index,
+                            "filename": filename,
+                            "chunk_text": chunk_text[:500]  # Ограничиваем для Qdrant
+                        }
+                    ))
+                    batch_chunks.append((chunk, point_id))
+                    
+                    # Zapisujemy batch co BATCH_SIZE chunks
+                    if len(batch_points) >= BATCH_SIZE or chunk_index == len(chunks) - 1:
+                        try:
+                            # Batch upsert do Qdrant
+                            collection_name = f"project_{project_id}"
+                            await vector_store.ensure_collection(collection_name, len(embedding))
+                            vector_store.client.upsert(
+                                collection_name=collection_name,
+                                points=batch_points
+                            )
+                            
+                            # Aktualizujemy qdrant_point_id dla wszystkich chunks w batchu
+                            for batch_chunk, batch_point_id in batch_chunks:
+                                batch_chunk.qdrant_point_id = batch_point_id
+                            await db.flush()
+                            
+                            logger.info(f"[Celery] ✅ Batch upserted {len(batch_points)} chunks to Qdrant (up to chunk {chunk_index})")
+                        except Exception as e:
+                            logger.error(f"[Celery] Ошибка batch upsert в Qdrant: {e}")
+                            # Próbujemy zapisać pojedynczo jako fallback
+                            for batch_chunk, batch_point_id in batch_chunks:
+                                try:
+                                    await vector_store.store_vector(
+                                        collection_name=f"project_{project_id}",
+                                        vector=embedding,  # Używamy ostatniego embedding
+                                        payload={
+                                            "document_id": str(document_id),
+                                            "chunk_id": str(batch_chunk.id),
+                                            "chunk_index": batch_chunk.chunk_index,
+                                            "filename": filename,
+                                            "chunk_text": batch_chunk.chunk_text[:500]
+                                        }
+                                    )
+                                    batch_chunk.qdrant_point_id = batch_point_id
+                                except:
+                                    pass
+                        
+                        # Czyszczenie batcha
+                        batch_points = []
+                        batch_chunks = []
                     
                     chunk_memory_after = process.memory_info().rss / 1024 / 1024
                     if chunk_index % 10 == 0:

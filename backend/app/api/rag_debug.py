@@ -424,3 +424,178 @@ async def manage_collection(
             detail=f"Error managing collection: {str(e)}"
         )
 
+
+class ReprocessDocumentsRequest(BaseModel):
+    """Request для переобработки всех документов проекта"""
+    project_id: UUID
+
+
+@router.post("/reprocess-documents")
+async def reprocess_all_documents(
+    request: ReprocessDocumentsRequest,
+    db = Depends(get_db),
+    current_admin = Depends(get_current_admin)
+):
+    """
+    Переобработать все документы проекта и записать их в Qdrant
+    
+    Использует существующие chunks из базы данных и записывает их в Qdrant
+    
+    Args:
+        request: Запрос с project_id
+        db: Database session
+        current_admin: Admin user
+    
+    Returns:
+        Информация о переобработанных документах
+    """
+    from app.models.document import Document, DocumentChunk
+    from app.services.embedding_service import EmbeddingService
+    from app.vector_db.vector_store import VectorStore
+    from app.core.config import settings
+    from sqlalchemy import select
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Получаем все документы проекта
+        docs_result = await db.execute(
+            select(Document)
+            .where(Document.project_id == request.project_id)
+        )
+        documents = docs_result.scalars().all()
+        
+        if not documents:
+            return {
+                "message": "No documents found for this project",
+                "project_id": str(request.project_id),
+                "processed": 0
+            }
+        
+        # Инициализируем сервисы
+        embedding_service = EmbeddingService()
+        vector_store = VectorStore()
+        collection_name = f"project_{request.project_id}"
+        
+        # Убеждаемся, что коллекция существует
+        await vector_store.ensure_collection(
+            collection_name=collection_name,
+            vector_size=settings.EMBEDDING_DIMENSION
+        )
+        
+        processed_chunks = 0
+        processed_documents = 0
+        errors = []
+        
+        for doc in documents:
+            try:
+                # Получаем все chunks для документа
+                chunks_result = await db.execute(
+                    select(DocumentChunk)
+                    .where(DocumentChunk.document_id == doc.id)
+                    .order_by(DocumentChunk.chunk_index)
+                )
+                chunks = chunks_result.scalars().all()
+                
+                if not chunks:
+                    # Если нет chunks, ale jest content, próbujemy utworzyć chunks
+                    if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
+                        logger.info(f"Document {doc.id} has content but no chunks, creating chunks...")
+                        from app.documents.chunker import DocumentChunker
+                        chunker = DocumentChunker()
+                        text_chunks = chunker.chunk_text(doc.content)
+                        
+                        # Tworzymy chunks w bazie
+                        for idx, chunk_text in enumerate(text_chunks):
+                            chunk = DocumentChunk(
+                                document_id=doc.id,
+                                chunk_text=chunk_text[:10000],  # Max 10KB
+                                chunk_index=idx
+                            )
+                            db.add(chunk)
+                        await db.flush()
+                        
+                        # Pobieramy chunks ponownie
+                        chunks_result = await db.execute(
+                            select(DocumentChunk)
+                            .where(DocumentChunk.document_id == doc.id)
+                            .order_by(DocumentChunk.chunk_index)
+                        )
+                        chunks = chunks_result.scalars().all()
+                    else:
+                        errors.append(f"Document {doc.id} ({doc.filename}): no content and no chunks")
+                        continue
+                
+                # Przetwarzamy każdy chunk
+                for chunk in chunks:
+                    try:
+                        # Sprawdzamy czy chunk już ma qdrant_point_id
+                        if chunk.qdrant_point_id:
+                            # Sprawdzamy czy punkt istnieje w Qdrant
+                            try:
+                                points = await vector_store.client.retrieve(
+                                    collection_name=collection_name,
+                                    ids=[str(chunk.qdrant_point_id)]
+                                )
+                                if points:
+                                    # Punkt już istnieje, pomijamy
+                                    continue
+                            except:
+                                # Punkt nie istnieje, tworzymy nowy
+                                pass
+                        
+                        # Tworzymy embedding
+                        embedding = await embedding_service.create_embedding(chunk.chunk_text)
+                        
+                        # Zapisujemy do Qdrant
+                        point_id = await vector_store.upsert_point(
+                            collection_name=collection_name,
+                            point_id=str(chunk.id),
+                            vector=embedding,
+                            payload={
+                                "document_id": str(doc.id),
+                                "chunk_id": str(chunk.id),
+                                "chunk_index": chunk.chunk_index,
+                                "filename": doc.filename,
+                                "text": chunk.chunk_text[:1000]  # Max 1KB w payload
+                            }
+                        )
+                        
+                        # Aktualizujemy qdrant_point_id w bazie
+                        chunk.qdrant_point_id = chunk.id  # Używamy chunk.id jako point_id
+                        await db.flush()
+                        
+                        processed_chunks += 1
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing chunk {chunk.id}: {e}")
+                        errors.append(f"Chunk {chunk.id} ({doc.filename}): {str(e)}")
+                        continue
+                
+                processed_documents += 1
+                
+            except Exception as e:
+                logger.error(f"Error processing document {doc.id}: {e}")
+                errors.append(f"Document {doc.id} ({doc.filename}): {str(e)}")
+                continue
+        
+        await db.commit()
+        
+        return {
+            "message": f"Processed {processed_documents} documents, {processed_chunks} chunks",
+            "project_id": str(request.project_id),
+            "processed_documents": processed_documents,
+            "processed_chunks": processed_chunks,
+            "total_documents": len(documents),
+            "errors": errors[:10] if errors else None,  # Max 10 errors
+            "total_errors": len(errors)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error reprocessing documents: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error reprocessing documents: {str(e)}"
+        )
+

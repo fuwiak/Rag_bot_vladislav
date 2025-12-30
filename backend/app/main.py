@@ -86,8 +86,18 @@ async def lifespan(app: FastAPI):
             import subprocess
             import sys
             logger.info("Applying Alembic migrations...")
+            # Sprawdzamy czy są multiple heads
+            heads_check = subprocess.run(
+                ["alembic", "heads"],
+                cwd="/app" if os.path.exists("/app") else ".",
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            # Używamy "heads" zamiast "head" jeśli są multiple heads
+            upgrade_command = ["alembic", "upgrade", "heads"]
             result = subprocess.run(
-                ["alembic", "upgrade", "head"],
+                upgrade_command,
                 cwd="/app" if os.path.exists("/app") else ".",
                 capture_output=True,
                 text=True,
