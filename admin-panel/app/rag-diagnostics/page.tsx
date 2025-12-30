@@ -45,10 +45,13 @@ export default function RAGDiagnosticsPage() {
 
   const fetchProjects = async () => {
     try {
-      const response = await fetch('/api/projects')
+      const { apiFetch } = await import('../lib/api-helpers')
+      const response = await apiFetch('/api/projects')
       if (response.ok) {
         const data = await response.json()
         setProjects(data)
+      } else {
+        console.error('Error fetching projects:', response.status)
       }
     } catch (error) {
       console.error('Error fetching projects:', error)
@@ -59,10 +62,13 @@ export default function RAGDiagnosticsPage() {
 
   const fetchUsers = async (projectId: string) => {
     try {
-      const response = await fetch(`/api/users/project/${projectId}`)
+      const { apiFetch } = await import('../lib/api-helpers')
+      const response = await apiFetch(`/api/users/project/${projectId}`)
       if (response.ok) {
         const data = await response.json()
         setUsers(data)
+      } else {
+        console.error('Error fetching users:', response.status)
       }
     } catch (error) {
       console.error('Error fetching users:', error)
@@ -79,7 +85,8 @@ export default function RAGDiagnosticsPage() {
     setDiagnostics(null)
 
     try {
-      const response = await fetch('/api/rag/diagnostics', {
+      const { apiFetch } = await import('../lib/api-helpers')
+      const response = await apiFetch('/api/rag/diagnostics', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
