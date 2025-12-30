@@ -144,6 +144,10 @@ async def test_project_isolation(db_session):
         await rag_service.generate_answer(user_id, "Question")
         
         # Проверяем, что поиск был в коллекции проекта 1
+        assert mock_search.called, "search_similar должен быть вызван"
         call_args = mock_search.call_args
-        assert call_args[1]['collection_name'] == f"project_{project1_id}"
+        # search_similar вызывается с именованными аргументами: collection_name=...
+        assert 'collection_name' in call_args.kwargs, "collection_name должен быть передан как именованный аргумент"
+        assert call_args.kwargs['collection_name'] == f"project_{project1_id}", \
+            f"Ожидалась коллекция project_{project1_id}, получена {call_args.kwargs.get('collection_name')}"
 
