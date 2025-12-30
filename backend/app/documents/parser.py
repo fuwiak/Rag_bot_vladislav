@@ -163,7 +163,7 @@ class DocumentParser:
         empty_pages = 0
         
         try:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
             total_pages = len(pdf_reader.pages)
             logger.info(f"[PDF PARSER PyPDF2] Всего страниц: {total_pages}")
             
@@ -222,8 +222,8 @@ class DocumentParser:
                 logger.info(f"[PDF PARSER pdfplumber] Всего страниц: {total_pages}")
                 
                 for i, page in enumerate(pdf.pages):
-            try:
-                text = page.extract_text()
+                    try:
+                        text = page.extract_text()
                         if text and text.strip():
                             text_parts.append(text)
                             # Preview первой страницы
@@ -278,7 +278,7 @@ class DocumentParser:
                     page = doc[i]
                     text = page.get_text()
                     if text and text.strip():
-                    text_parts.append(text)
+                        text_parts.append(text)
                         # Preview первой страницы
                         if i == 0:
                             preview = text[:500] if len(text) > 500 else text
@@ -303,7 +303,7 @@ class DocumentParser:
             logger.info(f"[PDF PARSER PyMuPDF] Извлечено {len(text_parts)} страниц, всего {len(result)} символов")
             return result
             
-            except Exception as e:
+        except Exception as e:
             logger.error(f"[PDF PARSER PyMuPDF] Ошибка: {e}")
             raise
     
@@ -334,8 +334,8 @@ class DocumentParser:
             logger.error(f"[PDF PARSER pymupdf4llm] Ошибка: {e}")
             raise
         finally:
-        del pdf_file
-        gc.collect()
+            del pdf_file
+            gc.collect()
     
     def _parse_pdf_with_ocr(self, content: bytes) -> str:
         """OCR fallback для сканированных PDF (опционально)"""
