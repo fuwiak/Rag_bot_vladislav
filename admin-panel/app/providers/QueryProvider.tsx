@@ -1,13 +1,13 @@
 'use client'
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient } from '@tanstack/react-query'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
-import { useState } from 'react'
+import { useMemo } from 'react'
 
 export default function QueryProvider({ children }: { children: React.ReactNode }) {
-  const [queryClient] = useState(() => {
-    const client = new QueryClient({
+  const queryClient = useMemo(() => {
+    return new QueryClient({
       defaultOptions: {
         queries: {
           // Данные считаются свежими 30 минут
@@ -25,42 +25,48 @@ export default function QueryProvider({ children }: { children: React.ReactNode 
         },
       },
     })
-    return client
-  })
+  }, [])
 
-  const [persister] = useState(() => {
+  const persister = useMemo(() => {
     // Создаем persister только на клиенте (в браузере)
     if (typeof window !== 'undefined') {
-      return createSyncStoragePersister({
-        storage: window.localStorage,
-        key: 'REACT_QUERY_OFFLINE_CACHE',
-        serialize: JSON.stringify,
-        deserialize: JSON.parse,
-      })
+      try {
+        return createSyncStoragePersister({
+          storage: window.localStorage,
+          key: 'REACT_QUERY_OFFLINE_CACHE',
+          serialize: JSON.stringify,
+          deserialize: JSON.parse,
+        })
+      } catch (error) {
+        console.warn('Failed to create localStorage persister:', error)
+        return null
+      }
     }
     return null
-  })
+  }, [])
 
-  // Используем PersistQueryClientProvider только если persister доступен (на клиенте)
-  // На сервере используем обычный QueryClientProvider
-  if (!persister) {
-    // На сервере или если localStorage недоступен, используем обычный провайдер
-    return (
-      <QueryClientProvider client={queryClient}>
-        {children}
-      </QueryClientProvider>
-    )
-  }
-
-  // На клиенте используем PersistQueryClientProvider с localStorage
+  // Всегда используем PersistQueryClientProvider для стабильности структуры хуков
+  // Если persister null, персистентность просто не будет работать, но провайдер останется стабильным
   return (
     <PersistQueryClientProvider
       client={queryClient}
-      persistOptions={{
-        persister,
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 дней в localStorage
-        buster: '', // Версия кэша (можно менять для инвалидации)
-      }}
+      persistOptions={
+        persister
+          ? {
+              persister,
+              maxAge: 7 * 24 * 60 * 60 * 1000, // 7 дней в localStorage
+              buster: '', // Версия кэша (можно менять для инвалидации)
+            }
+          : {
+              // Фиктивный persister для TypeScript, но он не будет использоваться
+              persister: {
+                persistClient: async () => {},
+                restoreClient: async () => undefined,
+                removeClient: async () => {},
+              } as any,
+              maxAge: 0,
+            }
+      }
     >
       {children}
     </PersistQueryClientProvider>

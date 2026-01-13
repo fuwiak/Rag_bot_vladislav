@@ -27,15 +27,15 @@ async function loadConfig(): Promise<{ backendUrl: string; useMockApi: boolean }
         },
       })
       if (response.ok) {
-        const config = await response.json()
+        const configData = await response.json()
         // Убираем trailing slash
-        const backendUrl = (config.backendUrl || '').replace(/\/+$/, '')
+        const backendUrl = (configData.backendUrl || '').replace(/\/+$/, '')
         
         // Проверяем, что получили валидный URL
         if (backendUrl && backendUrl !== 'https://ragbotvladislav-backend.up.railway.app' && !backendUrl.includes('localhost')) {
           configCache = {
             backendUrl,
-            useMockApi: config.useMockApi === true || config.useMockApi === 'true',
+            useMockApi: configData.useMockApi === true || configData.useMockApi === 'true',
           }
           console.log('[API Helpers] Config loaded from API route:', configCache)
           return configCache
@@ -92,10 +92,10 @@ export async function getBackendUrl(): Promise<string> {
   // Это критично для Railway, где переменные могут не встроиться в сборку
   if (!API_BASE_URL || API_BASE_URL.includes('localhost')) {
     try {
-      const config = await loadConfig()
-      if (config.backendUrl && !config.backendUrl.includes('localhost')) {
-        API_BASE_URL = config.backendUrl
-        USE_MOCK_API = config.useMockApi
+      const loadedConfig = await loadConfig()
+      if (loadedConfig.backendUrl && !loadedConfig.backendUrl.includes('localhost')) {
+        API_BASE_URL = loadedConfig.backendUrl
+        USE_MOCK_API = loadedConfig.useMockApi
       }
     } catch (err) {
       console.warn('[API Helpers] Failed to load config from API route:', err)
