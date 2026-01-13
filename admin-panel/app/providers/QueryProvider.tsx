@@ -1,6 +1,6 @@
 'use client'
 
-import { QueryClient } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
 import { useState } from 'react'
@@ -41,20 +41,26 @@ export default function QueryProvider({ children }: { children: React.ReactNode 
     return null
   })
 
-  // Всегда используем PersistQueryClientProvider, даже если persister null (на сервере)
-  // PersistQueryClientProvider корректно обрабатывает случай, когда persister отсутствует
+  // Используем PersistQueryClientProvider только если persister доступен (на клиенте)
+  // На сервере используем обычный QueryClientProvider
+  if (!persister) {
+    // На сервере или если localStorage недоступен, используем обычный провайдер
+    return (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    )
+  }
+
+  // На клиенте используем PersistQueryClientProvider с localStorage
   return (
     <PersistQueryClientProvider
       client={queryClient}
-      persistOptions={
-        persister
-          ? {
-              persister,
-              maxAge: 7 * 24 * 60 * 60 * 1000, // 7 дней в localStorage
-              buster: '', // Версия кэша (можно менять для инвалидации)
-            }
-          : undefined
-      }
+      persistOptions={{
+        persister,
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 дней в localStorage
+        buster: '', // Версия кэша (можно менять для инвалидации)
+      }}
     >
       {children}
     </PersistQueryClientProvider>
