@@ -1,15 +1,26 @@
 """
 Сервис для создания эмбеддингов
+Использует конфигурацию из config/llm.yaml с fallback на settings
 """
 from typing import List, Optional
 import httpx
 import time
 import logging
+import os
+from pathlib import Path
 
 from app.core.config import settings
 from app.services.cache_service import cache_service
 from app.observability.metrics import rag_metrics
 from app.observability.otel_setup import get_tracer
+
+# Импортируем загрузчик конфигурации
+try:
+    from config.config_loader import get_llm_config_value
+except ImportError:
+    # Fallback если config_loader не доступен
+    def get_llm_config_value(key: str, default=None, base_path=None):
+        return default
 
 tracer = get_tracer(__name__)
 logger = logging.getLogger(__name__)
@@ -31,8 +42,25 @@ class EmbeddingService:
         Args:
             use_local: Если True, использует локальные embeddings (SentenceTransformer) вместо API
         """
-        self.api_key = settings.OPENROUTER_API_KEY
-        self.model = settings.EMBEDDING_MODEL
+        # Определяем базовый путь для загрузки конфига
+        backend_dir = Path(__file__).parent.parent.parent
+        
+        # Загружаем конфигурацию из config/llm.yaml с fallback на settings
+        self.api_key = get_llm_config_value(
+            "embeddings.api_key",
+            default=settings.OPENROUTER_API_KEY,
+            base_path=backend_dir
+        )
+        self.model = get_llm_config_value(
+            "embeddings.model",
+            default=settings.EMBEDDING_MODEL,
+            base_path=backend_dir
+        )
+        self.api_url = get_llm_config_value(
+            "embeddings.api_url",
+            default=os.getenv("EMBEDDING_API_URL", "https://openrouter.ai/api/v1/embeddings"),
+            base_path=backend_dir
+        )
         self.use_local = use_local
         self._local_model: Optional[SentenceTransformer] = None
         
@@ -104,7 +132,7 @@ class EmbeddingService:
             # Generujemy embedding przez API
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    "https://openrouter.ai/api/v1/embeddings",
+                    self.api_url,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
                         "HTTP-Referer": settings.APP_URL,
@@ -187,7 +215,7 @@ class EmbeddingService:
                 # Generujemy brakujące embeddings przez API
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     response = await client.post(
-                        "https://openrouter.ai/api/v1/embeddings",
+                        self.api_url,
                         headers={
                             "Authorization": f"Bearer {self.api_key}",
                             "HTTP-Referer": settings.APP_URL,

@@ -1,10 +1,12 @@
 """
 Загрузка и управление промптами из config.yaml
+Использует новый config_loader для загрузки конфигурации
 """
-import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
 import logging
+
+from config.config_loader import load_prompts_config, reload_config as reload_config_cache
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,7 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     
     Args:
         config_path: Путь к config.yaml (если None, ищется в backend/config.yaml)
+                    Игнорируется, используется новый загрузчик
     
     Returns:
         Словарь с конфигурацией
@@ -28,29 +31,23 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     if _config_cache is not None:
         return _config_cache
     
-    # Определяем путь к config.yaml
-    if config_path is None:
-        # Ищем config.yaml в backend/
-        backend_dir = Path(__file__).parent.parent
-        config_path = backend_dir / "config.yaml"
-    else:
-        config_path = Path(config_path)
+    # Определяем базовый путь
+    backend_dir = Path(__file__).parent.parent
     
-    # Загружаем конфигурацию
+    # Используем новый загрузчик
     try:
-        if not config_path.exists():
-            logger.warning(f"Config file not found at {config_path}, using defaults")
+        _config_cache = load_prompts_config(base_path=backend_dir)
+        
+        # Если конфигурация пустая, используем дефолты
+        if not _config_cache:
+            logger.warning("Prompts config is empty, using defaults")
             _config_cache = _get_default_config()
-            return _config_cache
         
-        with open(config_path, 'r', encoding='utf-8') as f:
-            _config_cache = yaml.safe_load(f)
-        
-        logger.info(f"Loaded prompt configuration from {config_path}")
+        logger.info(f"Loaded prompt configuration using config_loader")
         return _config_cache
     
     except Exception as e:
-        logger.error(f"Error loading config.yaml: {e}, using defaults")
+        logger.error(f"Error loading prompts config: {e}, using defaults")
         _config_cache = _get_default_config()
         return _config_cache
 
@@ -144,6 +141,7 @@ def reload_config():
     """Перезагрузить конфигурацию (очистить кэш)"""
     global _config_cache
     _config_cache = None
+    reload_config_cache("prompts")  # Очищаем кэш в config_loader
     load_config()
 
 

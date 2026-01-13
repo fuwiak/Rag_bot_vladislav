@@ -516,7 +516,7 @@ async def cmd_summary(message: Message, state: FSMContext):
                         try:
                             doc_summary = await summary_service.generate_summary_with_langgraph(doc.id)
                         except:
-                        doc_summary = await summary_service.generate_summary(doc.id)
+                            doc_summary = await summary_service.generate_summary(doc.id)
                     if doc_summary:
                         summaries.append(f"<b>{doc.filename}:</b> {doc_summary}")
                 

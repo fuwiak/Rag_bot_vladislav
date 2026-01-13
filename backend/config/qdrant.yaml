@@ -1,0 +1,9 @@
+# Конфигурация Qdrant
+qdrant:
+  host: "${QDRANT_HOST}"
+  port: "${QDRANT_PORT:-6333}"
+  url: "${QDRANT_URL}"  # Альтернатива host+port, если задан полный URL
+  api_key: "${QDRANT_API_KEY}"
+  collection_name: "hr2137_bot_knowledge_base"
+  target_dimension: 1536
+  default_limit: 5
