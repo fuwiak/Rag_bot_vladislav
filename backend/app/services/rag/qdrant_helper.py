@@ -1,0 +1,607 @@
+"""
+Qdrant Helper - вспомогательные функции для работы с Qdrant
+Поддерживает:
+- Индексацию Q&A пар в формате "Q: ... A: ..."
+- Загрузку документов в RAG
+- Поиск по базе знаний
+"""
+import logging
+import hashlib
+import re
+from typing import Dict, Any, Optional, List
+from datetime import datetime
+import asyncio
+import httpx
+
+from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    PointStruct, 
+    VectorParams, 
+    Distance,
+    Filter,
+    FieldCondition,
+    MatchValue
+)
+
+from app.core.config import settings
+
+# Импортируем загрузчик конфигурации
+try:
+    from config.config_loader import get_qdrant_config_value
+except ImportError:
+    def get_qdrant_config_value(key: str, default=None, base_path=None):
+        return default
+
+logger = logging.getLogger(__name__)
+
+# Конфигурация коллекции (из config/qdrant.yaml или defaults)
+COLLECTION_NAME = get_qdrant_config_value("collection_name", default="data")
+EMBEDDING_DIMENSION = get_qdrant_config_value("target_dimension", default=1536)
+SCORE_THRESHOLD = get_qdrant_config_value("search.score_threshold", default=0.3)
+
+# Глобальный клиент Qdrant
+_qdrant_client: Optional[QdrantClient] = None
+
+
+def get_qdrant_client() -> Optional[QdrantClient]:
+    """
+    Получить клиент Qdrant с подключением к Railway
+    Использует конфигурацию из config/qdrant.yaml
+    """
+    global _qdrant_client
+    
+    if _qdrant_client is not None:
+        return _qdrant_client
+    
+    try:
+        # URL Qdrant из конфигурации или переменных окружения
+        qdrant_url = get_qdrant_config_value("url", default=None)
+        
+        if not qdrant_url:
+            # Fallback на settings
+            qdrant_url = settings.QDRANT_URL
+        
+        if not qdrant_url:
+            # Попробуем получить из переменных окружения напрямую
+            import os
+            qdrant_url = os.getenv("QDRANT_URL", "https://qdrant-production-ad0b.up.railway.app")
+        
+        qdrant_api_key = get_qdrant_config_value("api_key", default=None) or settings.QDRANT_API_KEY
+        
+        logger.info(f"🔗 Подключаемся к Qdrant: {qdrant_url}")
+        logger.info(f"📦 Коллекция: {COLLECTION_NAME}, Размерность: {EMBEDDING_DIMENSION}")
+        
+        _qdrant_client = QdrantClient(
+            url=qdrant_url,
+            api_key=qdrant_api_key if qdrant_api_key else None,
+            prefer_grpc=False,
+            timeout=30
+        )
+        
+        # Проверяем подключение
+        collections = _qdrant_client.get_collections()
+        collection_names = [c.name for c in collections.collections]
+        logger.info(f"✅ Подключено к Qdrant. Коллекции: {collection_names}")
+        
+        return _qdrant_client
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка подключения к Qdrant: {e}")
+        return None
+
+
+def ensure_collection() -> bool:
+    """
+    Убедиться, что коллекция существует
+    """
+    try:
+        client = get_qdrant_client()
+        if not client:
+            return False
+        
+        # Проверяем существование коллекции
+        collections = client.get_collections()
+        collection_names = [c.name for c in collections.collections]
+        
+        if COLLECTION_NAME in collection_names:
+            logger.info(f"✅ Коллекция '{COLLECTION_NAME}' существует")
+            return True
+        
+        # Создаем коллекцию если не существует
+        logger.info(f"📦 Создаем коллекцию '{COLLECTION_NAME}'...")
+        client.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=VectorParams(
+                size=EMBEDDING_DIMENSION,
+                distance=Distance.COSINE
+            )
+        )
+        logger.info(f"✅ Коллекция '{COLLECTION_NAME}' создана")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания коллекции: {e}")
+        return False
+
+
+def generate_embedding(text: str) -> Optional[List[float]]:
+    """
+    Генерация эмбеддинга синхронно через OpenRouter API
+    """
+    try:
+        import httpx
+        
+        api_key = settings.OPENROUTER_API_KEY
+        model = settings.EMBEDDING_MODEL
+        
+        response = httpx.post(
+            "https://openrouter.ai/api/v1/embeddings",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": model,
+                "input": text
+            },
+            timeout=30.0
+        )
+        
+        response.raise_for_status()
+        data = response.json()
+        embedding = data["data"][0]["embedding"]
+        
+        # Проверяем размерность
+        if len(embedding) != EMBEDDING_DIMENSION:
+            # Дополняем или обрезаем до нужной размерности
+            if len(embedding) < EMBEDDING_DIMENSION:
+                embedding.extend([0.0] * (EMBEDDING_DIMENSION - len(embedding)))
+            else:
+                embedding = embedding[:EMBEDDING_DIMENSION]
+        
+        return embedding
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка генерации эмбеддинга: {e}")
+        return None
+
+
+async def generate_embedding_async(text: str) -> Optional[List[float]]:
+    """
+    Генерация эмбеддинга асинхронно через OpenRouter API
+    """
+    try:
+        api_key = settings.OPENROUTER_API_KEY
+        model = settings.EMBEDDING_MODEL
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://openrouter.ai/api/v1/embeddings",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": model,
+                    "input": text
+                }
+            )
+            
+            response.raise_for_status()
+            data = response.json()
+            embedding = data["data"][0]["embedding"]
+            
+            # Проверяем размерность
+            if len(embedding) != EMBEDDING_DIMENSION:
+                if len(embedding) < EMBEDDING_DIMENSION:
+                    embedding.extend([0.0] * (EMBEDDING_DIMENSION - len(embedding)))
+                else:
+                    embedding = embedding[:EMBEDDING_DIMENSION]
+            
+            return embedding
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка генерации эмбеддинга async: {e}")
+        return None
+
+
+def index_qa_to_qdrant(
+    question: str, 
+    answer: str, 
+    metadata: Optional[Dict[str, Any]] = None
+) -> bool:
+    """
+    Индексировать пару вопрос-ответ в Qdrant для RAG базы знаний
+    
+    Формат добавления: Q: <вопрос> A: <ответ>
+    
+    Args:
+        question: Вопрос
+        answer: Ответ
+        metadata: Дополнительные метаданные (user_id, category, etc.)
+    
+    Returns:
+        True если успешно, False при ошибке
+    """
+    if not question or not answer or not question.strip() or not answer.strip():
+        logger.warning("⚠️ Вопрос и ответ не могут быть пустыми")
+        return False
+    
+    try:
+        # Генерируем эмбеддинг для вопроса (для поиска)
+        embedding = generate_embedding(question)
+        if not embedding:
+            logger.warning("⚠️ Не удалось сгенерировать эмбеддинг для вопроса")
+            return False
+        
+        # Получаем клиент Qdrant
+        client = get_qdrant_client()
+        if not client:
+            logger.warning("⚠️ Qdrant клиент недоступен")
+            return False
+        
+        # Убеждаемся что коллекция существует
+        if not ensure_collection():
+            logger.error("❌ Не удалось создать/проверить коллекцию")
+            return False
+        
+        # Подготавливаем метаданные
+        payload = {
+            "source": "manual_qa",
+            "type": "qa_pair",
+            "question": question,
+            "answer": answer,
+            "text": f"Вопрос: {question}\nОтвет: {answer}",  # Полный текст для поиска
+            "content": answer,  # Ответ для отображения
+            "timestamp": datetime.now().isoformat()
+        }
+        if metadata:
+            payload.update(metadata)
+        
+        # Генерируем ID для точки (детерминированный на основе Q&A)
+        text_hash = hashlib.md5(f"qa_{question}_{answer}".encode()).hexdigest()
+        point_id = int(text_hash[:8], 16)
+        
+        # Добавляем точку в Qdrant
+        client.upsert(
+            collection_name=COLLECTION_NAME,
+            points=[
+                PointStruct(
+                    id=point_id,
+                    vector=embedding,
+                    payload=payload
+                )
+            ]
+        )
+        
+        logger.info(f"✅ Q&A пара индексирована в Qdrant (point_id={point_id})")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка индексации Q&A пары в Qdrant: {e}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        return False
+
+
+async def index_qa_to_qdrant_async(
+    question: str, 
+    answer: str, 
+    metadata: Optional[Dict[str, Any]] = None
+) -> bool:
+    """
+    Асинхронная версия индексации Q&A пары
+    """
+    if not question or not answer or not question.strip() or not answer.strip():
+        logger.warning("⚠️ Вопрос и ответ не могут быть пустыми")
+        return False
+    
+    try:
+        # Генерируем эмбеддинг асинхронно
+        embedding = await generate_embedding_async(question)
+        if not embedding:
+            logger.warning("⚠️ Не удалось сгенерировать эмбеддинг для вопроса")
+            return False
+        
+        # Получаем клиент Qdrant
+        client = get_qdrant_client()
+        if not client:
+            logger.warning("⚠️ Qdrant клиент недоступен")
+            return False
+        
+        # Убеждаемся что коллекция существует
+        if not ensure_collection():
+            logger.error("❌ Не удалось создать/проверить коллекцию")
+            return False
+        
+        # Подготавливаем метаданные
+        payload = {
+            "source": "manual_qa",
+            "type": "qa_pair",
+            "question": question,
+            "answer": answer,
+            "text": f"Вопрос: {question}\nОтвет: {answer}",
+            "content": answer,
+            "timestamp": datetime.now().isoformat()
+        }
+        if metadata:
+            payload.update(metadata)
+        
+        # Генерируем ID для точки
+        text_hash = hashlib.md5(f"qa_{question}_{answer}".encode()).hexdigest()
+        point_id = int(text_hash[:8], 16)
+        
+        # Добавляем точку в Qdrant (синхронный вызов в executor)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: client.upsert(
+                collection_name=COLLECTION_NAME,
+                points=[
+                    PointStruct(
+                        id=point_id,
+                        vector=embedding,
+                        payload=payload
+                    )
+                ]
+            )
+        )
+        
+        logger.info(f"✅ Q&A пара индексирована в Qdrant async (point_id={point_id})")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка индексации Q&A пары async: {e}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        return False
+
+
+async def index_document_chunks_to_qdrant(
+    chunks: List[str],
+    file_name: str,
+    doc_id: str,
+    user_id: Optional[str] = None,
+    username: Optional[str] = None,
+    project_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Индексация чанков документа в Qdrant (коллекция 'data')
+    
+    Args:
+        chunks: Список текстовых чанков
+        file_name: Имя файла
+        doc_id: ID документа
+        user_id: ID пользователя (опционально)
+        username: Username пользователя (опционально)
+        project_id: ID проекта (опционально)
+    
+    Returns:
+        Словарь с результатом: {"success": bool, "chunks_count": int, "error": str}
+    """
+    try:
+        client = get_qdrant_client()
+        if not client:
+            return {"success": False, "error": "Qdrant клиент недоступен"}
+        
+        if not ensure_collection():
+            return {"success": False, "error": "Не удалось создать коллекцию"}
+        
+        points = []
+        batch_size = 10
+        total_indexed = 0
+        
+        for batch_start in range(0, len(chunks), batch_size):
+            batch_end = min(batch_start + batch_size, len(chunks))
+            batch_chunks = chunks[batch_start:batch_end]
+            
+            logger.info(f"📊 Обрабатываю чанки {batch_start + 1}-{batch_end} из {len(chunks)}")
+            
+            # Генерируем эмбеддинги для батча параллельно
+            embedding_tasks = [generate_embedding_async(chunk) for chunk in batch_chunks]
+            embeddings = await asyncio.gather(*embedding_tasks, return_exceptions=True)
+            
+            # Создаем точки для батча
+            batch_points = []
+            for i, (chunk, embedding) in enumerate(zip(batch_chunks, embeddings)):
+                if isinstance(embedding, Exception) or embedding is None:
+                    logger.warning(f"⚠️ Пропуск чанка {batch_start + i}: ошибка эмбеддинга")
+                    continue
+                
+                chunk_index = batch_start + i
+                chunk_id = f"{doc_id}_chunk_{chunk_index}"
+                
+                # Генерируем числовой ID
+                point_id = abs(hash(chunk_id)) % (10 ** 10)
+                
+                payload = {
+                    "source": "document_upload",
+                    "type": "document_chunk",
+                    "text": chunk,
+                    "content": chunk,
+                    "file_name": file_name,
+                    "title": file_name,
+                    "doc_id": doc_id,
+                    "chunk_index": chunk_index,
+                    "total_chunks": len(chunks),
+                    "chunk_id": chunk_id,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                if user_id:
+                    payload["user_id"] = user_id
+                if username:
+                    payload["uploaded_by"] = username
+                if project_id:
+                    payload["project_id"] = project_id
+                
+                batch_points.append(
+                    PointStruct(
+                        id=point_id,
+                        vector=embedding,
+                        payload=payload
+                    )
+                )
+            
+            # Загружаем батч в Qdrant
+            if batch_points:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: client.upsert(
+                        collection_name=COLLECTION_NAME,
+                        points=batch_points
+                    )
+                )
+                total_indexed += len(batch_points)
+                logger.info(f"✅ Загружено {len(batch_points)} чанков в Qdrant")
+        
+        logger.info(f"✅ Всего индексировано {total_indexed} чанков из документа {file_name}")
+        
+        return {
+            "success": True,
+            "chunks_count": total_indexed,
+            "doc_id": doc_id
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка индексации документа в Qdrant: {e}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        return {"success": False, "error": str(e)}
+
+
+async def search_qdrant(
+    query: str,
+    limit: int = 5,
+    score_threshold: float = None,
+    user_id: Optional[str] = None,
+    project_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    # Используем порог из конфигурации если не указан
+    if score_threshold is None:
+        score_threshold = SCORE_THRESHOLD
+    """
+    Поиск в Qdrant по запросу
+    
+    Args:
+        query: Поисковый запрос
+        limit: Количество результатов
+        score_threshold: Минимальный порог релевантности
+        user_id: Фильтр по пользователю (опционально)
+        project_id: Фильтр по проекту (опционально)
+    
+    Returns:
+        Список найденных документов
+    """
+    try:
+        client = get_qdrant_client()
+        if not client:
+            logger.warning("⚠️ Qdrant клиент недоступен")
+            return []
+        
+        # Генерируем эмбеддинг для запроса
+        query_embedding = await generate_embedding_async(query)
+        if not query_embedding:
+            logger.warning("⚠️ Не удалось создать эмбеддинг для запроса")
+            return []
+        
+        # Выполняем поиск
+        search_results = client.query_points(
+            collection_name=COLLECTION_NAME,
+            query=query_embedding,
+            limit=limit
+        )
+        
+        # Обрабатываем результаты
+        results = []
+        for point in search_results.points:
+            payload = point.payload if hasattr(point, 'payload') else {}
+            score = point.score if hasattr(point, 'score') else 0.0
+            
+            if score < score_threshold:
+                continue
+            
+            # Фильтр по user_id если указан
+            if user_id and payload.get('user_id') and payload.get('user_id') != user_id:
+                continue
+            
+            # Фильтр по project_id если указан
+            if project_id and payload.get('project_id') and payload.get('project_id') != project_id:
+                continue
+            
+            results.append({
+                "text": payload.get("text") or payload.get("content", ""),
+                "file_name": payload.get("file_name") or payload.get("title") or payload.get("source", "Документ"),
+                "score": score,
+                "type": payload.get("type", "unknown"),
+                "question": payload.get("question"),
+                "answer": payload.get("answer"),
+                "payload": payload
+            })
+        
+        logger.info(f"✅ Найдено {len(results)} результатов для запроса: '{query[:50]}'")
+        return results
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка поиска в Qdrant: {e}")
+        return []
+
+
+def parse_qa_message(text: str) -> Optional[Dict[str, str]]:
+    """
+    Парсинг сообщения в формате Q&A
+    
+    Поддерживаемые форматы:
+    - Q: вопрос A: ответ
+    - Q: вопрос\nA: ответ
+    - В: вопрос О: ответ (русский)
+    - Вопрос: ... Ответ: ...
+    
+    Returns:
+        {"question": str, "answer": str} или None если не Q&A формат
+    """
+    if not text:
+        return None
+    
+    # Паттерны для распознавания Q&A
+    patterns = [
+        # Q: ... A: ...
+        re.compile(r'Q:\s*(.+?)\s*A:\s*(.+?)$', re.DOTALL | re.IGNORECASE),
+        # В: ... О: ... (русский)
+        re.compile(r'В:\s*(.+?)\s*О:\s*(.+?)$', re.DOTALL | re.IGNORECASE),
+        # Вопрос: ... Ответ: ...
+        re.compile(r'Вопрос:\s*(.+?)\s*Ответ:\s*(.+?)$', re.DOTALL | re.IGNORECASE),
+        # Question: ... Answer: ...
+        re.compile(r'Question:\s*(.+?)\s*Answer:\s*(.+?)$', re.DOTALL | re.IGNORECASE),
+    ]
+    
+    for pattern in patterns:
+        match = pattern.search(text)
+        if match:
+            question = match.group(1).strip()
+            answer = match.group(2).strip()
+            
+            if question and answer:
+                return {
+                    "question": question,
+                    "answer": answer
+                }
+    
+    return None
+
+
+# Экспортируем функции
+__all__ = [
+    'get_qdrant_client',
+    'ensure_collection',
+    'generate_embedding',
+    'generate_embedding_async',
+    'index_qa_to_qdrant',
+    'index_qa_to_qdrant_async',
+    'index_document_chunks_to_qdrant',
+    'search_qdrant',
+    'parse_qa_message',
+    'COLLECTION_NAME',
+    'EMBEDDING_DIMENSION'
+]

@@ -1,5 +1,8 @@
 """
 Обработчики загрузки документов в Telegram бот
+Поддерживает:
+- Загрузку PDF, Excel, Word, TXT файлов
+- Индексацию документов в Qdrant для RAG
 """
 from aiogram import Dispatcher, F
 from aiogram.types import Message, Document as TelegramDocument
@@ -9,6 +12,7 @@ import logging
 import os
 import tempfile
 from pathlib import Path
+import uuid as uuid_module
 
 from app.core.database import AsyncSessionLocal
 from app.bot.handlers.auth_handler import AuthStates
@@ -16,6 +20,163 @@ from app.models.document import Document
 from app.tasks.document_tasks import process_document_task
 
 logger = logging.getLogger(__name__)
+
+
+async def extract_text_from_file(file_path: str, file_extension: str) -> str:
+    """Извлечение текста из различных форматов файлов"""
+    try:
+        if file_extension == 'pdf':
+            # PDF
+            from PyPDF2 import PdfReader
+            reader = PdfReader(file_path)
+            text = ""
+            for page in reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n\n"
+            return text
+        
+        elif file_extension == 'docx':
+            # Word документы
+            try:
+                import docx
+                doc = docx.Document(file_path)
+                text = ""
+                for para in doc.paragraphs:
+                    text += para.text + "\n"
+                return text
+            except ImportError:
+                logger.warning("python-docx not installed, trying alternative method")
+                return ""
+        
+        elif file_extension in ['xlsx', 'xls']:
+            # Excel файлы
+            try:
+                import pandas as pd
+                df = pd.read_excel(file_path)
+                return df.to_string()
+            except ImportError:
+                logger.warning("pandas/openpyxl not installed")
+                return ""
+        
+        elif file_extension == 'txt' or file_extension == 'md':
+            # Текстовые файлы
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        
+        else:
+            logger.warning(f"Unsupported file format: {file_extension}")
+            return ""
+            
+    except Exception as e:
+        logger.error(f"Error extracting text from {file_extension} file: {e}")
+        return ""
+
+
+async def index_document_to_qdrant(
+    text_content: str,
+    file_name: str,
+    user_id: str,
+    username: str,
+    project_id: str = None
+) -> dict:
+    """
+    Индексация документа в Qdrant (коллекция 'data')
+    
+    Args:
+        text_content: Текст документа
+        file_name: Имя файла
+        user_id: ID пользователя Telegram
+        username: Username пользователя
+        project_id: ID проекта (опционально)
+    
+    Returns:
+        {"success": bool, "chunks_count": int, "error": str}
+    """
+    try:
+        from app.services.rag.qdrant_helper import index_document_chunks_to_qdrant
+        
+        # Создаем уникальный ID для документа
+        doc_id = str(uuid_module.uuid4())
+        
+        # Разбиваем текст на чанки
+        try:
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+        except ImportError:
+            # Fallback на простой сплиттер
+            class RecursiveCharacterTextSplitter:
+                def __init__(self, chunk_size=500, chunk_overlap=50, separators=None):
+                    self.chunk_size = chunk_size
+                    self.chunk_overlap = chunk_overlap
+                    self.separators = separators or ["\n\n", "\n", ". ", " ", ""]
+                
+                def split_text(self, text):
+                    chunks = []
+                    current_chunk = ""
+                    
+                    for sep in self.separators:
+                        if sep in text:
+                            parts = text.split(sep)
+                            for part in parts:
+                                if len(current_chunk) + len(part) + len(sep) <= self.chunk_size:
+                                    current_chunk += part + sep
+                                else:
+                                    if current_chunk:
+                                        chunks.append(current_chunk.strip())
+                                    current_chunk = part + sep
+                            break
+                    
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    
+                    # Если нет чанков, разбиваем по размеру
+                    if not chunks:
+                        for i in range(0, len(text), self.chunk_size - self.chunk_overlap):
+                            chunk = text[i:i + self.chunk_size]
+                            if chunk.strip():
+                                chunks.append(chunk.strip())
+                    
+                    return chunks
+        
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=500,
+            chunk_overlap=50,
+            separators=["\n\n", "\n", ". ", " ", ""]
+        )
+        
+        chunks = text_splitter.split_text(text_content)
+        
+        # Фильтруем короткие чанки
+        chunks = [chunk for chunk in chunks if len(chunk.strip()) >= 10]
+        
+        logger.info(f"📄 Создано {len(chunks)} чанков из документа {file_name}")
+        
+        if not chunks:
+            return {
+                "success": False,
+                "error": "Не удалось извлечь текст из документа"
+            }
+        
+        # Индексируем чанки в Qdrant
+        result = await index_document_chunks_to_qdrant(
+            chunks=chunks,
+            file_name=file_name,
+            doc_id=doc_id,
+            user_id=user_id,
+            username=username,
+            project_id=project_id
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка индексации документа в Qdrant: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 
 async def handle_document(message: Message, state: FSMContext):
@@ -109,7 +270,7 @@ async def handle_document(message: Message, state: FSMContext):
             with open(temp_path, 'wb') as f:
                 f.write(file_content)
             
-            # Запускаем обработку через Celery
+            # Запускаем обработку через Celery (для PostgreSQL)
             task_result = process_document_task.delay(
                 str(document.id),
                 str(project_id),
@@ -120,14 +281,77 @@ async def handle_document(message: Message, state: FSMContext):
             
             logger.info(f"[TELEGRAM UPLOAD] Celery task created: {task_result.id} for document {document.id}")
             
-            await processing_msg.edit_text(
-                f"✅ Файл загружен!\n\n"
-                f"📄 Название: {file_name}\n"
-                f"📊 Тип: {file_type.upper()}\n"
-                f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
-                f"⏳ Обработка документа начата. Это может занять некоторое время.\n"
-                f"Используйте /documents для просмотра списка документов."
-            )
+            # Также индексируем документ в Qdrant для RAG
+            try:
+                # Извлекаем текст из файла для Qdrant
+                text_content = await extract_text_from_file(str(temp_path), file_type)
+                
+                if text_content and text_content.strip():
+                    # Получаем данные пользователя
+                    telegram_user_id = str(message.from_user.id)
+                    telegram_username = message.from_user.username or "unknown"
+                    
+                    # Индексируем в Qdrant
+                    qdrant_result = await index_document_to_qdrant(
+                        text_content=text_content,
+                        file_name=file_name,
+                        user_id=telegram_user_id,
+                        username=telegram_username,
+                        project_id=str(project_id)
+                    )
+                    
+                    if qdrant_result.get("success"):
+                        chunks_count = qdrant_result.get("chunks_count", 0)
+                        logger.info(f"[TELEGRAM UPLOAD] ✅ Document indexed in Qdrant: {chunks_count} chunks")
+                        
+                        await processing_msg.edit_text(
+                            f"✅ Файл загружен и индексирован!\n\n"
+                            f"📄 Название: {file_name}\n"
+                            f"📊 Тип: {file_type.upper()}\n"
+                            f"📏 Размер: {file_size / 1024:.1f} KB\n"
+                            f"🔍 Чанков в RAG: {chunks_count}\n\n"
+                            f"⏳ Полная обработка документа продолжается в фоне.\n"
+                            f"📚 Документ уже доступен для поиска!\n"
+                            f"Используйте /documents для просмотра списка документов."
+                        )
+                    else:
+                        error_msg = qdrant_result.get("error", "Unknown error")
+                        logger.warning(f"[TELEGRAM UPLOAD] ⚠️ Qdrant indexing failed: {error_msg}")
+                        
+                        await processing_msg.edit_text(
+                            f"✅ Файл загружен!\n\n"
+                            f"📄 Название: {file_name}\n"
+                            f"📊 Тип: {file_type.upper()}\n"
+                            f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
+                            f"⏳ Обработка документа начата.\n"
+                            f"⚠️ Индексация в RAG будет выполнена позже.\n"
+                            f"Используйте /documents для просмотра списка документов."
+                        )
+                else:
+                    logger.warning(f"[TELEGRAM UPLOAD] ⚠️ No text extracted from document for Qdrant")
+                    await processing_msg.edit_text(
+                        f"✅ Файл загружен!\n\n"
+                        f"📄 Название: {file_name}\n"
+                        f"📊 Тип: {file_type.upper()}\n"
+                        f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
+                        f"⏳ Обработка документа начата. Это может занять некоторое время.\n"
+                        f"Используйте /documents для просмотра списка документов."
+                    )
+                    
+            except Exception as qdrant_error:
+                logger.error(f"[TELEGRAM UPLOAD] ❌ Qdrant indexing error: {qdrant_error}")
+                import traceback
+                logger.error(traceback.format_exc())
+                
+                # Всё равно показываем успешную загрузку (Celery обработает позже)
+                await processing_msg.edit_text(
+                    f"✅ Файл загружен!\n\n"
+                    f"📄 Название: {file_name}\n"
+                    f"📊 Тип: {file_type.upper()}\n"
+                    f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
+                    f"⏳ Обработка документа начата. Это может занять некоторое время.\n"
+                    f"Используйте /documents для просмотра списка документов."
+                )
     
     except Exception as e:
         logger.error(f"[TELEGRAM UPLOAD] Error uploading document: {e}", exc_info=True)

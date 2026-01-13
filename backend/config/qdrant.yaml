@@ -1,9 +1,15 @@
 # Конфигурация Qdrant
+# Railway URL: https://qdrant-production-ad0b.up.railway.app
 qdrant:
   host: "${QDRANT_HOST}"
   port: "${QDRANT_PORT:-6333}"
-  url: "${QDRANT_URL}"  # Альтернатива host+port, если задан полный URL
+  url: "${QDRANT_URL:-https://qdrant-production-ad0b.up.railway.app}"  # Railway Qdrant URL
   api_key: "${QDRANT_API_KEY}"
-  collection_name: "hr2137_bot_knowledge_base"
-  target_dimension: 1536
+  collection_name: "data"  # Коллекция для RAG данных (Q&A и документы)
+  target_dimension: 1536  # Размерность эмбеддингов text-embedding-3-small
   default_limit: 5
+  
+  # Настройки поиска
+  search:
+    score_threshold: 0.3  # Минимальный порог релевантности
+    use_hybrid: false  # Simple Single embedding (не Hybrid Search)

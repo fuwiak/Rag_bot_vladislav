@@ -1,13 +1,23 @@
 """
 Сохранение и поиск векторов в Qdrant
+Использует конфигурацию из config/qdrant.yaml с fallback на settings
 """
 from typing import List, Dict, Any, Optional
 from uuid import UUID, uuid4
 import logging
+from pathlib import Path
 from qdrant_client.models import PointStruct, Filter, FieldCondition, MatchValue, VectorParams, Distance
 
 from app.vector_db.qdrant_client import qdrant_client
 from app.core.config import settings
+
+# Импортируем загрузчик конфигурации
+try:
+    from config.config_loader import get_qdrant_config_value
+except ImportError:
+    # Fallback если config_loader не доступен
+    def get_qdrant_config_value(key: str, default=None, base_path=None):
+        return default
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +40,21 @@ class VectorStore:
             logger.error(f"Error checking collection existence {collection_name}: {e}", exc_info=True)
             return False
     
-    async def ensure_collection(self, collection_name: str, vector_size: int = 1536) -> bool:
+    async def ensure_collection(self, collection_name: str, vector_size: int = None) -> bool:
         """Убедиться, что коллекция существует, создать если нет"""
         try:
             if await self.collection_exists(collection_name):
                 logger.debug(f"Collection {collection_name} already exists")
                 return True
+            
+            # Если vector_size не указан, используем значение из конфига
+            if vector_size is None:
+                backend_dir = Path(__file__).parent.parent.parent
+                vector_size = get_qdrant_config_value(
+                    "target_dimension",
+                    default=settings.EMBEDDING_DIMENSION,
+                    base_path=backend_dir
+                )
             
             # Создаем коллекцию
             logger.info(f"Creating collection {collection_name} with vector size {vector_size}")

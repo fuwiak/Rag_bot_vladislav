@@ -47,6 +47,7 @@ langgraph>=0.2.0
 langchain>=0.2.0
 langchain-core>=0.2.0
 langchain-community>=0.2.0
+langchain-text-splitters>=0.2.0  # Text splitting for document chunking
 # Uwaga: grpcio jest wymagane przez qdrant-client, ale używamy tylko HTTP API (prefer_grpc=False)
 # Aby przyspieszyć instalację, użyj pre-built wheels: pip install --only-binary :all: grpcio grpcio-tools
 

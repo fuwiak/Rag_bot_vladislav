@@ -1,5 +1,8 @@
 """
 Обработчики вопросов пользователей
+Поддерживает:
+- Обычные вопросы через RAG
+- Q&A пары в формате "Q: ... A: ..." для добавления в базу знаний
 """
 from aiogram import Dispatcher, F
 from aiogram.types import Message
@@ -9,6 +12,94 @@ from uuid import UUID
 from app.core.database import AsyncSessionLocal
 from app.bot.handlers.auth_handler import AuthStates
 from app.services.rag_service import RAGService
+
+
+async def handle_qa_indexing(message: Message, state: FSMContext) -> bool:
+    """
+    Проверяет и обрабатывает сообщение в формате Q&A
+    
+    Поддерживаемые форматы:
+    - Q: вопрос A: ответ
+    - Q: вопрос\nA: ответ
+    - В: вопрос О: ответ (русский)
+    - Вопрос: ... Ответ: ...
+    
+    Returns:
+        True если сообщение было Q&A и успешно обработано, False иначе
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    text = message.text
+    if not text:
+        return False
+    
+    try:
+        from app.services.rag.qdrant_helper import parse_qa_message, index_qa_to_qdrant_async
+        
+        # Проверяем, является ли сообщение Q&A парой
+        qa_data = parse_qa_message(text)
+        
+        if not qa_data:
+            return False
+        
+        question = qa_data["question"]
+        answer = qa_data["answer"]
+        
+        logger.info(f"📝 Обнаружена Q&A пара для добавления в RAG: Q='{question[:50]}...', A='{answer[:50]}...'")
+        
+        # Получаем данные пользователя
+        user_id = message.from_user.id
+        username = message.from_user.username or "unknown"
+        
+        # Получаем project_id из состояния
+        data = await state.get_data()
+        project_id = data.get("project_id")
+        
+        # Отправляем статус обработки
+        status_msg = await message.answer("⏳ Добавляю Q&A пару в базу знаний...")
+        
+        # Индексируем Q&A пару в Qdrant
+        success = await index_qa_to_qdrant_async(
+            question=question,
+            answer=answer,
+            metadata={
+                "user_id": str(user_id),
+                "username": username,
+                "added_via": "telegram_bot",
+                "project_id": project_id
+            }
+        )
+        
+        # Удаляем статус сообщение
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        
+        if success:
+            response = (
+                f"✅ Q&A пара добавлена в базу знаний!\n\n"
+                f"❓ **Вопрос:** {question}\n\n"
+                f"💡 **Ответ:** {answer}"
+            )
+            await message.answer(response, parse_mode="Markdown")
+            logger.info(f"✅ Q&A пара успешно индексирована от пользователя {username}")
+        else:
+            await message.answer("❌ Ошибка при добавлении Q&A пары в базу знаний. Попробуйте позже.")
+            logger.error(f"❌ Не удалось индексировать Q&A пару от пользователя {username}")
+        
+        return True
+        
+    except ImportError as e:
+        logger.error(f"❌ Ошибка импорта qdrant_helper: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Ошибка обработки Q&A пары: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        await message.answer(f"❌ Ошибка: {str(e)}")
+        return True  # Возвращаем True чтобы не обрабатывать как обычный вопрос
 
 
 async def handle_question(message: Message, state: FSMContext, project_id: str = None):
@@ -34,6 +125,11 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     if message.text and message.text.startswith('/'):
         # Это команда, пропускаем обработку
         logger.info(f"[QUESTION HANDLER] Skipping command: {message.text}")
+        return
+    
+    # Проверяем, является ли сообщение Q&A парой для индексации
+    if await handle_qa_indexing(message, state):
+        logger.info(f"[QUESTION HANDLER] Message was Q&A pair, skipping RAG processing")
         return
     
     # Получение user_id из состояния

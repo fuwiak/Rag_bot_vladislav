@@ -603,6 +603,7 @@ async def cmd_describe(message: Message, state: FSMContext):
         )
         
         try:
+            description_text = None
             # Пробуем использовать LangGraph workflow
             try:
                 from app.services.langgraph_rag_workflow import (
@@ -653,12 +654,12 @@ async def cmd_describe(message: Message, state: FSMContext):
                 logger.warning(f"LangGraph describe failed: {langgraph_error}, using fallback")
                 # Fallback на обычный RAG
                 from app.services.rag_service import RAGService
-            rag_service = RAGService(db)
-            
-            question = "Опиши кратко содержание всех документов проекта. Что в них содержится? Какие основные темы?"
-            answer = await rag_service.generate_answer(user_id, question)
-            
-            await processing_msg.delete()
+                rag_service = RAGService(db)
+                
+                question = "Опиши кратко содержание всех документов проекта. Что в них содержится? Какие основные темы?"
+                answer = await rag_service.generate_answer(user_id, question)
+                
+                await processing_msg.delete()
                 description_text = f"📄 <b>Описание содержания документов проекта:</b>\n\n{answer}"
             
             if description_text:
