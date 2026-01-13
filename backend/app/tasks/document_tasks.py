@@ -1,5 +1,7 @@
 """
 Celery задачи для обработки документов
+Поддерживает фоновую загрузку в PostgreSQL и Qdrant
+Использует Redis для кэширования промежуточных результатов
 """
 import os
 import gc
@@ -10,6 +12,11 @@ from app.celery_app import celery_app
 from app.core.database import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
+
+# Конфигурация для больших документов
+LARGE_DOCUMENT_THRESHOLD = 500_000  # 500KB текста
+MAX_BATCH_SIZE_LARGE = 5  # Меньший батч для больших документов
+MAX_BATCH_SIZE_NORMAL = 10  # Обычный размер батча
 
 
 class DatabaseTask(Task):
@@ -352,4 +359,390 @@ def generate_document_summary_task(self, document_id: str):
     except Exception as e:
         logger.error(f"[Celery] Error generating summary for document {document_id}: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
+
+
+@celery_app.task(bind=True, name='app.tasks.document_tasks.process_large_document_with_langgraph')
+def process_large_document_with_langgraph(
+    self, 
+    document_id: str, 
+    project_id: str, 
+    file_path: str, 
+    filename: str, 
+    file_type: str
+):
+    """
+    Celery задача для обработки большого документа с использованием LangGraph
+    Оптимизировано для PDF >100 страниц
+    """
+    import asyncio
+    import psutil
+    
+    process = psutil.Process(os.getpid())
+    start_memory = process.memory_info().rss / 1024 / 1024
+    logger.info(f"[Celery LangGraph] Starting processing document {document_id} ({filename}), memory: {start_memory:.2f}MB")
+    
+    file_content = None
+    try:
+        # Проверяем размер файла
+        if not os.path.exists(file_path):
+            logger.error(f"[Celery LangGraph] File not found: {file_path}")
+            return {"status": "error", "message": f"File not found: {file_path}"}
+        
+        file_size = os.path.getsize(file_path) / 1024 / 1024
+        logger.info(f"[Celery LangGraph] Reading file {file_path}, size: {file_size:.2f}MB")
+        
+        # Читаем файл
+        with open(file_path, 'rb') as f:
+            file_content = f.read()
+        
+        # Удаляем временный файл
+        try:
+            os.unlink(file_path)
+            logger.info(f"[Celery LangGraph] Temp file deleted: {file_path}")
+        except Exception as e:
+            logger.warning(f"[Celery LangGraph] Не удалось удалить временный файл {file_path}: {e}")
+        
+        # Запускаем обработку
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                process_large_document_async_langgraph(
+                    UUID(document_id),
+                    UUID(project_id),
+                    file_content,
+                    filename,
+                    file_type
+                )
+            )
+            logger.info(f"[Celery LangGraph] Document {document_id} processed successfully")
+            return {"status": "success", "document_id": document_id}
+        finally:
+            loop.close()
+            
+    except Exception as e:
+        logger.error(f"[Celery LangGraph] Error processing document {document_id}: {e}", exc_info=True)
+        if file_path and os.path.exists(file_path):
+            try:
+                os.unlink(file_path)
+            except:
+                pass
+        return {"status": "error", "message": str(e)}
+    finally:
+        if file_content is not None:
+            del file_content
+        gc.collect()
+        
+        final_memory = process.memory_info().rss / 1024 / 1024
+        logger.info(f"[Celery LangGraph] Processing complete, final memory: {final_memory:.2f}MB")
+
+
+async def process_large_document_async_langgraph(
+    document_id: UUID, 
+    project_id: UUID, 
+    file_content: bytes, 
+    filename: str, 
+    file_type: str
+):
+    """
+    Асинхронная обработка большого документа с LangGraph
+    Использует иерархическое разбиение для больших PDF
+    """
+    import gc
+    import psutil
+    
+    process = psutil.Process(os.getpid())
+    
+    async with AsyncSessionLocal() as db:
+        from app.documents.parser import DocumentParser
+        from app.documents.advanced_chunker import AdvancedChunker
+        from app.models.document import Document, DocumentChunk
+        from sqlalchemy import select
+        
+        # Получаем документ
+        result = await db.execute(select(Document).where(Document.id == document_id))
+        document = result.scalar_one_or_none()
+        if not document:
+            logger.error(f"[Celery LangGraph] Document {document_id} not found")
+            return
+        
+        # Парсинг документа
+        parser = DocumentParser()
+        try:
+            text = await parser.parse(file_content, file_type)
+        except Exception as e:
+            logger.error(f"[Celery LangGraph] Ошибка парсинга: {e}")
+            document.content = f"Ошибка обработки: {str(e)[:200]}"
+            await db.commit()
+            return
+        
+        # Определяем, большой ли документ
+        is_large_document = len(text) > LARGE_DOCUMENT_THRESHOLD
+        logger.info(f"[Celery LangGraph] Document size: {len(text)} chars, is_large: {is_large_document}")
+        
+        # Сохраняем контент
+        MAX_CONTENT_SIZE = 2_000_000
+        if len(text) > MAX_CONTENT_SIZE:
+            document.content = text[:MAX_CONTENT_SIZE] + f"\n\n[... документ обрезан, всего {len(text)} символов ...]"
+        else:
+            document.content = text
+        
+        await db.commit()
+        await db.refresh(document)
+        logger.info(f"[Celery LangGraph] ✅ Document content saved: {len(document.content)} chars")
+        
+        # Используем advanced chunker с иерархическим разбиением для больших документов
+        advanced_chunker = AdvancedChunker(
+            default_chunk_size=1500 if is_large_document else 800,
+            default_overlap=300 if is_large_document else 200,
+            min_chunk_size=100,
+            max_chunk_size=3000 if is_large_document else 2000
+        )
+        
+        if is_large_document:
+            # Для больших документов используем иерархическое разбиение
+            chunk_result = await advanced_chunker.chunk_large_document(
+                text=text,
+                file_type=file_type,
+                file_content=file_content if file_type == "pdf" else None,
+                filename=filename,
+                use_hierarchical=True
+            )
+            chunks = [c['text'] for c in chunk_result.get('chunks', [])]
+            sections = chunk_result.get('sections', [])
+            logger.info(f"[Celery LangGraph] Hierarchical chunking: {len(chunks)} chunks, {len(sections)} sections")
+        else:
+            # Для обычных документов используем стандартный chunking
+            chunks = await advanced_chunker.chunk_document(
+                text=text,
+                file_type=file_type,
+                file_content=file_content if file_type == "pdf" else None,
+                filename=filename
+            )
+        
+        if not chunks:
+            logger.warning(f"[Celery LangGraph] No chunks generated for document {document_id}")
+            return
+        
+        logger.info(f"[Celery LangGraph] Document split into {len(chunks)} chunks")
+        
+        # Создание эмбеддингов и сохранение в Qdrant
+        from app.services.embedding_service import EmbeddingService
+        from app.vector_db.vector_store import VectorStore
+        from qdrant_client.models import PointStruct
+        
+        embedding_service = EmbeddingService()
+        vector_store = VectorStore()
+        
+        # Определяем размер батча в зависимости от размера документа
+        batch_size = MAX_BATCH_SIZE_LARGE if is_large_document else MAX_BATCH_SIZE_NORMAL
+        batch_points = []
+        batch_chunks = []
+        
+        for chunk_index, chunk_text in enumerate(chunks):
+            try:
+                chunk_memory_before = process.memory_info().rss / 1024 / 1024
+                
+                # Создаем эмбеддинг
+                try:
+                    embedding = await embedding_service.create_embedding(chunk_text)
+                except Exception as e:
+                    logger.error(f"[Celery LangGraph] Ошибка создания эмбеддинга для чанка {chunk_index}: {e}")
+                    continue
+                
+                # Сохраняем чанк в БД
+                MAX_CHUNK_SIZE = 10_000
+                chunk_text_to_save = chunk_text[:MAX_CHUNK_SIZE] if len(chunk_text) > MAX_CHUNK_SIZE else chunk_text
+                
+                chunk = DocumentChunk(
+                    document_id=document_id,
+                    chunk_text=chunk_text_to_save,
+                    chunk_index=chunk_index
+                )
+                db.add(chunk)
+                await db.flush()
+                
+                # Добавляем в батч для Qdrant
+                point_id = chunk.id
+                batch_points.append(PointStruct(
+                    id=str(point_id),
+                    vector=embedding,
+                    payload={
+                        "document_id": str(document_id),
+                        "chunk_id": str(chunk.id),
+                        "chunk_index": chunk_index,
+                        "filename": filename,
+                        "chunk_text": chunk_text[:500]
+                    }
+                ))
+                batch_chunks.append((chunk, point_id))
+                
+                # Сохраняем батч
+                if len(batch_points) >= batch_size or chunk_index == len(chunks) - 1:
+                    try:
+                        collection_name = f"project_{project_id}"
+                        await vector_store.ensure_collection(collection_name, len(embedding))
+                        vector_store.client.upsert(
+                            collection_name=collection_name,
+                            points=batch_points
+                        )
+                        
+                        for batch_chunk, batch_point_id in batch_chunks:
+                            batch_chunk.qdrant_point_id = batch_point_id
+                        await db.flush()
+                        
+                        logger.info(f"[Celery LangGraph] ✅ Batch upserted {len(batch_points)} chunks (up to {chunk_index})")
+                    except Exception as e:
+                        logger.error(f"[Celery LangGraph] Ошибка batch upsert в Qdrant: {e}")
+                    
+                    batch_points = []
+                    batch_chunks = []
+                
+                # Логируем прогресс
+                if chunk_index % 20 == 0:
+                    chunk_memory_after = process.memory_info().rss / 1024 / 1024
+                    logger.info(f"[Celery LangGraph] Processed {chunk_index}/{len(chunks)}, memory: {chunk_memory_after:.2f}MB")
+                    gc.collect()
+                
+            except Exception as e:
+                logger.error(f"[Celery LangGraph] Ошибка обработки чанка {chunk_index}: {e}", exc_info=True)
+                continue
+        
+        # Коммитим все чанки
+        await db.commit()
+        
+        # Генерируем summary с использованием LangGraph
+        try:
+            from app.services.document_summary_service import DocumentSummaryService
+            summary_service = DocumentSummaryService(db)
+            
+            if is_large_document:
+                # Для больших документов используем Map-Reduce
+                summary = await summary_service.generate_map_reduce_summary(document_id)
+            else:
+                # Для обычных документов используем LangGraph
+                summary = await summary_service.generate_summary_with_langgraph(document_id)
+            
+            if summary:
+                logger.info(f"[Celery LangGraph] Summary generated for document {document_id}")
+        except Exception as summary_error:
+            logger.warning(f"[Celery LangGraph] Error generating summary: {summary_error}")
+        
+        logger.info(f"[Celery LangGraph] ✅ Document {document_id} processing complete: {len(chunks)} chunks")
+
+
+@celery_app.task(bind=True, name='app.tasks.document_tasks.reindex_document_to_qdrant')
+def reindex_document_to_qdrant(self, document_id: str, project_id: str):
+    """
+    Celery задача для переиндексации документа в Qdrant
+    Полезно для миграции существующих документов из PostgreSQL в Qdrant
+    """
+    import asyncio
+    
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                reindex_document_async(UUID(document_id), UUID(project_id))
+            )
+            logger.info(f"[Celery Reindex] Document {document_id} reindexed successfully")
+            return {"status": "success", "document_id": document_id}
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.error(f"[Celery Reindex] Error reindexing document {document_id}: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+async def reindex_document_async(document_id: UUID, project_id: UUID):
+    """Переиндексация документа из PostgreSQL в Qdrant"""
+    async with AsyncSessionLocal() as db:
+        from app.models.document import Document, DocumentChunk
+        from app.services.embedding_service import EmbeddingService
+        from app.vector_db.vector_store import VectorStore
+        from sqlalchemy import select
+        from qdrant_client.models import PointStruct
+        
+        # Получаем чанки из PostgreSQL
+        result = await db.execute(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == document_id)
+            .order_by(DocumentChunk.chunk_index)
+        )
+        chunks = result.scalars().all()
+        
+        if not chunks:
+            # Если нет чанков, пробуем создать из контента документа
+            doc_result = await db.execute(select(Document).where(Document.id == document_id))
+            document = doc_result.scalar_one_or_none()
+            
+            if document and document.content:
+                from app.documents.chunker import DocumentChunker
+                chunker = DocumentChunker(chunk_size=800, chunk_overlap=200)
+                text_chunks = chunker.chunk_text(document.content)
+                
+                chunks = []
+                for i, text in enumerate(text_chunks):
+                    chunk = DocumentChunk(
+                        document_id=document_id,
+                        chunk_text=text,
+                        chunk_index=i
+                    )
+                    db.add(chunk)
+                    await db.flush()
+                    chunks.append(chunk)
+                
+                await db.commit()
+                logger.info(f"[Reindex] Created {len(chunks)} chunks from document content")
+        
+        if not chunks:
+            logger.warning(f"[Reindex] No chunks found for document {document_id}")
+            return
+        
+        embedding_service = EmbeddingService()
+        vector_store = VectorStore()
+        collection_name = f"project_{project_id}"
+        
+        batch_points = []
+        
+        for chunk in chunks:
+            try:
+                embedding = await embedding_service.create_embedding(chunk.chunk_text)
+                
+                batch_points.append(PointStruct(
+                    id=str(chunk.id),
+                    vector=embedding,
+                    payload={
+                        "document_id": str(document_id),
+                        "chunk_id": str(chunk.id),
+                        "chunk_index": chunk.chunk_index,
+                        "chunk_text": chunk.chunk_text[:500]
+                    }
+                ))
+                
+                # Сохраняем батчами
+                if len(batch_points) >= 20:
+                    await vector_store.ensure_collection(collection_name, len(embedding))
+                    vector_store.client.upsert(
+                        collection_name=collection_name,
+                        points=batch_points
+                    )
+                    logger.info(f"[Reindex] Upserted batch of {len(batch_points)} points")
+                    batch_points = []
+                    
+            except Exception as e:
+                logger.error(f"[Reindex] Error processing chunk {chunk.id}: {e}")
+                continue
+        
+        # Сохраняем оставшиеся точки
+        if batch_points:
+            await vector_store.ensure_collection(collection_name, len(embedding))
+            vector_store.client.upsert(
+                collection_name=collection_name,
+                points=batch_points
+            )
+            logger.info(f"[Reindex] Upserted final batch of {len(batch_points)} points")
+        
+        logger.info(f"[Reindex] Document {document_id} reindexed: {len(chunks)} chunks")
 

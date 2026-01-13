@@ -1,8 +1,9 @@
 """
 Сервис для создания summary документов через LLM
+Поддерживает анализ больших PDF документов с использованием LangGraph
 """
 import logging
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -15,6 +16,43 @@ from app.core.config import settings as app_settings
 from app.core.prompt_config import get_prompt
 
 logger = logging.getLogger(__name__)
+
+
+# === РЕКОМЕНДАЦИИ ПО ИСПОЛЬЗОВАНИЮ МОДЕЛЕЙ ДЛЯ SUMMARY ===
+"""
+РЕКОМЕНДАЦИИ ПО ОБЪЕМУ ТЕКСТА:
+
+1. Для документов до 50 страниц (~100K символов):
+   - Анализируем весь документ целиком
+   - chunk_size: 1500 символов
+   - max_context: 100K символов
+   - Рекомендуемые модели: Claude 3.5 Sonnet, GPT-4 Turbo
+
+2. Для документов 50-200 страниц (~100-400K символов):
+   - Используем стратегию "начало + середина + конец"
+   - Каждая часть ~30K символов
+   - Рекомендуемые модели: Claude 3.5 Sonnet (128K контекст)
+
+3. Для документов 200+ страниц (>400K символов):
+   - Используем иерархическое резюме (Map-Reduce)
+   - Разбиваем на секции, резюмируем каждую, объединяем
+   - Рекомендуемые модели: GPT-4 Turbo, Claude 3.5 Sonnet
+
+ФОРМАТ ПРОМПТОВ ДЛЯ МИНИМАЛЬНЫХ ИСКАЖЕНИЙ:
+
+1. Точность фактов:
+   - "Сохрани точность: цифры, даты, имена собственные"
+   - "Не добавляй информацию, которой нет в документе"
+
+2. Структура:
+   - "Начни с главной темы документа"
+   - "Перечисли ключевые пункты"
+   - "Сделай выводы на основе документа"
+
+3. Параметры генерации:
+   - temperature: 0.1-0.2 (низкая для точности)
+   - max_tokens: 500-1000 (достаточно для полного summary)
+"""
 
 
 class DocumentSummaryService:
@@ -250,4 +288,316 @@ class DocumentSummaryService:
         except Exception as e:
             logger.error(f"Error generating summaries for project {project_id}: {e}", exc_info=True)
             return 0
+    
+    async def generate_summary_with_langgraph(self, document_id: UUID) -> Optional[str]:
+        """
+        Генерирует summary документа с использованием LangGraph workflow
+        Оптимизировано для больших документов
+        
+        Args:
+            document_id: ID документа
+        
+        Returns:
+            Summary документа или None при ошибке
+        """
+        try:
+            from app.services.langgraph_rag_workflow import (
+                LangGraphRAGWorkflow, 
+                QueryType,
+                RAGConfig
+            )
+            
+            # Получаем документ
+            result = await self.db.execute(
+                select(Document).where(Document.id == document_id)
+            )
+            document = result.scalar_one_or_none()
+            
+            if not document:
+                logger.error(f"Document {document_id} not found")
+                return None
+            
+            # Конфигурация для создания summary с минимальными искажениями
+            config = RAGConfig(
+                max_context_tokens=100000,
+                max_output_tokens=1000,
+                chunk_size=2000,
+                chunk_overlap=400,
+                top_k_retrieval=20,
+                temperature=0.1  # Очень низкая для точности
+            )
+            
+            # Запускаем LangGraph workflow
+            rag_workflow = LangGraphRAGWorkflow(self.db, config)
+            result = await rag_workflow.run(
+                query=f"Создай точное резюме документа {document.filename}",
+                query_type=QueryType.SUMMARY,
+                project_id=str(document.project_id),
+                document_id=str(document_id)
+            )
+            
+            summary = result.get('answer', '')
+            
+            if summary:
+                # Сохраняем summary в БД
+                if hasattr(document, 'summary'):
+                    document.summary = summary
+                    await self.db.commit()
+                    await self.db.refresh(document)
+                
+                logger.info(f"LangGraph summary generated for document {document_id}, length: {len(summary)}")
+                return summary
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error generating LangGraph summary for document {document_id}: {e}", exc_info=True)
+            return None
+    
+    async def generate_map_reduce_summary(
+        self, 
+        document_id: UUID,
+        max_chunk_size: int = 30000
+    ) -> Optional[str]:
+        """
+        Генерирует summary очень длинного документа методом Map-Reduce
+        
+        Стратегия:
+        1. Разбиваем документ на большие секции
+        2. Создаем summary для каждой секции (Map)
+        3. Объединяем секционные summaries в финальное (Reduce)
+        
+        Args:
+            document_id: ID документа
+            max_chunk_size: Максимальный размер секции (символов)
+        
+        Returns:
+            Summary документа или None при ошибке
+        """
+        try:
+            # Получаем документ
+            result = await self.db.execute(
+                select(Document).where(Document.id == document_id)
+            )
+            document = result.scalar_one_or_none()
+            
+            if not document or not document.content:
+                logger.error(f"Document {document_id} not found or empty")
+                return None
+            
+            content = document.content
+            content_length = len(content)
+            
+            logger.info(f"[Map-Reduce] Starting for document {document_id}, length: {content_length}")
+            
+            # Если документ небольшой - используем обычный метод
+            if content_length <= max_chunk_size:
+                return await self.generate_summary(document_id)
+            
+            # Разбиваем на секции
+            sections = []
+            for i in range(0, content_length, max_chunk_size):
+                section = content[i:i + max_chunk_size]
+                sections.append(section)
+            
+            logger.info(f"[Map-Reduce] Document split into {len(sections)} sections")
+            
+            # Получаем настройки LLM
+            primary_model, fallback_model = await self._get_llm_models(document.project_id)
+            llm_client = OpenRouterClient(
+                model_primary=primary_model,
+                model_fallback=fallback_model
+            )
+            
+            # Map: Создаем summary для каждой секции
+            section_summaries = []
+            for i, section in enumerate(sections):
+                logger.info(f"[Map-Reduce] Processing section {i+1}/{len(sections)}")
+                
+                map_prompt = f"""Создай краткое резюме следующей части документа ({i+1}/{len(sections)}):
+
+СОДЕРЖИМОЕ:
+{section}
+
+РЕЗЮМЕ ЧАСТИ (100-200 слов):"""
+                
+                messages = [
+                    {"role": "system", "content": "Ты эксперт по созданию точных резюме. Сохраняй все ключевые факты."},
+                    {"role": "user", "content": map_prompt}
+                ]
+                
+                try:
+                    section_summary = await llm_client.chat_completion(
+                        messages=messages,
+                        max_tokens=400,
+                        temperature=0.1
+                    )
+                    section_summaries.append(f"Часть {i+1}: {section_summary.strip()}")
+                except Exception as e:
+                    logger.warning(f"[Map-Reduce] Error summarizing section {i+1}: {e}")
+                    continue
+            
+            if not section_summaries:
+                logger.error("[Map-Reduce] No section summaries generated")
+                return None
+            
+            # Reduce: Объединяем в финальное summary
+            combined_summaries = "\n\n".join(section_summaries)
+            
+            reduce_prompt = f"""На основе резюме частей документа "{document.filename}" создай единое итоговое резюме.
+
+РЕЗЮМЕ ЧАСТЕЙ:
+{combined_summaries}
+
+ТРЕБОВАНИЯ К ИТОГОВОМУ РЕЗЮМЕ:
+1. Длина: 500-1000 символов
+2. Включи ВСЕ ключевые темы из всех частей
+3. Сохрани точность: цифры, даты, имена
+4. Структура: главная тема → ключевые пункты → выводы
+5. Язык: русский
+
+ИТОГОВОЕ РЕЗЮМЕ:"""
+            
+            messages = [
+                {"role": "system", "content": get_prompt("prompts.system.summary_generator")},
+                {"role": "user", "content": reduce_prompt}
+            ]
+            
+            final_summary = await llm_client.chat_completion(
+                messages=messages,
+                max_tokens=800,
+                temperature=0.1
+            )
+            
+            final_summary = final_summary.strip()
+            
+            # Сохраняем в БД
+            if hasattr(document, 'summary'):
+                document.summary = final_summary
+                await self.db.commit()
+                await self.db.refresh(document)
+            
+            logger.info(f"[Map-Reduce] Final summary generated, length: {len(final_summary)}")
+            return final_summary
+            
+        except Exception as e:
+            logger.error(f"[Map-Reduce] Error: {e}", exc_info=True)
+            return None
+    
+    async def _get_llm_models(self, project_id: UUID) -> tuple:
+        """Получает настройки LLM моделей для проекта"""
+        primary_model = None
+        fallback_model = None
+        
+        try:
+            # Получаем проект
+            project_result = await self.db.execute(
+                select(Project).where(Project.id == project_id)
+            )
+            project = project_result.scalar_one_or_none()
+            
+            if project and project.llm_model:
+                primary_model = project.llm_model
+            else:
+                # Глобальные настройки
+                settings_result = await self.db.execute(select(GlobalModelSettings).limit(1))
+                global_settings = settings_result.scalar_one_or_none()
+                if global_settings:
+                    primary_model = global_settings.primary_model_id
+                    fallback_model = global_settings.fallback_model_id
+        except Exception as e:
+            logger.warning(f"Error getting LLM models: {e}")
+        
+        if not primary_model:
+            primary_model = app_settings.OPENROUTER_MODEL_PRIMARY
+        if not fallback_model:
+            fallback_model = app_settings.OPENROUTER_MODEL_FALLBACK
+        
+        return primary_model, fallback_model
+    
+    async def describe_document_content(self, document_id: UUID) -> Optional[str]:
+        """
+        Создает описание содержания документа
+        
+        Args:
+            document_id: ID документа
+        
+        Returns:
+            Описание содержания или None при ошибке
+        """
+        try:
+            from app.services.langgraph_rag_workflow import (
+                LangGraphRAGWorkflow, 
+                QueryType
+            )
+            
+            # Получаем документ
+            result = await self.db.execute(
+                select(Document).where(Document.id == document_id)
+            )
+            document = result.scalar_one_or_none()
+            
+            if not document:
+                return None
+            
+            # Запускаем LangGraph workflow
+            rag_workflow = LangGraphRAGWorkflow(self.db)
+            result = await rag_workflow.run(
+                query=f"Опиши содержание документа {document.filename}",
+                query_type=QueryType.DESCRIPTION,
+                project_id=str(document.project_id),
+                document_id=str(document_id)
+            )
+            
+            return result.get('answer', '')
+            
+        except Exception as e:
+            logger.error(f"Error describing document {document_id}: {e}", exc_info=True)
+            return None
+    
+    async def analyze_document(self, document_id: UUID) -> Optional[Dict[str, Any]]:
+        """
+        Проводит глубокий анализ документа
+        
+        Args:
+            document_id: ID документа
+        
+        Returns:
+            Словарь с анализом: тип, темы, ключевые сущности, структура
+        """
+        try:
+            from app.services.langgraph_rag_workflow import (
+                LangGraphRAGWorkflow, 
+                QueryType
+            )
+            
+            # Получаем документ
+            result = await self.db.execute(
+                select(Document).where(Document.id == document_id)
+            )
+            document = result.scalar_one_or_none()
+            
+            if not document:
+                return None
+            
+            # Запускаем LangGraph workflow
+            rag_workflow = LangGraphRAGWorkflow(self.db)
+            result = await rag_workflow.run(
+                query=f"Проанализируй документ {document.filename}",
+                query_type=QueryType.ANALYSIS,
+                project_id=str(document.project_id),
+                document_id=str(document_id)
+            )
+            
+            return {
+                'document_id': str(document_id),
+                'filename': document.filename,
+                'analysis': result.get('answer', ''),
+                'sources': result.get('sources', []),
+                'metadata': result.get('metadata', {})
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing document {document_id}: {e}", exc_info=True)
+            return None
 

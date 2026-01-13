@@ -534,4 +534,219 @@ class AdvancedChunker:
             start = end
         
         return chunks
+    
+    async def chunk_large_document(
+        self,
+        text: str,
+        file_type: str = "pdf",
+        file_content: Optional[bytes] = None,
+        filename: Optional[str] = None,
+        use_hierarchical: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Разбивает очень большой документ (200+ страниц) с иерархической структурой
+        
+        Args:
+            text: Текст документа
+            file_type: Тип файла
+            file_content: Сырое содержимое файла
+            filename: Имя файла
+            use_hierarchical: Использовать иерархическую структуру
+        
+        Returns:
+            Словарь с чанками и метаданными:
+            - chunks: Список чанков
+            - sections: Список секций верхнего уровня
+            - hierarchy: Иерархическая структура документа
+            - metadata: Метаданные
+        """
+        result = {
+            'chunks': [],
+            'sections': [],
+            'hierarchy': {},
+            'metadata': {
+                'total_length': len(text),
+                'filename': filename,
+                'file_type': file_type,
+                'chunking_strategy': 'hierarchical' if use_hierarchical else 'flat'
+            }
+        }
+        
+        if not text or not text.strip():
+            return result
+        
+        try:
+            # Для PDF пробуем извлечь структуру по страницам
+            if file_type == "pdf" and file_content:
+                pages = await self._extract_pdf_structure(file_content)
+                if pages:
+                    result['metadata']['pages'] = len(pages)
+                    result['hierarchy']['pages'] = pages
+            
+            # Извлекаем секции верхнего уровня
+            sections = self._extract_sections(text)
+            result['sections'] = sections
+            
+            if use_hierarchical and len(sections) > 1:
+                # Иерархическое разбиение: сначала по секциям, потом внутри секций
+                all_chunks = []
+                for i, section in enumerate(sections):
+                    section_chunks = await self.chunk_document(
+                        text=section['content'],
+                        file_type=file_type
+                    )
+                    
+                    # Добавляем метаданные секции к каждому чанку
+                    for j, chunk in enumerate(section_chunks):
+                        all_chunks.append({
+                            'text': chunk,
+                            'section_index': i,
+                            'section_title': section.get('title', f'Секция {i+1}'),
+                            'chunk_index_in_section': j
+                        })
+                
+                result['chunks'] = all_chunks
+                result['metadata']['total_chunks'] = len(all_chunks)
+            else:
+                # Плоское разбиение
+                chunks = await self.chunk_document(
+                    text=text,
+                    file_type=file_type,
+                    file_content=file_content,
+                    filename=filename
+                )
+                result['chunks'] = [{'text': c, 'section_index': 0} for c in chunks]
+                result['metadata']['total_chunks'] = len(chunks)
+            
+            logger.info(f"[LargeDocument] Chunked {filename}: {len(result['chunks'])} chunks, "
+                       f"{len(sections)} sections, {result['metadata'].get('pages', 0)} pages")
+            
+        except Exception as e:
+            logger.error(f"Error chunking large document: {e}", exc_info=True)
+            # Fallback
+            chunks = self._fallback_simple_chunking(text)
+            result['chunks'] = [{'text': c, 'section_index': 0} for c in chunks]
+            result['metadata']['total_chunks'] = len(chunks)
+            result['metadata']['error'] = str(e)
+        
+        return result
+    
+    async def _extract_pdf_structure(self, file_content: bytes) -> List[Dict[str, Any]]:
+        """Извлекает структуру PDF по страницам"""
+        pages = []
+        try:
+            import PyPDF2
+            import io
+            
+            pdf_file = io.BytesIO(file_content)
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            
+            for i, page in enumerate(pdf_reader.pages):
+                try:
+                    page_text = page.extract_text()
+                    if page_text:
+                        pages.append({
+                            'page_number': i + 1,
+                            'text': page_text.strip(),
+                            'length': len(page_text)
+                        })
+                except Exception as e:
+                    logger.warning(f"Error extracting page {i+1}: {e}")
+                    continue
+            
+        except Exception as e:
+            logger.warning(f"Error extracting PDF structure: {e}")
+        
+        return pages
+    
+    def _extract_sections(self, text: str) -> List[Dict[str, Any]]:
+        """Извлекает секции верхнего уровня из текста"""
+        sections = []
+        
+        # Паттерны для определения заголовков секций
+        section_patterns = [
+            r'^(?:ГЛАВА|РАЗДЕЛ|ЧАСТЬ)\s+\d+[.\s]*(.+)?$',
+            r'^(?:\d+\.?\s+)?[A-ZА-ЯЁ][A-ZА-ЯЁ\s]{5,50}$',
+            r'^#{1,2}\s+.+$',
+        ]
+        
+        lines = text.split('\n')
+        current_section = {'title': 'Введение', 'content': '', 'start_line': 0}
+        
+        for i, line in enumerate(lines):
+            line_stripped = line.strip()
+            
+            # Проверяем, является ли строка заголовком секции
+            is_section_header = False
+            for pattern in section_patterns:
+                if re.match(pattern, line_stripped, re.IGNORECASE | re.MULTILINE):
+                    is_section_header = True
+                    break
+            
+            if is_section_header:
+                # Сохраняем предыдущую секцию
+                if current_section['content'].strip():
+                    sections.append(current_section)
+                
+                # Начинаем новую секцию
+                current_section = {
+                    'title': line_stripped,
+                    'content': line + '\n',
+                    'start_line': i
+                }
+            else:
+                current_section['content'] += line + '\n'
+        
+        # Добавляем последнюю секцию
+        if current_section['content'].strip():
+            sections.append(current_section)
+        
+        # Если не нашли секций, возвращаем весь документ как одну секцию
+        if not sections:
+            sections = [{
+                'title': 'Основной текст',
+                'content': text,
+                'start_line': 0
+            }]
+        
+        return sections
+
+
+# === РЕКОМЕНДАЦИИ ПО ПАРАМЕТРАМ CHUNKING ===
+"""
+РЕКОМЕНДАЦИИ ПО РАЗМЕРУ ЧАНКОВ:
+
+1. Для точного поиска (вопросы о конкретных фактах):
+   - chunk_size: 500-800 символов
+   - overlap: 100-200 символов
+   - top_k: 5-10 чанков
+
+2. Для создания резюме:
+   - chunk_size: 1500-2000 символов
+   - overlap: 300-500 символов
+   - top_k: 15-20 чанков
+
+3. Для анализа всего документа:
+   - chunk_size: 2000-3000 символов
+   - overlap: 500 символов
+   - top_k: 30-50 чанков
+
+РЕКОМЕНДАЦИИ ПО СТРАТЕГИЯМ:
+
+1. PDF документы:
+   - Приоритет: Page-Level → Element-Based → Recursive
+   - Page-Level лучше для таблиц и смешанного контента
+
+2. Word/TXT документы:
+   - Приоритет: Element-Based → Recursive → Semantic
+   - Element-Based хорошо работает с заголовками
+
+3. Очень большие документы (>200 страниц):
+   - Использовать chunk_large_document()
+   - Иерархическое разбиение: секции → чанки
+
+4. Документы с таблицами:
+   - Использовать Page-Level chunking
+   - Не разбивать таблицы между чанками
+"""
 

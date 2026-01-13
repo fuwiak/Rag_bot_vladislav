@@ -73,7 +73,7 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                 welcome_text += "\n❓ <b>Задайте ваш вопрос:</b>"
                 await message.answer(welcome_text)
                 
-                # Отправляем клавиатуру с режимами и типовыми запросами
+                # Отправляем клавиатуру с режимами и типовыми запросами (LangGraph)
                 mode_keyboard = InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
@@ -97,16 +97,20 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                         InlineKeyboardButton(
                             text="📋 Резюме документа",
                             callback_data="get_summary"
+                        ),
+                        InlineKeyboardButton(
+                            text="📝 Описание",
+                            callback_data="get_description"
                         )
                     ],
                     [
                         InlineKeyboardButton(
-                            text="📝 Описание содержания",
-                            callback_data="get_description"
+                            text="🔍 Глубокий анализ",
+                            callback_data="get_analysis"
                         )
                     ]
                 ])
-                await message.answer("🔧 <b>Управление режимом ответа и типовые запросы:</b>", reply_markup=mode_keyboard)
+                await message.answer("🔧 <b>Управление режимом и типовые запросы (LangGraph):</b>", reply_markup=mode_keyboard)
                 return
         
         # Если пользователь уже авторизован в текущей сессии
@@ -249,46 +253,49 @@ async def cmd_help(message: Message, state: FSMContext):
     current_state = await state.get_state()
     is_authorized = current_state == AuthStates.authorized
     
-    help_text = "<b>Справка по использованию бота</b>\n\n"
+    help_text = "<b>📚 Справка по использованию бота</b>\n\n"
     
     help_text += "📋 <b>Основные команды:</b>\n"
     help_text += "/start - Начать работу с ботом или продолжить сессию\n"
     help_text += "/help - Показать эту справку\n"
     
     if is_authorized:
-        help_text += "\n📄 <b>Команды для работы с документами:</b>\n"
+        help_text += "\n📄 <b>Работа с документами:</b>\n"
         help_text += "/documents - Показать список документов проекта\n"
-        help_text += "/документы - Показать список документов (альтернатива)\n"
-        help_text += "/показать_документы - Показать список документов (альтернатива)\n"
-        help_text += "/files - Показать список документов (английский вариант)\n"
-        help_text += "/файлы - Показать список документов (русский вариант)\n"
         help_text += "/suggest_questions - Предложить вопросы на основе документов\n"
-        help_text += "/вопросы - Предложить вопросы (альтернатива)\n\n"
-        help_text += "📋 <b>Типовые запросы:</b>\n"
-        help_text += "/summary или /резюме - Получить резюме документа/блока\n"
-        help_text += "/describe или /описание - Описание содержания документа\n"
-        help_text += "Просто задайте вопрос - Ответ на вопрос на основе документов\n"
+        
+        help_text += "\n📋 <b>Типовые запросы (LangGraph):</b>\n"
+        help_text += "/summary или /резюме - <b>Резюме документа</b>\n"
+        help_text += "  • Точное краткое содержание с минимальными искажениями\n"
+        help_text += "  • Map-Reduce для больших документов (>500KB)\n"
+        help_text += "/describe или /описание - <b>Описание содержания</b>\n"
+        help_text += "  • Тип и назначение документа\n"
+        help_text += "  • Основные темы и ключевые сущности\n"
+        help_text += "/analyze или /анализ - <b>Глубокий анализ</b>\n"
+        help_text += "  • Ключевые факты и данные\n"
+        help_text += "  • Структура и логика документа\n"
+        help_text += "  • Выводы на основе содержимого\n"
+        
+        help_text += "\n❓ <b>Ответ на вопрос:</b>\n"
+        help_text += "Просто напишите вопрос - бот найдет ответ в документах\n"
     
-    help_text += "\n❓ <b>Как задать вопрос:</b>\n"
-    help_text += "Просто напишите ваш вопрос в свободной форме, и бот найдет ответ в документах проекта.\n"
-    help_text += "Бот помнит контекст последних 10 сообщений для более точных ответов.\n\n"
+    help_text += "\n💡 <b>Как задать вопрос:</b>\n"
+    help_text += "• Напишите вопрос в свободной форме\n"
+    help_text += "• Бот ищет ответ в загруженных документах\n"
+    help_text += "• Помнит контекст последних 10 сообщений\n"
     
     if not is_authorized:
         help_text += "\n🔐 <b>Авторизация:</b>\n"
-        help_text += "Для начала работы введите пароль доступа вашего проекта после команды /start.\n"
-        help_text += "После успешной авторизации вам не потребуется вводить пароль повторно.\n"
+        help_text += "Введите пароль доступа после команды /start.\n"
     
-    help_text += "\n💡 <b>Советы:</b>\n"
-    help_text += "• Задавайте конкретные вопросы\n"
-    help_text += "• Используйте ключевые слова из документов\n"
-    help_text += "• Бот отвечает только на основе загруженных документов\n"
-    help_text += "• Если информации нет в документах, бот честно об этом сообщит\n"
     if is_authorized:
-        help_text += "• Используйте /documents для просмотра доступных документов\n"
-        help_text += "• Используйте /suggest_questions для получения предложенных вопросов\n"
-        help_text += "• Переключайте режим ответа через кнопки (Документы / Общие вопросы)\n"
+        help_text += "\n📊 <b>Рекомендации по использованию:</b>\n"
+        help_text += "• Для конкретных фактов - задайте вопрос\n"
+        help_text += "• Для обзора документа - используйте /summary\n"
+        help_text += "• Для структуры и тем - используйте /describe\n"
+        help_text += "• Для глубокого понимания - используйте /analyze\n"
     
-    help_text += "\nЕсли у вас возникли вопросы, обратитесь к администратору проекта."
+    help_text += "\n🤖 <i>Бот использует LangGraph RAG для точных ответов</i>"
     
     await message.answer(help_text)
 
@@ -402,7 +409,12 @@ async def cmd_documents(message: Message, state: FSMContext):
 
 
 async def cmd_summary(message: Message, state: FSMContext):
-    """Обработка команды /summary или /резюме - получить резюме документа или блока"""
+    """
+    Обработка команды /summary или /резюме - получить резюме документа или блока
+    
+    Использует LangGraph для создания резюме с минимальными искажениями.
+    Для больших документов (>500KB) используется Map-Reduce стратегия.
+    """
     import logging
     logger = logging.getLogger(__name__)
     
@@ -439,7 +451,7 @@ async def cmd_summary(message: Message, state: FSMContext):
         
         project_id = user.project_id
         
-        # Получаем последний документ проекта или все документы
+        # Получаем документы проекта
         result = await db.execute(
             select(Document)
             .where(Document.project_id == project_id)
@@ -452,7 +464,10 @@ async def cmd_summary(message: Message, state: FSMContext):
             await message.answer("📄 В проекте пока нет документов для анализа.")
             return
         
-        processing_msg = await message.answer("⏳ Анализирую документы и создаю резюме...")
+        processing_msg = await message.answer(
+            "⏳ Анализирую документы и создаю резюме...\n"
+            "💡 Для больших документов это может занять 1-2 минуты."
+        )
         
         try:
             summary_service = DocumentSummaryService(db)
@@ -460,10 +475,35 @@ async def cmd_summary(message: Message, state: FSMContext):
             # Если один документ - резюме этого документа
             if len(documents) == 1:
                 doc = documents[0]
+                content_length = len(doc.content) if doc.content else 0
+                
+                # Выбираем стратегию в зависимости от размера
+                if content_length > 500000:  # Большой документ
+                    logger.info(f"[Summary] Using Map-Reduce for large document {doc.id}")
+                    summary = await summary_service.generate_map_reduce_summary(doc.id)
+                else:
+                    # Пробуем LangGraph, fallback на обычный метод
+                    try:
+                        summary = await summary_service.generate_summary_with_langgraph(doc.id)
+                    except Exception as e:
+                        logger.warning(f"LangGraph summary failed, using standard method: {e}")
                 summary = await summary_service.generate_summary(doc.id)
+                
                 if summary:
                     await processing_msg.delete()
-                    await message.answer(f"📄 <b>Резюме документа «{doc.filename}»:</b>\n\n{summary}")
+                    response_text = f"📄 <b>Резюме документа «{doc.filename}»:</b>\n\n{summary}"
+                    
+                    # Добавляем информацию о размере документа
+                    if content_length > 100000:
+                        pages_estimate = content_length // 3000  # Примерно 3000 символов на страницу
+                        response_text += f"\n\n📊 <i>Документ: ~{pages_estimate} страниц, {content_length:,} символов</i>"
+                    
+                    if len(response_text) > 4096:
+                        parts = [response_text[i:i+4096] for i in range(0, len(response_text), 4096)]
+                        for part in parts:
+                            await message.answer(part)
+                    else:
+                        await message.answer(response_text)
                 else:
                     await processing_msg.delete()
                     await message.answer(f"❌ Не удалось создать резюме для документа «{doc.filename}»")
@@ -473,6 +513,9 @@ async def cmd_summary(message: Message, state: FSMContext):
                 for doc in documents[:5]:  # Максимум 5 документов
                     doc_summary = getattr(doc, 'summary', None)
                     if not doc_summary:
+                        try:
+                            doc_summary = await summary_service.generate_summary_with_langgraph(doc.id)
+                        except:
                         doc_summary = await summary_service.generate_summary(doc.id)
                     if doc_summary:
                         summaries.append(f"<b>{doc.filename}:</b> {doc_summary}")
@@ -480,7 +523,6 @@ async def cmd_summary(message: Message, state: FSMContext):
                 if summaries:
                     await processing_msg.delete()
                     summary_text = "📄 <b>Резюме документов проекта:</b>\n\n" + "\n\n".join(summaries)
-                    # Разбиваем на части если длинное
                     max_length = 4096
                     if len(summary_text) > max_length:
                         parts = [summary_text[i:i+max_length] for i in range(0, len(summary_text), max_length)]
@@ -498,7 +540,15 @@ async def cmd_summary(message: Message, state: FSMContext):
 
 
 async def cmd_describe(message: Message, state: FSMContext):
-    """Обработка команды /describe или /описание - описание содержания документа"""
+    """
+    Обработка команды /describe или /описание - описание содержания документа
+    
+    Использует LangGraph workflow для создания детального описания:
+    - Тип и назначение документа
+    - Основные темы и разделы
+    - Ключевые сущности (компании, люди, даты, суммы)
+    - Структура документа
+    """
     import logging
     logger = logging.getLogger(__name__)
     
@@ -524,7 +574,6 @@ async def cmd_describe(message: Message, state: FSMContext):
         from app.models.user import User
         from app.models.document import Document
         from sqlalchemy import select
-        from app.services.rag_service import RAGService
         
         user_result = await db.execute(select(User).where(User.id == user_id))
         user = user_result.scalar_one_or_none()
@@ -548,20 +597,71 @@ async def cmd_describe(message: Message, state: FSMContext):
             await message.answer("📄 В проекте пока нет документов для описания.")
             return
         
-        processing_msg = await message.answer("⏳ Анализирую содержание документов...")
+        processing_msg = await message.answer(
+            "⏳ Анализирую содержание документов...\n"
+            "📝 Определяю тип, темы и ключевые сущности."
+        )
         
         try:
+            # Пробуем использовать LangGraph workflow
+            try:
+                from app.services.langgraph_rag_workflow import (
+                    LangGraphRAGWorkflow, 
+                    QueryType
+                )
+                
+                rag_workflow = LangGraphRAGWorkflow(db)
+                
+                if len(documents) == 1:
+                    # Описание одного документа
+                    doc = documents[0]
+                    result = await rag_workflow.run(
+                        query=f"Опиши содержание документа {doc.filename}",
+                        query_type=QueryType.DESCRIPTION,
+                        project_id=str(project_id),
+                        document_id=str(doc.id)
+                    )
+                    answer = result.get('answer', '')
+                    
+                    if answer:
+                        await processing_msg.delete()
+                        description_text = f"📄 <b>Описание документа «{doc.filename}»:</b>\n\n{answer}"
+                    else:
+                        raise Exception("Empty answer from LangGraph")
+                else:
+                    # Описание нескольких документов
+                    result = await rag_workflow.run(
+                        query="Опиши содержание всех документов проекта. Какие темы они охватывают? Какая структура?",
+                        query_type=QueryType.DESCRIPTION,
+                        project_id=str(project_id)
+                    )
+                    answer = result.get('answer', '')
+                    
+                    if answer:
+                        await processing_msg.delete()
+                        # Добавляем список документов
+                        doc_list = "\n".join([f"• {doc.filename}" for doc in documents[:5]])
+                        description_text = (
+                            f"📄 <b>Описание документов проекта ({len(documents)} шт.):</b>\n\n"
+                            f"<b>Документы:</b>\n{doc_list}\n\n"
+                            f"<b>Содержание:</b>\n{answer}"
+                        )
+                    else:
+                        raise Exception("Empty answer from LangGraph")
+                        
+            except Exception as langgraph_error:
+                logger.warning(f"LangGraph describe failed: {langgraph_error}, using fallback")
+                # Fallback на обычный RAG
+                from app.services.rag_service import RAGService
             rag_service = RAGService(db)
             
-            # Используем RAG для создания описания содержания
             question = "Опиши кратко содержание всех документов проекта. Что в них содержится? Какие основные темы?"
             answer = await rag_service.generate_answer(user_id, question)
             
             await processing_msg.delete()
-            
-            if answer:
                 description_text = f"📄 <b>Описание содержания документов проекта:</b>\n\n{answer}"
-                # Разбиваем на части если длинное
+            
+            if description_text:
                 max_length = 4096
                 if len(description_text) > max_length:
                     parts = [description_text[i:i+max_length] for i in range(0, len(description_text), max_length)]
@@ -571,10 +671,109 @@ async def cmd_describe(message: Message, state: FSMContext):
                     await message.answer(description_text)
             else:
                 await message.answer("❌ Не удалось создать описание содержания документов")
+                
         except Exception as e:
             logger.error(f"Error generating description: {e}", exc_info=True)
             await processing_msg.delete()
             await message.answer("❌ Произошла ошибка при создании описания. Попробуйте позже.")
+
+
+async def cmd_analyze(message: Message, state: FSMContext):
+    """
+    Обработка команды /analyze или /анализ - глубокий анализ документа
+    
+    Проводит детальный анализ документа:
+    - Определяет тип и назначение документа
+    - Выделяет ключевые факты и данные
+    - Анализирует структуру и логику документа
+    - Выявляет важные связи между частями
+    - Делает выводы на основе содержимого
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    current_state = await state.get_state()
+    if current_state != AuthStates.authorized:
+        await message.answer("Пожалуйста, сначала авторизуйтесь через /start")
+        return
+    
+    data = await state.get_data()
+    user_id_str = data.get("user_id")
+    project_id_str = data.get("project_id")
+    
+    if not user_id_str or not project_id_str:
+        await message.answer("Ошибка: данные сессии не найдены. Используйте /start")
+        return
+    
+    from uuid import UUID
+    try:
+        user_id = UUID(user_id_str)
+        project_id = UUID(project_id_str)
+    except ValueError:
+        await message.answer("Ошибка: неверный формат ID. Используйте /start")
+        return
+    
+    async with AsyncSessionLocal() as db:
+        from app.models.document import Document
+        from sqlalchemy import select
+        
+        # Получаем документы проекта
+        result = await db.execute(
+            select(Document)
+            .where(Document.project_id == project_id)
+            .order_by(Document.created_at.desc())
+            .limit(5)
+        )
+        documents = result.scalars().all()
+        
+        if not documents:
+            await message.answer("📄 В проекте пока нет документов для анализа.")
+            return
+        
+        processing_msg = await message.answer(
+            "🔍 Провожу глубокий анализ документов...\n"
+            "📊 Это может занять 1-3 минуты для больших документов."
+        )
+        
+        try:
+            from app.services.langgraph_rag_workflow import (
+                LangGraphRAGWorkflow, 
+                QueryType
+            )
+            
+            rag_workflow = LangGraphRAGWorkflow(db)
+            
+            analyses = []
+            for doc in documents[:3]:  # Анализируем максимум 3 документа
+                result = await rag_workflow.run(
+                    query=f"Проведи глубокий анализ документа {doc.filename}",
+                    query_type=QueryType.ANALYSIS,
+                    project_id=str(project_id),
+                    document_id=str(doc.id)
+                )
+                
+                if result.get('answer'):
+                    analyses.append(f"📊 <b>{doc.filename}</b>\n{result['answer']}")
+            
+            await processing_msg.delete()
+            
+            if analyses:
+                analysis_text = "🔍 <b>Глубокий анализ документов:</b>\n\n" + "\n\n---\n\n".join(analyses)
+                
+                max_length = 4096
+                if len(analysis_text) > max_length:
+                    parts = [analysis_text[i:i+max_length] for i in range(0, len(analysis_text), max_length)]
+                    for part in parts:
+                        await message.answer(part)
+                else:
+                    await message.answer(analysis_text)
+            else:
+                await message.answer("❌ Не удалось провести анализ документов")
+                
+        except Exception as e:
+            logger.error(f"Error analyzing documents: {e}", exc_info=True)
+            await processing_msg.delete()
+            await message.answer("❌ Произошла ошибка при анализе. Попробуйте позже.")
 
 
 async def cmd_suggest_questions(message: Message, state: FSMContext):
@@ -667,14 +866,18 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
             ],
             [
                 InlineKeyboardButton(
-                    text="📋 Резюме документа",
+                    text="📋 Резюме",
                     callback_data="get_summary"
+                ),
+                InlineKeyboardButton(
+                    text="📝 Описание",
+                    callback_data="get_description"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="📝 Описание содержания",
-                    callback_data="get_description"
+                    text="🔍 Глубокий анализ",
+                    callback_data="get_analysis"
                 )
             ]
         ])
@@ -714,14 +917,18 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
             ],
             [
                 InlineKeyboardButton(
-                    text="📋 Резюме документа",
+                    text="📋 Резюме",
                     callback_data="get_summary"
+                ),
+                InlineKeyboardButton(
+                    text="📝 Описание",
+                    callback_data="get_description"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="📝 Описание содержания",
-                    callback_data="get_description"
+                    text="🔍 Глубокий анализ",
+                    callback_data="get_analysis"
                 )
             ]
         ])
@@ -794,6 +1001,10 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
         # Вызываем команду describe напрямую
         await callback.answer()
         await cmd_describe(callback.message, state)
+    elif mode == "get_analysis":
+        # Вызываем команду analyze напрямую
+        await callback.answer()
+        await cmd_analyze(callback.message, state)
 
 
 def register_commands(dp: Dispatcher, project_id: str):
@@ -808,8 +1019,9 @@ def register_commands(dp: Dispatcher, project_id: str):
     dp.message.register(cmd_documents, Command("файлы"))
     # Регистрируем команду для предложения вопросов
     dp.message.register(cmd_suggest_questions, Command("suggest_questions", "предложить_вопросы", "вопросы", "questions"))
-    # Регистрируем команды для типовых запросов
+    # Регистрируем команды для типовых запросов (LangGraph)
     dp.message.register(cmd_summary, Command("summary", "резюме", "summary_doc", "резюме_документа"))
     dp.message.register(cmd_describe, Command("describe", "описание", "describe_doc", "описание_документа"))
+    dp.message.register(cmd_analyze, Command("analyze", "анализ", "analysis", "анализ_документа"))
     # Регистрируем обработчик callback для переключения режимов и типовых запросов
     dp.callback_query.register(handle_mode_callback)
