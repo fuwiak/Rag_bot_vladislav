@@ -829,7 +829,7 @@ export default function ModelsPage() {
             </div>
           </div>
             </>
-          ) : (
+          ) : activeTab === 'testing' ? (
             /* Вкладка тестирования моделей */
             <div className="bg-white rounded-lg shadow-sm border border-fb-gray-dark p-6">
               <h2 className="text-xl font-bold text-fb-text mb-4">Тестирование моделей</h2>
@@ -973,7 +973,6 @@ export default function ModelsPage() {
                 </div>
               </div>
             </div>
-            </>
           ) : activeTab === 'token-stats' ? (
             <div className="space-y-4">
               {/* Фильтры */}
