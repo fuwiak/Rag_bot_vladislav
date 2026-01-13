@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import Sidebar from '../components/Sidebar'
 import { useApiQuery } from '../hooks/useApiQuery'
 import { useQueryClient } from '@tanstack/react-query'
-import { useApiQuery } from '../hooks/useApiQuery'
 
 interface Model {
   id: string

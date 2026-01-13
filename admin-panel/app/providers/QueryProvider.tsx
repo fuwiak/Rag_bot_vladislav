@@ -1,7 +1,9 @@
 'use client'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useState } from 'react'
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
+import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
+import { useState, useEffect } from 'react'
 
 export default function QueryProvider({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient({
@@ -9,8 +11,8 @@ export default function QueryProvider({ children }: { children: React.ReactNode 
       queries: {
         // Данные считаются свежими 30 минут
         staleTime: 30 * 60 * 1000, // 30 минут
-        // Данные остаются в кэше 24 часа
-        gcTime: 24 * 60 * 60 * 1000, // 24 часа (раньше называлось cacheTime)
+        // Данные остаются в кэше 7 дней (для долгоживущего кэша)
+        gcTime: 7 * 24 * 60 * 60 * 1000, // 7 дней
         // Повторные попытки при ошибке
         retry: 1,
         // Не обновлять данные при фокусе окна
@@ -23,9 +25,42 @@ export default function QueryProvider({ children }: { children: React.ReactNode 
     },
   }))
 
+  const [persister, setPersister] = useState<any>(null)
+
+  useEffect(() => {
+    // Создаем persister только на клиенте
+    if (typeof window !== 'undefined') {
+      const localStoragePersister = createSyncStoragePersister({
+        storage: window.localStorage,
+        key: 'REACT_QUERY_OFFLINE_CACHE',
+        // Сериализация/десериализация для localStorage
+        serialize: JSON.stringify,
+        deserialize: JSON.parse,
+      })
+      setPersister(localStoragePersister)
+    }
+  }, [])
+
+  // Если persister еще не готов, используем обычный провайдер
+  if (!persister) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    )
+  }
+
+  // Используем PersistQueryClientProvider для сохранения кэша в localStorage
   return (
-    <QueryClientProvider client={queryClient}>
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={{
+        persister,
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 дней в localStorage
+        buster: '', // Версия кэша (можно менять для инвалидации)
+      }}
+    >
       {children}
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   )
 }
