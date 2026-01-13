@@ -973,6 +973,7 @@ export default function ModelsPage() {
                 </div>
               </div>
             </div>
+            </>
           ) : activeTab === 'token-stats' ? (
             <div className="space-y-4">
               {/* Фильтры */}
