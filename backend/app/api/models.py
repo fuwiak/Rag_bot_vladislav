@@ -19,6 +19,11 @@ from app.schemas.llm_model import (
     GlobalModelSettingsUpdate, GlobalModelSettingsResponse,
     ModelTestRequest, ModelTestResponse
 )
+from app.schemas.token_usage import (
+    TokenUsageStatisticsResponse, TokenUsageResponse, ModelPriceUpdate
+)
+from app.services.token_usage_service import TokenUsageService
+from datetime import datetime, timedelta
 from app.services.project_service import ProjectService
 from sqlalchemy import select
 
@@ -331,4 +336,105 @@ async def test_model(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Ошибка тестирования модели: {str(e)}"
+        )
+
+
+@router.get("/token-statistics", response_model=TokenUsageStatisticsResponse)
+async def get_token_statistics(
+    model_id: Optional[str] = Query(None, description="Фильтр по модели"),
+    project_id: Optional[UUID] = Query(None, description="Фильтр по проекту"),
+    days: Optional[int] = Query(30, ge=1, le=365, description="Количество дней для статистики"),
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(get_current_admin)
+):
+    """Получить статистику использования токенов"""
+    try:
+        token_service = TokenUsageService(db)
+        
+        # Вычисляем даты
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=days)
+        
+        if model_id:
+            # Статистика для конкретной модели
+            stats = await token_service.get_token_statistics(
+                model_id=model_id,
+                project_id=project_id,
+                start_date=start_date,
+                end_date=end_date
+            )
+            statistics = [TokenUsageResponse(
+                model_id=model_id,
+                total_input_tokens=stats["total_input_tokens"],
+                total_output_tokens=stats["total_output_tokens"],
+                total_tokens=stats["total_tokens"],
+                usage_count=stats["usage_count"]
+            )]
+        else:
+            # Статистика по всем моделям
+            statistics_data = await token_service.get_token_statistics_by_model(
+                start_date=start_date,
+                end_date=end_date
+            )
+            statistics = [
+                TokenUsageResponse(**stat) for stat in statistics_data
+            ]
+        
+        # Вычисляем общие суммы
+        total_input_tokens = sum(s.total_input_tokens for s in statistics)
+        total_output_tokens = sum(s.total_output_tokens for s in statistics)
+        total_tokens = sum(s.total_tokens for s in statistics)
+        total_usage_count = sum(s.usage_count for s in statistics)
+        
+        return TokenUsageStatisticsResponse(
+            statistics=statistics,
+            total_input_tokens=total_input_tokens,
+            total_output_tokens=total_output_tokens,
+            total_tokens=total_tokens,
+            total_usage_count=total_usage_count
+        )
+    except Exception as e:
+        logger.error(f"Ошибка получения статистики токенов: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка получения статистики: {str(e)}"
+        )
+
+
+@router.patch("/custom/{model_id}/prices", response_model=LLMModelResponse)
+async def update_model_prices(
+    model_id: UUID,
+    prices: ModelPriceUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(get_current_admin)
+):
+    """Обновить цены модели"""
+    try:
+        result = await db.execute(select(LLMModel).where(LLMModel.id == model_id))
+        model = result.scalar_one_or_none()
+        
+        if not model:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Модель не найдена"
+            )
+        
+        if prices.input_price is not None:
+            model.input_price = prices.input_price
+        if prices.output_price is not None:
+            model.output_price = prices.output_price
+        
+        await db.commit()
+        await db.refresh(model)
+        
+        logger.info(f"Updated prices for model {model.model_id}: input={prices.input_price}, output={prices.output_price}")
+        
+        return model
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка обновления цен модели: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка обновления цен: {str(e)}"
         )

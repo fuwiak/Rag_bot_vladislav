@@ -65,6 +65,33 @@ class OpenRouterClient:
         Raises:
             Exception: Если все модели в цепочке не сработали
         """
+        result = await self.chat_completion_with_usage(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature
+        )
+        return result["content"]
+    
+    async def chat_completion_with_usage(
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: Optional[int] = None,
+        temperature: float = 0.7
+    ) -> Dict[str, Any]:
+        """
+        Генерация ответа через LLM с цепочкой fallback моделей и информацией об использовании токенов
+        
+        Args:
+            messages: Список сообщений в формате [{"role": "user", "content": "..."}]
+            max_tokens: Максимальное количество токенов
+            temperature: Температура генерации
+        
+        Returns:
+            Словарь с content, model, input_tokens, output_tokens, total_tokens
+        
+        Raises:
+            Exception: Если все модели в цепочке не сработали
+        """
         last_error = None
         
         # Пробуем каждую модель в цепочке
@@ -104,7 +131,7 @@ class OpenRouterClient:
         max_tokens: Optional[int],
         temperature: float,
         timeout: int
-    ) -> str:
+    ) -> Dict[str, Any]:
         """Выполнить запрос к OpenRouter"""
         async with httpx.AsyncClient(timeout=timeout) as client:
             payload = {
@@ -133,6 +160,13 @@ class OpenRouterClient:
             if "choices" not in data or len(data["choices"]) == 0:
                 raise Exception("Пустой ответ от API")
             
-            return data["choices"][0]["message"]["content"]
+            usage = data.get("usage", {})
+            return {
+                "content": data["choices"][0]["message"]["content"],
+                "model": model,
+                "input_tokens": usage.get("prompt_tokens") or usage.get("input_tokens"),
+                "output_tokens": usage.get("completion_tokens") or usage.get("output_tokens"),
+                "total_tokens": usage.get("total_tokens")
+            }
 
 

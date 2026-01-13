@@ -21,6 +21,8 @@ class LLMResponse:
     model: str
     confidence: float = 1.0
     tokens_used: Optional[int] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
     error: Optional[str] = None
 
 
@@ -198,7 +200,10 @@ class LLMClient:
             data = response.json()
             
             content = data["choices"][0]["message"]["content"]
-            tokens_used = data.get("usage", {}).get("total_tokens")
+            usage = data.get("usage", {})
+            tokens_used = usage.get("total_tokens")
+            input_tokens = usage.get("prompt_tokens") or usage.get("input_tokens")
+            output_tokens = usage.get("completion_tokens") or usage.get("output_tokens")
             
             # Простая оценка уверенности
             confidence = 1.0 if len(content) > 50 else 0.5
@@ -208,7 +213,9 @@ class LLMClient:
                 provider="openrouter",
                 model=model,
                 confidence=confidence,
-                tokens_used=tokens_used
+                tokens_used=tokens_used,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens
             )
             
         except httpx.TimeoutException:
@@ -340,6 +347,45 @@ class LLMClient:
         # Если все модели не сработали, возвращаем последний ответ
         logger.error("All providers and fallback models failed")
         return response
+    
+    async def record_token_usage(
+        self,
+        response: LLMResponse,
+        db_session = None,
+        project_id = None
+    ):
+        """
+        Сохраняет использование токенов в БД
+        
+        Args:
+            response: LLMResponse с информацией о токенах
+            db_session: AsyncSession для работы с БД (опционально)
+            project_id: UUID проекта (опционально)
+        """
+        if not db_session or not response.input_tokens or not response.output_tokens:
+            return
+        
+        try:
+            from app.services.token_usage_service import TokenUsageService
+            from uuid import UUID
+            
+            token_service = TokenUsageService(db_session)
+            project_uuid = UUID(project_id) if project_id else None
+            
+            await token_service.record_token_usage(
+                model_id=response.model,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                project_id=project_uuid
+            )
+            
+            logger.info(
+                f"Token usage recorded: model={response.model}, "
+                f"input={response.input_tokens}, output={response.output_tokens}, "
+                f"project={project_id}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to record token usage: {e}")
     
     async def close(self):
         """Закрывает HTTP клиент"""

@@ -40,7 +40,16 @@ export default function ModelsPage() {
   const [fallbackSearchQuery, setFallbackSearchQuery] = useState('')
   const [showPrimaryDropdown, setShowPrimaryDropdown] = useState(false)
   const [showFallbackDropdown, setShowFallbackDropdown] = useState(false)
-  const [activeTab, setActiveTab] = useState<'models' | 'testing'>('models')
+  const [activeTab, setActiveTab] = useState<'models' | 'testing' | 'token-stats'>('models')
+  
+  // Состояния для статистики токенов
+  const [tokenStatistics, setTokenStatistics] = useState<any[]>([])
+  const [loadingStats, setLoadingStats] = useState(false)
+  const [statsDays, setStatsDays] = useState(30)
+  const [editingPriceModel, setEditingPriceModel] = useState<string | null>(null)
+  const [priceInput, setPriceInput] = useState('')
+  const [priceOutput, setPriceOutput] = useState('')
+  const [customModels, setCustomModels] = useState<any[]>([])
   
   // Состояния для тестирования моделей
   const [testModelId, setTestModelId] = useState<string>('')
@@ -412,6 +421,76 @@ export default function ModelsPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [testMessages, isSending])
 
+  const fetchTokenStatistics = async () => {
+    setLoadingStats(true)
+    try {
+      const { apiFetch } = await import('../lib/api-helpers')
+      const response = await apiFetch(`/api/models/token-statistics?days=${statsDays}`)
+      
+      if (response.ok) {
+        const data = await response.json()
+        setTokenStatistics(data.statistics || [])
+      } else {
+        console.error('Failed to fetch token statistics')
+        setTokenStatistics([])
+      }
+    } catch (err) {
+      console.error('Error fetching token statistics:', err)
+      setTokenStatistics([])
+    } finally {
+      setLoadingStats(false)
+    }
+  }
+
+  const fetchCustomModels = async () => {
+    try {
+      const { apiFetch } = await import('../lib/api-helpers')
+      const response = await apiFetch('/api/models/custom')
+      
+      if (response.ok) {
+        const data = await response.json()
+        setCustomModels(data || [])
+      }
+    } catch (err) {
+      console.error('Error fetching custom models:', err)
+    }
+  }
+
+  const handleUpdatePrice = async (modelId: string) => {
+    try {
+      const { apiFetch } = await import('../lib/api-helpers')
+      const response = await apiFetch(`/api/models/custom/${modelId}/prices`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          input_price: priceInput ? parseFloat(priceInput) : null,
+          output_price: priceOutput ? parseFloat(priceOutput) : null,
+        }),
+      })
+
+      if (response.ok) {
+        alert('Цены успешно обновлены')
+        setEditingPriceModel(null)
+        setPriceInput('')
+        setPriceOutput('')
+        fetchCustomModels()
+      } else {
+        const errorData = await response.json()
+        alert(errorData.detail || 'Ошибка обновления цен')
+      }
+    } catch (err) {
+      alert('Ошибка подключения к серверу')
+    }
+  }
+
+  const startEditingPrice = (model: any) => {
+    setEditingPriceModel(model.id)
+    setPriceInput(model.input_price ? model.input_price.toString() : '')
+    setPriceOutput(model.output_price ? model.output_price.toString() : '')
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-fb-gray">
@@ -457,6 +536,20 @@ export default function ModelsPage() {
                 }`}
               >
                 Тестирование моделей
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab('token-stats')
+                  fetchTokenStatistics()
+                  fetchCustomModels()
+                }}
+                className={`px-6 py-4 font-semibold transition-colors ${
+                  activeTab === 'token-stats'
+                    ? 'text-fb-blue border-b-2 border-fb-blue'
+                    : 'text-fb-text-secondary hover:text-fb-text'
+                }`}
+              >
+                Статистика токенов
               </button>
             </div>
           </div>
@@ -880,7 +973,167 @@ export default function ModelsPage() {
                 </div>
               </div>
             </div>
-          )}
+          ) : activeTab === 'token-stats' ? (
+            <div className="space-y-4">
+              {/* Фильтры */}
+              <div className="bg-white rounded-lg shadow-sm border border-fb-gray-dark p-6">
+                <h2 className="text-xl font-bold text-fb-text mb-4">Статистика использования токенов</h2>
+                <div className="flex items-center space-x-4">
+                  <label className="text-sm font-semibold text-fb-text">
+                    Период (дней):
+                  </label>
+                  <select
+                    value={statsDays}
+                    onChange={(e) => {
+                      setStatsDays(Number(e.target.value))
+                      fetchTokenStatistics()
+                    }}
+                    className="border border-fb-gray-dark rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-fb-blue"
+                  >
+                    <option value={7}>7 дней</option>
+                    <option value={30}>30 дней</option>
+                    <option value={90}>90 дней</option>
+                    <option value={365}>1 год</option>
+                  </select>
+                  <button
+                    onClick={fetchTokenStatistics}
+                    disabled={loadingStats}
+                    className="px-4 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors disabled:opacity-50"
+                  >
+                    {loadingStats ? 'Загрузка...' : 'Обновить'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Статистика по моделям */}
+              <div className="bg-white rounded-lg shadow-sm border border-fb-gray-dark p-6">
+                <h3 className="text-lg font-bold text-fb-text mb-4">Использование токенов по моделям</h3>
+                {loadingStats ? (
+                  <div className="text-center py-8 text-fb-text-secondary">Загрузка...</div>
+                ) : tokenStatistics.length === 0 ? (
+                  <div className="text-center py-8 text-fb-text-secondary">Нет данных за выбранный период</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-fb-gray-dark">
+                          <th className="text-left py-3 px-4 font-semibold text-fb-text">Модель</th>
+                          <th className="text-right py-3 px-4 font-semibold text-fb-text">Входные токены</th>
+                          <th className="text-right py-3 px-4 font-semibold text-fb-text">Выходные токены</th>
+                          <th className="text-right py-3 px-4 font-semibold text-fb-text">Всего токенов</th>
+                          <th className="text-right py-3 px-4 font-semibold text-fb-text">Использований</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tokenStatistics.map((stat, idx) => (
+                          <tr key={idx} className="border-b border-fb-gray-dark hover:bg-fb-gray">
+                            <td className="py-3 px-4 text-fb-text">{stat.model_id}</td>
+                            <td className="py-3 px-4 text-right text-fb-text">{stat.total_input_tokens.toLocaleString()}</td>
+                            <td className="py-3 px-4 text-right text-fb-text">{stat.total_output_tokens.toLocaleString()}</td>
+                            <td className="py-3 px-4 text-right text-fb-text font-semibold">{stat.total_tokens.toLocaleString()}</td>
+                            <td className="py-3 px-4 text-right text-fb-text">{stat.usage_count}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Управление ценами моделей */}
+              <div className="bg-white rounded-lg shadow-sm border border-fb-gray-dark p-6">
+                <h3 className="text-lg font-bold text-fb-text mb-4">Управление ценами моделей</h3>
+                {customModels.length === 0 ? (
+                  <div className="text-center py-8 text-fb-text-secondary">Нет кастомных моделей</div>
+                ) : (
+                  <div className="space-y-4">
+                    {customModels.map((model) => (
+                      <div key={model.id} className="border border-fb-gray-dark rounded-lg p-4">
+                        <div className="flex justify-between items-center mb-3">
+                          <div>
+                            <h4 className="font-semibold text-fb-text">{model.name}</h4>
+                            <p className="text-sm text-fb-text-secondary">{model.model_id}</p>
+                          </div>
+                          {editingPriceModel === model.id ? (
+                            <button
+                              onClick={() => {
+                                setEditingPriceModel(null)
+                                setPriceInput('')
+                                setPriceOutput('')
+                              }}
+                              className="px-4 py-2 border border-fb-gray-dark rounded-lg text-fb-text font-semibold hover:bg-fb-gray-dark transition-colors"
+                            >
+                              Отмена
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => startEditingPrice(model)}
+                              className="px-4 py-2 bg-fb-blue hover:bg-fb-blue-dark text-white rounded-lg font-semibold transition-colors"
+                            >
+                              Редактировать цены
+                            </button>
+                          )}
+                        </div>
+                        {editingPriceModel === model.id ? (
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-semibold text-fb-text mb-1">
+                                Цена за 1M входных токенов
+                              </label>
+                              <input
+                                type="number"
+                                step="0.0000001"
+                                value={priceInput}
+                                onChange={(e) => setPriceInput(e.target.value)}
+                                placeholder={model.input_price?.toString() || '0'}
+                                className="w-full border border-fb-gray-dark rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-fb-blue"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-semibold text-fb-text mb-1">
+                                Цена за 1M выходных токенов
+                              </label>
+                              <input
+                                type="number"
+                                step="0.0000001"
+                                value={priceOutput}
+                                onChange={(e) => setPriceOutput(e.target.value)}
+                                placeholder={model.output_price?.toString() || '0'}
+                                className="w-full border border-fb-gray-dark rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-fb-blue"
+                              />
+                            </div>
+                            <div className="col-span-2">
+                              <button
+                                onClick={() => handleUpdatePrice(model.id)}
+                                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold transition-colors"
+                              >
+                                Сохранить
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <span className="text-fb-text-secondary">Входные токены:</span>
+                              <span className="ml-2 font-semibold text-fb-text">
+                                {model.input_price ? `$${model.input_price} / 1M` : 'Не установлено'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-fb-text-secondary">Выходные токены:</span>
+                              <span className="ml-2 font-semibold text-fb-text">
+                                {model.output_price ? `$${model.output_price} / 1M` : 'Не установлено'}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
         </main>
       </div>
 

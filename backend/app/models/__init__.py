@@ -16,6 +16,7 @@ from app.models.user import User
 from app.models.document import Document, DocumentChunk
 from app.models.message import Message
 from app.models.llm_model import LLMModel, GlobalModelSettings
+from app.models.token_usage import TokenUsage
 
-__all__ = ["AdminUser", "Project", "User", "Document", "DocumentChunk", "Message", "LLMModel", "GlobalModelSettings"]
+__all__ = ["AdminUser", "Project", "User", "Document", "DocumentChunk", "Message", "LLMModel", "GlobalModelSettings", "TokenUsage"]
 

@@ -52,6 +52,62 @@ class RAGService:
         self.suggestions = RAGSuggestions(db, self.vector_store)
         # logger уже определен на уровне модуля
     
+    async def _call_llm_with_token_tracking(
+        self,
+        llm_client,
+        messages: List[Dict[str, str]],
+        max_tokens: Optional[int] = None,
+        temperature: float = 0.7,
+        project_id: Optional[UUID] = None
+    ) -> str:
+        """
+        Вызывает LLM и автоматически сохраняет использование токенов
+        
+        Args:
+            llm_client: OpenRouterClient
+            messages: Список сообщений
+            max_tokens: Максимальное количество токенов
+            temperature: Температура
+            project_id: ID проекта для привязки статистики
+        
+        Returns:
+            Сгенерированный текст
+        """
+        try:
+            llm_result = await llm_client.chat_completion_with_usage(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            
+            # Сохраняем использование токенов
+            if llm_result.get("input_tokens") and llm_result.get("output_tokens"):
+                try:
+                    from app.services.token_usage_service import TokenUsageService
+                    token_service = TokenUsageService(self.db)
+                    await token_service.record_token_usage(
+                        model_id=llm_result.get("model", "unknown"),
+                        input_tokens=llm_result.get("input_tokens", 0),
+                        output_tokens=llm_result.get("output_tokens", 0),
+                        project_id=project_id
+                    )
+                    logger.info(
+                        f"[RAG SERVICE] Token usage recorded: model={llm_result.get('model')}, "
+                        f"input={llm_result.get('input_tokens')}, output={llm_result.get('output_tokens')}, "
+                        f"project={project_id}"
+                    )
+                except Exception as token_error:
+                    logger.warning(f"[RAG SERVICE] Failed to record token usage: {token_error}")
+            
+            return llm_result["content"]
+        except AttributeError:
+            # Если метод chat_completion_with_usage не существует, используем старый метод
+            return await llm_client.chat_completion(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+    
     async def generate_answer(
         self,
         user_id: UUID,
@@ -689,10 +745,12 @@ class RAGService:
             
             # Генерируем ответ
             try:
-                raw_answer = await llm_client.chat_completion(
+                raw_answer = await self._call_llm_with_token_tracking(
+                    llm_client=llm_client,
                     messages=messages,
                     max_tokens=max_tokens,
-                    temperature=0.7
+                    temperature=0.7,
+                    project_id=project.id
                 )
                 
                 # Проверяем, не является ли ответ отказом

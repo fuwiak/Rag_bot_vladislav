@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List, Dict
 from uuid import UUID
 from datetime import datetime
+from decimal import Decimal
 
 
 class LLMModelBase(BaseModel):
@@ -27,6 +28,8 @@ class LLMModelResponse(LLMModelBase):
     
     id: UUID
     is_custom: bool
+    input_price: Optional[Decimal] = None
+    output_price: Optional[Decimal] = None
     created_at: datetime
 
 
