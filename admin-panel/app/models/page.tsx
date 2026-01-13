@@ -355,10 +355,8 @@ export default function ModelsPage() {
         const data = await response.json()
         setGlobalSettings(data)
         alert('Глобальные настройки обновлены')
-        // Очищаем кэш перед обновлением
-        const { cache, cacheKeys } = await import('../lib/cache')
-        cache.delete(cacheKeys.globalSettings)
-        fetchData(false) // Обновляем без кэша
+        // Инвалидируем кэш React Query для обновления данных
+        queryClient.invalidateQueries({ queryKey: ['/api/models/global-settings'] })
       } else {
         const errorData = await response.json()
         alert(errorData.detail || 'Ошибка обновления настроек')
@@ -392,10 +390,8 @@ export default function ModelsPage() {
         setCustomModelId('')
         setCustomModelName('')
         setCustomModelDesc('')
-        // Очищаем кэш перед обновлением
-        const { cache, cacheKeys } = await import('../lib/cache')
-        cache.delete(cacheKeys.models)
-        fetchData(false) // Обновляем без кэша
+        // Инвалидируем кэш React Query для обновления данных
+        queryClient.invalidateQueries({ queryKey: ['/api/models/available'] })
         alert('Кастомная модель добавлена')
       } else {
         const errorData = await response.json()
