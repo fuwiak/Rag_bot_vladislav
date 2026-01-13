@@ -3,6 +3,9 @@
 import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Sidebar from '../components/Sidebar'
+import { useApiQuery } from '../hooks/useApiQuery'
+import { useQueryClient } from '@tanstack/react-query'
+import { useApiQuery } from '../hooks/useApiQuery'
 
 interface Model {
   id: string
@@ -60,10 +63,69 @@ export default function ModelsPage() {
   const [showTestModelDropdown, setShowTestModelDropdown] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    fetchData()
-  }, [router])
+  const queryClient = useQueryClient()
 
+  // Используем React Query для долгоживущего кэша (30 минут свежесть, 24 часа в кэше)
+  const { data: modelsData, isLoading: modelsLoading } = useApiQuery<{models: Model[]}>({
+    endpoint: '/api/models/available',
+    staleTime: 30 * 60 * 1000, // 30 минут
+    gcTime: 24 * 60 * 60 * 1000, // 24 часа
+  })
+
+  const { data: projectsData, isLoading: projectsLoading } = useApiQuery<Project[]>({
+    endpoint: '/api/projects',
+    staleTime: 30 * 60 * 1000,
+    gcTime: 24 * 60 * 60 * 1000,
+  })
+
+  const { data: settingsData, isLoading: settingsLoading } = useApiQuery<{primary_model_id: string | null, fallback_model_id: string | null}>({
+    endpoint: '/api/models/global-settings',
+    staleTime: 30 * 60 * 1000,
+    gcTime: 24 * 60 * 60 * 1000,
+  })
+
+  // Обновляем состояние когда данные загружены
+  useEffect(() => {
+    if (modelsData?.models) {
+      setModels(modelsData.models)
+      setFilteredModels(modelsData.models)
+    }
+  }, [modelsData])
+
+  useEffect(() => {
+    if (projectsData) {
+      setProjects(projectsData || [])
+    }
+  }, [projectsData])
+
+  useEffect(() => {
+    if (settingsData) {
+      setGlobalSettings(settingsData)
+      // Инициализируем поисковые запросы
+      if (settingsData.primary_model_id && modelsData?.models) {
+        const primaryModel = modelsData.models.find(m => m.id === settingsData.primary_model_id)
+        if (primaryModel) {
+          setPrimarySearchQuery(primaryModel.name)
+        } else {
+          setPrimarySearchQuery(settingsData.primary_model_id)
+        }
+      }
+      if (settingsData.fallback_model_id && modelsData?.models) {
+        const fallbackModel = modelsData.models.find(m => m.id === settingsData.fallback_model_id)
+        if (fallbackModel) {
+          setFallbackSearchQuery(fallbackModel.name)
+        } else {
+          setFallbackSearchQuery(settingsData.fallback_model_id)
+        }
+      }
+    }
+  }, [settingsData, modelsData])
+
+  useEffect(() => {
+    setLoading(modelsLoading || projectsLoading || settingsLoading)
+  }, [modelsLoading, projectsLoading, settingsLoading])
+
+  // Устаревшая функция fetchData для обратной совместимости (если используется где-то еще)
   const fetchData = async (useCache = true) => {
     try {
       const { cache, cacheKeys } = await import('../lib/cache')
@@ -225,10 +287,8 @@ export default function ModelsPage() {
       if (response.ok) {
         const data = await response.json()
         alert('Модель успешно присвоена проекту')
-        // Очищаем кэш перед обновлением
-        const { cache, cacheKeys } = await import('../lib/cache')
-        cache.delete(cacheKeys.projects)
-        fetchData(false) // Обновляем список проектов без кэша
+        // Инвалидируем кэш React Query для обновления данных
+        queryClient.invalidateQueries({ queryKey: ['/api/projects'] })
         setSelectedProject(null)
         setSelectedModel('')
       } else {
