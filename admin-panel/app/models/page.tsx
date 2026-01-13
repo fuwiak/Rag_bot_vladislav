@@ -64,11 +64,11 @@ export default function ModelsPage() {
 
   const queryClient = useQueryClient()
 
-  // Используем React Query для долгоживущего кэша (30 минут свежесть, 24 часа в кэше)
+  // Используем React Query для долгоживущего кэша (30 минут свежесть, 7 дней в localStorage)
   const { data: modelsData, isLoading: modelsLoading } = useApiQuery<{models: Model[]}>({
     endpoint: '/api/models/available',
     staleTime: 30 * 60 * 1000, // 30 минут
-    gcTime: 24 * 60 * 60 * 1000, // 24 часа
+    gcTime: 7 * 24 * 60 * 60 * 1000, // 7 дней (сохраняется в localStorage)
   })
 
   const { data: projectsData, isLoading: projectsLoading } = useApiQuery<Project[]>({
