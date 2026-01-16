@@ -16,6 +16,105 @@ from app.services.rag_service import RAGService
 import asyncio
 
 
+def is_greeting_or_simple_message(text: str) -> bool:
+    """
+    Определяет, является ли сообщение приветствием или простым сообщением,
+    которое не требует RAG поиска
+    
+    Args:
+        text: Текст сообщения
+    
+    Returns:
+        True если это приветствие/простое сообщение, False если нужен RAG
+    """
+    if not text:
+        return False
+    
+    text_lower = text.lower().strip()
+    
+    # Приветствия
+    greetings = [
+        "привет", "здравствуй", "здравствуйте", "добрый день", "добрый вечер",
+        "доброе утро", "доброй ночи", "hi", "hello", "hey", "хай", "хелло",
+        "салют", "приветик", "приветствую"
+    ]
+    
+    # Простые вопросы о боте
+    simple_questions = [
+        "как дела", "что нового", "как поживаешь", "что делаешь",
+        "как ты", "что умеешь", "помощь", "help", "справка"
+    ]
+    
+    # Проверяем точное совпадение или начало сообщения
+    if text_lower in greetings or any(text_lower.startswith(g + " ") or text_lower == g for g in greetings):
+        return True
+    
+    if any(q in text_lower for q in simple_questions):
+        return True
+    
+    # Очень короткие сообщения (1-2 слова) обычно не требуют RAG
+    words = text_lower.split()
+    if len(words) <= 2 and len(text_lower) < 20:
+        # Исключаем вопросы (содержат вопросительные слова)
+        question_words = ["что", "как", "где", "когда", "кто", "почему", "зачем", "сколько"]
+        if not any(qw in words for qw in question_words):
+            return True
+    
+    return False
+
+
+async def handle_greeting_quick(message: Message, state: FSMContext) -> str:
+    """
+    Быстрый ответ на приветствие без RAG
+    
+    Args:
+        message: Сообщение от пользователя
+        state: FSM контекст
+    
+    Returns:
+        Ответ на приветствие или None если это не приветствие
+    """
+    text = message.text
+    if not text:
+        return None
+    
+    text_lower = text.lower().strip()
+    
+    # Приветствия
+    if any(text_lower.startswith(g) or text_lower == g for g in [
+        "привет", "здравствуй", "здравствуйте", "hi", "hello", "hey"
+    ]):
+        return (
+            "👋 Привет! Я бот для работы с документами.\n\n"
+            "📚 Я могу:\n"
+            "• Отвечать на вопросы по вашим документам\n"
+            "• Загружать и анализировать PDF, Excel, Word файлы\n"
+            "• Создавать резюме документов\n"
+            "• Описывать содержание документов\n\n"
+            "💡 Задайте вопрос по документам или используйте /help для справки."
+        )
+    
+    # Простые вопросы
+    if "как дела" in text_lower or "что нового" in text_lower:
+        return "Всё отлично! Готов помочь с вашими документами. Задайте вопрос или используйте /help."
+    
+    if "что умеешь" in text_lower or "что делаешь" in text_lower:
+        return (
+            "🤖 Я умею:\n\n"
+            "📄 Работать с документами:\n"
+            "• Загружать PDF, Excel, Word файлы (/upload)\n"
+            "• Искать информацию в документах\n"
+            "• Создавать резюме (/summary)\n"
+            "• Описывать содержание (/describe)\n\n"
+            "❓ Отвечать на вопросы:\n"
+            "• Поиск ответов в ваших документах\n"
+            "• Генерация ответов на основе контекста\n\n"
+            "💬 Используйте /help для подробной справки."
+        )
+    
+    return None
+
+
 async def keep_typing_indicator(bot, chat_id: int, duration: float = 60.0):
     """
     Периодически отправляет typing indicator во время длительной обработки
@@ -174,6 +273,26 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
         logger.info(f"[QUESTION HANDLER] Message was Q&A pair, skipping RAG processing")
         return
     
+    question = message.text
+    
+    if not question or not question.strip():
+        logger.warning(f"[QUESTION HANDLER] Empty question")
+        return
+    
+    # Проверяем, является ли это приветствием или простым сообщением
+    if is_greeting_or_simple_message(question):
+        logger.info(f"[QUESTION HANDLER] Detected greeting/simple message: {question[:50]}")
+        quick_answer = await handle_greeting_quick(message, state)
+        if quick_answer:
+            # Показываем typing indicator
+            try:
+                await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+            except:
+                pass
+            await message.answer(quick_answer)
+            logger.info(f"[QUESTION HANDLER] Quick greeting response sent")
+            return
+    
     # Получение user_id из состояния
     data = await state.get_data()
     logger.info(f"[QUESTION HANDLER] State data: {data}")
@@ -189,12 +308,6 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     except ValueError as e:
         logger.error(f"[QUESTION HANDLER] ❌ Invalid user_id format: {user_id_str}, error: {e}")
         await message.answer("Ошибка: неверный формат ID пользователя. Используйте /start")
-        return
-    
-    question = message.text
-    
-    if not question or not question.strip():
-        logger.warning(f"[QUESTION HANDLER] Empty question from user {user_id}")
         return
     
     logger.info(f"[QUESTION HANDLER] ✅ Processing question for user {user_id}: {question[:100]}")
@@ -323,7 +436,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                     )
                     
                     # Получаем историю диалога
-                    conversation_history = await rag_service._get_conversation_history(user_id, limit=10)
+                    conversation_history = await rag_service.helpers.get_conversation_history(user_id, limit=10)
                     
                     # Формируем системный промпт для общих вопросов (БЕЗ упоминания документов)
                     system_prompt = "Ты дружелюбный помощник. Отвечай на вопросы пользователя естественно и полезно."
@@ -492,7 +605,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                     logger.info(f"[QUESTION HANDLER] FALLBACK: Final models - primary={primary_model}, fallback={fallback_model}")
                     
                     # Получаем историю диалога
-                    conversation_history = await rag_service._get_conversation_history(user_id, limit=10)
+                    conversation_history = await rag_service.helpers.get_conversation_history(user_id, limit=10)
                     
                     # ВАЖНО: Используем промпт проекта даже в fallback режиме
                     # Создаем промпт с пустым контекстом (документы недоступны), но с настройками проекта
