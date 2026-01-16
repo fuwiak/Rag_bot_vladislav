@@ -144,7 +144,10 @@ def ensure_collection() -> bool:
             return False
         
     except Exception as e:
-        logger.error(f"❌ Ошибка создания коллекции: {e}")
+        logger.error(f"[COLLECTION] ❌ Ошибка при проверке/создании коллекции: {e}")
+        logger.error(f"[COLLECTION] Тип ошибки: {type(e).__name__}")
+        import traceback
+        logger.error(f"[COLLECTION] Traceback: {traceback.format_exc()}")
         return False
 
 
