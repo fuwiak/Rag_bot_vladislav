@@ -291,7 +291,11 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                 pass
             await message.answer(quick_answer)
             logger.info(f"[QUESTION HANDLER] Quick greeting response sent")
-        return
+            return
+        else:
+            # Если это определено как простое сообщение, но нет быстрого ответа,
+            # обрабатываем через RAG (например, "чей счет?" - это вопрос, требующий RAG)
+            logger.info(f"[QUESTION HANDLER] Greeting detected but no quick answer, processing via RAG")
     
     # Получение user_id из состояния
     data = await state.get_data()
