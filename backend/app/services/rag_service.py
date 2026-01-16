@@ -573,10 +573,26 @@ class RAGService:
                         if documents:
                             context_parts = []
                             for doc_id, filename, content in documents:
-                                # Bierzemy pierwsze 2000 znaków z każdego dokumentu
-                                content_preview = content[:2000] if content else ""
-                                if content_preview:
-                                    context_parts.append(f"Документ '{filename}':\n{content_preview}...")
+                                # Используем ПОЛНОЕ содержимое документа, страница за страницей
+                                # Метаданные - только дополнение, основное - полное содержимое
+                                if content and content.strip():
+                                    # Для PDF добавляем маркеры страниц, если их нет
+                                    if filename.lower().endswith('.pdf') and '--- Страница' not in content[:500]:
+                                        # Если это PDF без маркеров страниц, добавляем их
+                                        # Разбиваем на абзацы и добавляем маркеры
+                                        paragraphs = content.split('\n\n')
+                                        formatted_content = ""
+                                        page_num = 1
+                                        for i, para in enumerate(paragraphs):
+                                            if para.strip():
+                                                # Примерно каждые 20 абзацев - новая страница (эвристика)
+                                                if i > 0 and i % 20 == 0:
+                                                    page_num += 1
+                                                    formatted_content += f"\n\n--- Страница {page_num} ---\n\n"
+                                                formatted_content += para + "\n\n"
+                                        content = formatted_content
+                                    
+                                    context_parts.append(f"Документ '{filename}' (полное содержимое):\n{content}")
                             
                             if context_parts:
                                 context = "\n\n---\n\n".join(context_parts)
@@ -1349,9 +1365,10 @@ class RAGService:
                         filename = doc_result.scalar_one_or_none()
                         filename = filename or f"Документ {doc_id}"
                         
-                        # Łączymy chunks z tego dokumentu
-                        doc_content = "\n".join(chunk_list[:5])  # Max 5 chunks per document
-                        context_parts.append(f"Документ '{filename}':\n{doc_content}")
+                        # Используем ВСЕ chunks из документа (не ограничиваем 5)
+                        # Для полного анализа читаем весь документ страница за страницей
+                        doc_content = "\n\n--- Страница ---\n\n".join(chunk_list)  # Все chunks, с маркерами страниц
+                        context_parts.append(f"Документ '{filename}' (полное содержимое, страница за страницей):\n{doc_content}")
                 
                 # Jeśli nie ma chunks, próbujemy uzyskać content z Document
                 if not context_parts:
@@ -1369,9 +1386,24 @@ class RAGService:
                     documents = docs_result.all()
                     
                     for doc_id, filename, content in documents:
-                        content_preview = content[:2000] if content else ""
-                        if content_preview:
-                            context_parts.append(f"Документ '{filename}':\n{content_preview}...")
+                        # Используем ПОЛНОЕ содержимое документа, страница за страницей
+                        if content and content.strip():
+                            # Для PDF добавляем маркеры страниц, если их нет
+                            if filename.lower().endswith('.pdf') and '--- Страница' not in content[:500]:
+                                # Если это PDF без маркеров страниц, добавляем их
+                                paragraphs = content.split('\n\n')
+                                formatted_content = ""
+                                page_num = 1
+                                for i, para in enumerate(paragraphs):
+                                    if para.strip():
+                                        # Примерно каждые 20 абзацев - новая страница (эвристика)
+                                        if i > 0 and i % 20 == 0:
+                                            page_num += 1
+                                            formatted_content += f"\n\n--- Страница {page_num} ---\n\n"
+                                        formatted_content += para + "\n\n"
+                                content = formatted_content
+                            
+                            context_parts.append(f"Документ '{filename}' (полное содержимое):\n{content}")
                 
                 # Jeśli mamy zawartość, używamy jej
                 if context_parts:
