@@ -75,16 +75,20 @@ def get_qdrant_client() -> Optional[QdrantClient]:
             url=qdrant_url,
             api_key=qdrant_api_key if qdrant_api_key else None,
             prefer_grpc=False,
-            timeout=10  # Уменьшенный таймаут для быстрой проверки
+            timeout=30  # Увеличенный таймаут для стабильности
         )
         
-        # Проверяем подключение с коротким таймаутом
+        # Проверяем подключение (не критично, если не получится - клиент все равно может работать)
         try:
             collections = _qdrant_client.get_collections()
             collection_names = [c.name for c in collections.collections]
             logger.info(f"✅ Подключено к Qdrant. Коллекции: {collection_names}")
         except Exception as check_error:
-            logger.warning(f"⚠️ Qdrant доступен, но проверка коллекций заняла слишком долго: {check_error}")
+            error_str = str(check_error).lower()
+            if "timeout" in error_str or "timed out" in error_str:
+                logger.warning(f"⚠️ Qdrant проверка таймаут - сервис может быть медленным, но клиент создан")
+            else:
+                logger.warning(f"⚠️ Qdrant проверка ошибка: {check_error}, но клиент создан")
             # Не возвращаем None, клиент может быть полезен для других операций
         
         return _qdrant_client
