@@ -151,10 +151,24 @@ def ensure_collection() -> bool:
             logger.info(f"[COLLECTION] Найдено коллекций: {len(collection_names)}")
             logger.info(f"[COLLECTION] Список коллекций: {collection_names}")
         except Exception as e:
-            logger.error(f"[COLLECTION] ❌ Ошибка при получении списка коллекций: {e}")
-            import traceback
-            logger.error(f"[COLLECTION] Traceback: {traceback.format_exc()}")
-            return False
+            error_str = str(e).lower()
+            error_type = type(e).__name__
+            
+            # Специальная обработка таймаутов
+            if "timeout" in error_str or "timed out" in error_str or "ConnectTimeout" in error_type or "ResponseHandlingException" in error_type:
+                logger.error(f"[COLLECTION] ❌ Таймаут подключения к Qdrant")
+                logger.error(f"[COLLECTION] Qdrant сервис недоступен или слишком медленный")
+                logger.error(f"[COLLECTION] Проверьте:")
+                logger.error(f"[COLLECTION]   - Доступность Qdrant URL")
+                logger.error(f"[COLLECTION]   - Сетевое подключение")
+                logger.error(f"[COLLECTION]   - Статус Qdrant сервиса")
+                return False
+            else:
+                logger.error(f"[COLLECTION] ❌ Ошибка при получении списка коллекций: {e}")
+                logger.error(f"[COLLECTION] Тип ошибки: {error_type}")
+                import traceback
+                logger.error(f"[COLLECTION] Traceback: {traceback.format_exc()}")
+                return False
         
         if COLLECTION_NAME in collection_names:
             logger.info(f"[COLLECTION] ✅ Коллекция '{COLLECTION_NAME}' существует")
@@ -175,11 +189,20 @@ def ensure_collection() -> bool:
             logger.info(f"[COLLECTION] ✅ Коллекция '{COLLECTION_NAME}' успешно создана")
             return True
         except Exception as create_error:
-            logger.error(f"[COLLECTION] ❌ Ошибка при создании коллекции: {create_error}")
-            logger.error(f"[COLLECTION] Тип ошибки: {type(create_error).__name__}")
-            import traceback
-            logger.error(f"[COLLECTION] Traceback: {traceback.format_exc()}")
-            return False
+            error_str = str(create_error).lower()
+            error_type = type(create_error).__name__
+            
+            # Специальная обработка таймаутов
+            if "timeout" in error_str or "timed out" in error_str or "ConnectTimeout" in error_type or "ResponseHandlingException" in error_type:
+                logger.error(f"[COLLECTION] ❌ Таймаут при создании коллекции")
+                logger.error(f"[COLLECTION] Qdrant сервис недоступен или слишком медленный")
+                return False
+            else:
+                logger.error(f"[COLLECTION] ❌ Ошибка при создании коллекции: {create_error}")
+                logger.error(f"[COLLECTION] Тип ошибки: {error_type}")
+                import traceback
+                logger.error(f"[COLLECTION] Traceback: {traceback.format_exc()}")
+                return False
         
     except Exception as e:
         logger.error(f"[COLLECTION] ❌ Ошибка при проверке/создании коллекции: {e}")
@@ -489,11 +512,21 @@ async def index_qa_to_qdrant_async(
             )
             logger.info(f"[Q&A INDEX] ✅ Точка успешно добавлена в Qdrant")
         except Exception as upsert_error:
-            logger.error(f"[Q&A INDEX] ❌ Ошибка при добавлении точки в Qdrant: {upsert_error}")
-            logger.error(f"[Q&A INDEX]    Тип ошибки: {type(upsert_error).__name__}")
-            import traceback
-            logger.error(f"[Q&A INDEX]    Traceback: {traceback.format_exc()}")
-            raise
+            error_str = str(upsert_error).lower()
+            error_type = type(upsert_error).__name__
+            
+            # Специальная обработка таймаутов
+            if "timeout" in error_str or "timed out" in error_str or "ConnectTimeout" in error_type or "ResponseHandlingException" in error_type:
+                logger.error(f"[Q&A INDEX] ❌ Таймаут при добавлении точки в Qdrant")
+                logger.error(f"[Q&A INDEX] Qdrant сервис недоступен или слишком медленный")
+                logger.error(f"[Q&A INDEX] Проверьте доступность Qdrant сервиса")
+                raise
+            else:
+                logger.error(f"[Q&A INDEX] ❌ Ошибка при добавлении точки в Qdrant: {upsert_error}")
+                logger.error(f"[Q&A INDEX]    Тип ошибки: {error_type}")
+                import traceback
+                logger.error(f"[Q&A INDEX]    Traceback: {traceback.format_exc()}")
+                raise
         
         logger.info(f"✅ Q&A пара индексирована в Qdrant async (point_id={point_id})")
         logger.info(f"[Q&A INDEX] ✅ Индексация завершена успешно")
