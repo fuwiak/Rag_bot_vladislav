@@ -5,7 +5,7 @@
 - Индексацию документов в Qdrant для RAG
 """
 from aiogram import Dispatcher, F
-from aiogram.types import Message, Document as TelegramDocument
+from aiogram.types import Message, Document as TelegramDocument, ChatAction
 from aiogram.fsm.context import FSMContext
 from uuid import UUID
 import logging
@@ -224,6 +224,12 @@ async def handle_document(message: Message, state: FSMContext):
     
     file_type = file_ext.lstrip('.')
     
+    # Показываем индикатор печати
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
+    
     # Отправляем сообщение о начале обработки
     processing_msg = await message.answer(f"📥 Загружаю файл: {file_name}...")
     
@@ -283,6 +289,12 @@ async def handle_document(message: Message, state: FSMContext):
             
             # Также индексируем документ в Qdrant для RAG
             try:
+                # Показываем typing indicator во время обработки
+                try:
+                    await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                except:
+                    pass
+                
                 # Извлекаем текст из файла для Qdrant
                 text_content = await extract_text_from_file(str(temp_path), file_type)
                 
@@ -290,6 +302,12 @@ async def handle_document(message: Message, state: FSMContext):
                     # Получаем данные пользователя
                     telegram_user_id = str(message.from_user.id)
                     telegram_username = message.from_user.username or "unknown"
+                    
+                    # Показываем typing indicator перед индексацией
+                    try:
+                        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                    except:
+                        pass
                     
                     # Индексируем в Qdrant
                     qdrant_result = await index_document_to_qdrant(
@@ -303,6 +321,12 @@ async def handle_document(message: Message, state: FSMContext):
                     if qdrant_result.get("success"):
                         chunks_count = qdrant_result.get("chunks_count", 0)
                         logger.info(f"[TELEGRAM UPLOAD] ✅ Document indexed in Qdrant: {chunks_count} chunks")
+                        
+                        # Показываем typing перед отправкой ответа
+                        try:
+                            await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                        except:
+                            pass
                         
                         await processing_msg.edit_text(
                             f"✅ Файл загружен и индексирован!\n\n"

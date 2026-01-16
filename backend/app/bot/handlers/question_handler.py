@@ -5,13 +5,36 @@
 - Q&A пары в формате "Q: ... A: ..." для добавления в базу знаний
 """
 from aiogram import Dispatcher, F
-from aiogram.types import Message
+from aiogram.types import Message, ChatAction
 from aiogram.fsm.context import FSMContext
 from uuid import UUID
 
 from app.core.database import AsyncSessionLocal
 from app.bot.handlers.auth_handler import AuthStates
 from app.services.rag_service import RAGService
+import asyncio
+
+
+async def keep_typing_indicator(bot, chat_id: int, duration: float = 60.0):
+    """
+    Периодически отправляет typing indicator во время длительной обработки
+    
+    Args:
+        bot: Экземпляр бота
+        chat_id: ID чата
+        duration: Продолжительность в секундах (по умолчанию 60)
+    """
+    try:
+        end_time = asyncio.get_event_loop().time() + duration
+        while asyncio.get_event_loop().time() < end_time:
+            await bot.send_chat_action(chat_id, ChatAction.TYPING)
+            await asyncio.sleep(3)  # Отправляем каждые 3 секунды (typing indicator живет ~5 секунд)
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error in keep_typing_indicator: {e}")
 
 
 async def handle_qa_indexing(message: Message, state: FSMContext) -> bool:
@@ -55,6 +78,9 @@ async def handle_qa_indexing(message: Message, state: FSMContext) -> bool:
         # Получаем project_id из состояния
         data = await state.get_data()
         project_id = data.get("project_id")
+        
+        # Показываем индикатор печати
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
         
         # Отправляем статус обработки
         status_msg = await message.answer("⏳ Добавляю Q&A пару в базу знаний...")
@@ -157,6 +183,13 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     
     logger.info(f"[QUESTION HANDLER] ✅ Processing question for user {user_id}: {question[:100]}")
     
+    # Показываем индикатор печати (как в мессенджерах)
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+        logger.debug(f"[QUESTION HANDLER] Typing indicator sent to user {user_id}")
+    except Exception as e:
+        logger.warning(f"[QUESTION HANDLER] Failed to send typing indicator: {e}")
+    
     # Отправка сообщения о том, что идет обработка
     processing_msg = None
     try:
@@ -164,6 +197,15 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
         logger.info(f"[QUESTION HANDLER] Processing message sent to user {user_id}")
     except Exception as e:
         logger.error(f"[QUESTION HANDLER] Failed to send processing message: {e}")
+    
+    # Запускаем фоновую задачу для периодической отправки typing indicator
+    typing_task = None
+    try:
+        typing_task = asyncio.create_task(
+            keep_typing_indicator(message.bot, message.chat.id, duration=60.0)
+        )
+    except Exception as e:
+        logger.warning(f"[QUESTION HANDLER] Failed to start typing task: {e}")
     
     answer = None
     use_fallback = False
@@ -508,6 +550,18 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
             else:
                 logger.info(f"[QUESTION HANDLER] ✅ Answer generated and saved for user {user_id}")
         
+        # Останавливаем фоновую задачу typing indicator
+        if typing_task and not typing_task.done():
+            try:
+                typing_task.cancel()
+                try:
+                    await typing_task
+                except asyncio.CancelledError:
+                    pass
+                logger.debug(f"[QUESTION HANDLER] Typing task cancelled")
+            except Exception as e:
+                logger.warning(f"[QUESTION HANDLER] Failed to cancel typing task: {e}")
+        
         # Удаление сообщения об обработке
         if processing_msg:
             try:
@@ -521,6 +575,12 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
             logger.error(f"[QUESTION HANDLER] ❌ Answer is None, cannot send to user {user_id}")
             answer = "Извините, произошла ошибка при обработке вашего вопроса. Попробуйте позже."
         
+        # Показываем typing indicator перед отправкой ответа
+        try:
+            await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+        except Exception as e:
+            logger.warning(f"[QUESTION HANDLER] Failed to send typing before answer: {e}")
+        
         max_length = 4096  # Максимальная длина сообщения Telegram
         logger.info(f"[QUESTION HANDLER] Sending answer to user {user_id}, length: {len(answer)}")
         try:
@@ -529,6 +589,11 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                 parts = [answer[i:i+max_length] for i in range(0, len(answer), max_length)]
                 logger.info(f"[QUESTION HANDLER] Splitting answer into {len(parts)} parts")
                 for i, part in enumerate(parts):
+                    # Показываем typing перед каждой частью
+                    try:
+                        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                    except:
+                        pass
                     await message.answer(part)
                     logger.debug(f"[QUESTION HANDLER] Sent part {i+1}/{len(parts)}")
             else:
@@ -542,6 +607,17 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
         import logging
         logger = logging.getLogger(__name__)
         logger.error(f"[QUESTION HANDLER] ❌ Critical error processing question for user {user_id}: {e}", exc_info=True)
+        
+        # Останавливаем typing task при ошибке
+        if 'typing_task' in locals() and typing_task and not typing_task.done():
+            try:
+                typing_task.cancel()
+                try:
+                    await typing_task
+                except asyncio.CancelledError:
+                    pass
+            except:
+                pass
         
         if processing_msg:
             try:
