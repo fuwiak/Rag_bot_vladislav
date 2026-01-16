@@ -195,15 +195,15 @@ async def handle_qa_indexing(message: Message, state: FSMContext) -> bool:
         # Индексируем Q&A пару в Qdrant
         try:
             success = await index_qa_to_qdrant_async(
-                question=question,
-                answer=answer,
-                metadata={
-                    "user_id": str(user_id),
-                    "username": username,
-                    "added_via": "telegram_bot",
-                    "project_id": project_id
-                }
-            )
+            question=question,
+            answer=answer,
+            metadata={
+                "user_id": str(user_id),
+                "username": username,
+                "added_via": "telegram_bot",
+                "project_id": project_id
+            }
+        )
         except Exception as e:
             logger.error(f"❌ Исключение при индексации Q&A пары: {e}", exc_info=True)
             logger.error(f"   Тип ошибки: {type(e).__name__}")
@@ -291,7 +291,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                 pass
             await message.answer(quick_answer)
             logger.info(f"[QUESTION HANDLER] Quick greeting response sent")
-            return
+        return
     
     # Получение user_id из состояния
     data = await state.get_data()
@@ -552,31 +552,31 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                         )
                         logger.info(f"[QUESTION HANDLER] Simple RAG answer generated successfully for user {user_id}")
                     except asyncio.TimeoutError:
-                    logger.warning(f"[QUESTION HANDLER] Simple RAG timeout for user {user_id}, trying full RAG")
-                    try:
-                        answer = await asyncio.wait_for(
-                            rag_service.generate_answer(user_id, question),
-                            timeout=10.0
-                        )
-                        logger.info(f"[QUESTION HANDLER] Full RAG answer generated successfully for user {user_id}")
-                    except asyncio.TimeoutError:
-                        logger.warning(f"[QUESTION HANDLER] Full RAG timeout for user {user_id}, trying fast answer")
+                        logger.warning(f"[QUESTION HANDLER] Simple RAG timeout for user {user_id}, trying full RAG")
                         try:
-                            answer = await rag_service.generate_answer_fast(user_id, question)
-                            logger.info(f"[QUESTION HANDLER] Fast RAG answer generated for user {user_id}")
-                        except Exception as fast_error:
-                            logger.warning(f"[QUESTION HANDLER] Fast RAG also failed for user {user_id}: {fast_error}, using LLM fallback")
-                            use_fallback = True
-                    except Exception as rag_error:
-                        logger.error(f"[QUESTION HANDLER] Full RAG error for user {user_id}: {rag_error}, trying fast", exc_info=True)
-                        try:
-                            answer = await rag_service.generate_answer_fast(user_id, question)
-                            logger.info(f"[QUESTION HANDLER] Fast RAG answer generated after full RAG error for user {user_id}")
-                        except Exception as fast_error2:
-                            logger.error(f"[QUESTION HANDLER] Fast RAG also failed: {fast_error2}, using LLM fallback")
-                            use_fallback = True
-                except Exception as simple_error:
-                    logger.warning(f"[QUESTION HANDLER] Simple RAG failed for user {user_id}: {simple_error}, trying full RAG")
+                            answer = await asyncio.wait_for(
+                                rag_service.generate_answer(user_id, question),
+                                timeout=10.0
+                            )
+                            logger.info(f"[QUESTION HANDLER] Full RAG answer generated successfully for user {user_id}")
+                        except asyncio.TimeoutError:
+                            logger.warning(f"[QUESTION HANDLER] Full RAG timeout for user {user_id}, trying fast answer")
+                            try:
+                                answer = await rag_service.generate_answer_fast(user_id, question)
+                                logger.info(f"[QUESTION HANDLER] Fast RAG answer generated for user {user_id}")
+                            except Exception as fast_error:
+                                logger.warning(f"[QUESTION HANDLER] Fast RAG also failed for user {user_id}: {fast_error}, using LLM fallback")
+                                use_fallback = True
+                        except Exception as rag_error:
+                            logger.error(f"[QUESTION HANDLER] Full RAG error for user {user_id}: {rag_error}, trying fast", exc_info=True)
+                            try:
+                                answer = await rag_service.generate_answer_fast(user_id, question)
+                                logger.info(f"[QUESTION HANDLER] Fast RAG answer generated after full RAG error for user {user_id}")
+                            except Exception as fast_error2:
+                                logger.error(f"[QUESTION HANDLER] Fast RAG also failed: {fast_error2}, using LLM fallback")
+                                use_fallback = True
+                    except Exception as simple_error:
+                        logger.warning(f"[QUESTION HANDLER] Simple RAG failed for user {user_id}: {simple_error}, trying full RAG")
                     try:
                         answer = await asyncio.wait_for(
                             rag_service.generate_answer(user_id, question),
