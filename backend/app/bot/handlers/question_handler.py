@@ -85,17 +85,31 @@ async def handle_qa_indexing(message: Message, state: FSMContext) -> bool:
         # Отправляем статус обработки
         status_msg = await message.answer("⏳ Добавляю Q&A пару в базу знаний...")
         
+        # Логируем начало индексации
+        logger.info(f"📝 Начало индексации Q&A пары:")
+        logger.info(f"   Пользователь: {username} (ID: {user_id})")
+        logger.info(f"   Project ID: {project_id}")
+        logger.info(f"   Вопрос: {question[:100]}...")
+        logger.info(f"   Ответ: {answer[:100]}...")
+        
         # Индексируем Q&A пару в Qdrant
-        success = await index_qa_to_qdrant_async(
-            question=question,
-            answer=answer,
-            metadata={
-                "user_id": str(user_id),
-                "username": username,
-                "added_via": "telegram_bot",
-                "project_id": project_id
-            }
-        )
+        try:
+            success = await index_qa_to_qdrant_async(
+                question=question,
+                answer=answer,
+                metadata={
+                    "user_id": str(user_id),
+                    "username": username,
+                    "added_via": "telegram_bot",
+                    "project_id": project_id
+                }
+            )
+        except Exception as e:
+            logger.error(f"❌ Исключение при индексации Q&A пары: {e}", exc_info=True)
+            logger.error(f"   Тип ошибки: {type(e).__name__}")
+            import traceback
+            logger.error(f"   Traceback: {traceback.format_exc()}")
+            success = False
         
         # Удаляем статус сообщение
         try:
@@ -114,6 +128,7 @@ async def handle_qa_indexing(message: Message, state: FSMContext) -> bool:
         else:
             await message.answer("❌ Ошибка при добавлении Q&A пары в базу знаний. Попробуйте позже.")
             logger.error(f"❌ Не удалось индексировать Q&A пару от пользователя {username}")
+            logger.error(f"   Проверьте логи выше для деталей ошибки")
         
         return True
         

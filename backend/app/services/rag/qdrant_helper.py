@@ -94,30 +94,54 @@ def ensure_collection() -> bool:
     """
     Убедиться, что коллекция существует
     """
+    logger.info(f"[COLLECTION] Проверка коллекции '{COLLECTION_NAME}'")
+    logger.info(f"[COLLECTION] Ожидаемая размерность: {EMBEDDING_DIMENSION}")
+    
     try:
         client = get_qdrant_client()
         if not client:
+            logger.error(f"[COLLECTION] ❌ Qdrant клиент недоступен")
             return False
         
+        logger.info(f"[COLLECTION] ✅ Qdrant клиент получен")
+        
         # Проверяем существование коллекции
-        collections = client.get_collections()
-        collection_names = [c.name for c in collections.collections]
+        logger.info(f"[COLLECTION] Получаю список коллекций...")
+        try:
+            collections = client.get_collections()
+            collection_names = [c.name for c in collections.collections]
+            logger.info(f"[COLLECTION] Найдено коллекций: {len(collection_names)}")
+            logger.info(f"[COLLECTION] Список коллекций: {collection_names}")
+        except Exception as e:
+            logger.error(f"[COLLECTION] ❌ Ошибка при получении списка коллекций: {e}")
+            import traceback
+            logger.error(f"[COLLECTION] Traceback: {traceback.format_exc()}")
+            return False
         
         if COLLECTION_NAME in collection_names:
-            logger.info(f"✅ Коллекция '{COLLECTION_NAME}' существует")
+            logger.info(f"[COLLECTION] ✅ Коллекция '{COLLECTION_NAME}' существует")
             return True
         
         # Создаем коллекцию если не существует
-        logger.info(f"📦 Создаем коллекцию '{COLLECTION_NAME}'...")
-        client.create_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=VectorParams(
-                size=EMBEDDING_DIMENSION,
-                distance=Distance.COSINE
+        logger.info(f"[COLLECTION] 📦 Коллекция '{COLLECTION_NAME}' не найдена, создаю...")
+        logger.info(f"[COLLECTION] Параметры: размерность={EMBEDDING_DIMENSION}, расстояние=COSINE")
+        
+        try:
+            client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config=VectorParams(
+                    size=EMBEDDING_DIMENSION,
+                    distance=Distance.COSINE
+                )
             )
-        )
-        logger.info(f"✅ Коллекция '{COLLECTION_NAME}' создана")
-        return True
+            logger.info(f"[COLLECTION] ✅ Коллекция '{COLLECTION_NAME}' успешно создана")
+            return True
+        except Exception as create_error:
+            logger.error(f"[COLLECTION] ❌ Ошибка при создании коллекции: {create_error}")
+            logger.error(f"[COLLECTION] Тип ошибки: {type(create_error).__name__}")
+            import traceback
+            logger.error(f"[COLLECTION] Traceback: {traceback.format_exc()}")
+            return False
         
     except Exception as e:
         logger.error(f"❌ Ошибка создания коллекции: {e}")
@@ -170,9 +194,26 @@ async def generate_embedding_async(text: str) -> Optional[List[float]]:
     """
     Генерация эмбеддинга асинхронно через OpenRouter API
     """
+    logger.info(f"[EMBEDDING] Начало генерации эмбеддинга")
+    logger.info(f"[EMBEDDING] Текст: {text[:100]}...")
+    logger.info(f"[EMBEDDING] Длина текста: {len(text)} символов")
+    
     try:
         api_key = settings.OPENROUTER_API_KEY
         model = settings.EMBEDDING_MODEL
+        
+        if not api_key:
+            logger.error(f"[EMBEDDING] ❌ OPENROUTER_API_KEY не установлен")
+            return None
+        
+        if not model:
+            logger.error(f"[EMBEDDING] ❌ EMBEDDING_MODEL не установлен")
+            return None
+        
+        logger.info(f"[EMBEDDING] Модель: {model}")
+        logger.info(f"[EMBEDDING] API Key: {'установлен' if api_key else 'НЕ УСТАНОВЛЕН'}")
+        logger.info(f"[EMBEDDING] Ожидаемая размерность: {EMBEDDING_DIMENSION}")
+        logger.info(f"[EMBEDDING] Отправляю запрос к OpenRouter API...")
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
@@ -187,21 +228,42 @@ async def generate_embedding_async(text: str) -> Optional[List[float]]:
                 }
             )
             
-            response.raise_for_status()
+            logger.info(f"[EMBEDDING] Получен ответ от API: статус {response.status_code}")
+            
+            if response.status_code != 200:
+                logger.error(f"[EMBEDDING] ❌ Ошибка API: статус {response.status_code}")
+                logger.error(f"[EMBEDDING] Ответ: {response.text[:500]}")
+                response.raise_for_status()
+            
             data = response.json()
             embedding = data["data"][0]["embedding"]
             
+            logger.info(f"[EMBEDDING] ✅ Эмбеддинг получен, размерность: {len(embedding)}")
+            
             # Проверяем размерность
             if len(embedding) != EMBEDDING_DIMENSION:
+                logger.warning(f"[EMBEDDING] ⚠️ Размерность не совпадает: {len(embedding)} != {EMBEDDING_DIMENSION}")
                 if len(embedding) < EMBEDDING_DIMENSION:
+                    logger.info(f"[EMBEDDING] Дополняю эмбеддинг нулями до {EMBEDDING_DIMENSION}")
                     embedding.extend([0.0] * (EMBEDDING_DIMENSION - len(embedding)))
                 else:
+                    logger.info(f"[EMBEDDING] Обрезаю эмбеддинг до {EMBEDDING_DIMENSION}")
                     embedding = embedding[:EMBEDDING_DIMENSION]
             
+            logger.info(f"[EMBEDDING] ✅ Финальная размерность: {len(embedding)}")
             return embedding
         
+    except httpx.HTTPError as e:
+        logger.error(f"[EMBEDDING] ❌ HTTP ошибка при генерации эмбеддинга: {e}")
+        logger.error(f"[EMBEDDING] Тип ошибки: {type(e).__name__}")
+        import traceback
+        logger.error(f"[EMBEDDING] Traceback: {traceback.format_exc()}")
+        return None
     except Exception as e:
-        logger.error(f"❌ Ошибка генерации эмбеддинга async: {e}")
+        logger.error(f"[EMBEDDING] ❌ Ошибка генерации эмбеддинга async: {e}")
+        logger.error(f"[EMBEDDING] Тип ошибки: {type(e).__name__}")
+        import traceback
+        logger.error(f"[EMBEDDING] Traceback: {traceback.format_exc()}")
         return None
 
 
@@ -292,27 +354,58 @@ async def index_qa_to_qdrant_async(
     """
     Асинхронная версия индексации Q&A пары
     """
+    logger.info(f"[Q&A INDEX] Начало индексации Q&A пары")
+    logger.info(f"[Q&A INDEX] Вопрос: {question[:100]}...")
+    logger.info(f"[Q&A INDEX] Ответ: {answer[:100]}...")
+    logger.info(f"[Q&A INDEX] Метаданные: {metadata}")
+    
     if not question or not answer or not question.strip() or not answer.strip():
         logger.warning("⚠️ Вопрос и ответ не могут быть пустыми")
+        logger.warning(f"   Вопрос пустой: {not question or not question.strip()}")
+        logger.warning(f"   Ответ пустой: {not answer or not answer.strip()}")
         return False
     
     try:
         # Генерируем эмбеддинг асинхронно
+        logger.info(f"[Q&A INDEX] 🔍 Генерирую эмбеддинг для вопроса...")
+        logger.info(f"[Q&A INDEX]    Модель: {getattr(settings, 'EMBEDDING_MODEL', 'не установлена')}")
+        logger.info(f"[Q&A INDEX]    API Key установлен: {bool(getattr(settings, 'OPENROUTER_API_KEY', None))}")
+        
         embedding = await generate_embedding_async(question)
         if not embedding:
-            logger.warning("⚠️ Не удалось сгенерировать эмбеддинг для вопроса")
+            logger.error("⚠️ Не удалось сгенерировать эмбеддинг для вопроса")
+            logger.error(f"   Проверьте OPENROUTER_API_KEY и EMBEDDING_MODEL в настройках")
+            logger.error(f"   OPENROUTER_API_KEY: {'установлен' if getattr(settings, 'OPENROUTER_API_KEY', None) else 'НЕ УСТАНОВЛЕН'}")
+            logger.error(f"   EMBEDDING_MODEL: {getattr(settings, 'EMBEDDING_MODEL', 'НЕ УСТАНОВЛЕН')}")
             return False
+        
+        logger.info(f"[Q&A INDEX] ✅ Эмбеддинг сгенерирован, размерность: {len(embedding)}")
         
         # Получаем клиент Qdrant
+        logger.info(f"[Q&A INDEX] 🔗 Подключаюсь к Qdrant...")
+        logger.info(f"[Q&A INDEX]    QDRANT_URL: {get_qdrant_config_value('url', default='не установлен')}")
+        logger.info(f"[Q&A INDEX]    QDRANT_API_KEY: {'установлен' if get_qdrant_config_value('api_key', default=None) or getattr(settings, 'QDRANT_API_KEY', None) else 'не установлен'}")
+        
         client = get_qdrant_client()
         if not client:
-            logger.warning("⚠️ Qdrant клиент недоступен")
+            logger.error("⚠️ Qdrant клиент недоступен")
+            logger.error(f"   Проверьте QDRANT_URL и QDRANT_API_KEY в настройках")
+            logger.error(f"   QDRANT_URL: {get_qdrant_config_value('url', default='не установлен')}")
+            logger.error(f"   QDRANT_API_KEY: {'установлен' if get_qdrant_config_value('api_key', default=None) or getattr(settings, 'QDRANT_API_KEY', None) else 'НЕ УСТАНОВЛЕН'}")
             return False
         
+        logger.info(f"[Q&A INDEX] ✅ Qdrant клиент подключен")
+        
         # Убеждаемся что коллекция существует
+        logger.info(f"[Q&A INDEX] 📦 Проверяю коллекцию '{COLLECTION_NAME}'...")
+        logger.info(f"[Q&A INDEX]    Размерность эмбеддингов: {EMBEDDING_DIMENSION}")
+        
         if not ensure_collection():
-            logger.error("❌ Не удалось создать/проверить коллекцию")
+            logger.error(f"❌ Не удалось создать/проверить коллекцию '{COLLECTION_NAME}'")
+            logger.error(f"   Проверьте подключение к Qdrant и права доступа")
             return False
+        
+        logger.info(f"[Q&A INDEX] ✅ Коллекция '{COLLECTION_NAME}' проверена/создана")
         
         # Подготавливаем метаданные
         payload = {
@@ -330,28 +423,44 @@ async def index_qa_to_qdrant_async(
         # Генерируем ID для точки
         text_hash = hashlib.md5(f"qa_{question}_{answer}".encode()).hexdigest()
         point_id = int(text_hash[:8], 16)
+        logger.info(f"[Q&A INDEX] 📍 Сгенерирован point_id: {point_id}")
+        logger.info(f"[Q&A INDEX]    Hash: {text_hash[:16]}...")
         
         # Добавляем точку в Qdrant (синхронный вызов в executor)
+        logger.info(f"[Q&A INDEX] 💾 Добавляю точку в Qdrant...")
+        logger.info(f"[Q&A INDEX]    Коллекция: {COLLECTION_NAME}")
+        logger.info(f"[Q&A INDEX]    Размер payload: {len(str(payload))} символов")
+        
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            None,
-            lambda: client.upsert(
-                collection_name=COLLECTION_NAME,
-                points=[
-                    PointStruct(
-                        id=point_id,
-                        vector=embedding,
-                        payload=payload
-                    )
-                ]
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: client.upsert(
+                    collection_name=COLLECTION_NAME,
+                    points=[
+                        PointStruct(
+                            id=point_id,
+                            vector=embedding,
+                            payload=payload
+                        )
+                    ]
+                )
             )
-        )
+            logger.info(f"[Q&A INDEX] ✅ Точка успешно добавлена в Qdrant")
+        except Exception as upsert_error:
+            logger.error(f"[Q&A INDEX] ❌ Ошибка при добавлении точки в Qdrant: {upsert_error}")
+            logger.error(f"[Q&A INDEX]    Тип ошибки: {type(upsert_error).__name__}")
+            import traceback
+            logger.error(f"[Q&A INDEX]    Traceback: {traceback.format_exc()}")
+            raise
         
         logger.info(f"✅ Q&A пара индексирована в Qdrant async (point_id={point_id})")
+        logger.info(f"[Q&A INDEX] ✅ Индексация завершена успешно")
         return True
         
     except Exception as e:
         logger.error(f"❌ Ошибка индексации Q&A пары async: {e}")
+        logger.error(f"   Тип ошибки: {type(e).__name__}")
         import traceback
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
         return False
