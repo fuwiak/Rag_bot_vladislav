@@ -5,7 +5,8 @@
 - Индексацию документов в Qdrant для RAG
 """
 from aiogram import Dispatcher, F
-from aiogram.types import Message, Document as TelegramDocument, ChatAction
+from aiogram.types import Message, Document as TelegramDocument
+from aiogram.enums import ChatAction
 from aiogram.fsm.context import FSMContext
 from uuid import UUID
 import logging

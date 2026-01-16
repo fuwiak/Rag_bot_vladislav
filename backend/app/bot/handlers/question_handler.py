@@ -5,7 +5,8 @@
 - Q&A пары в формате "Q: ... A: ..." для добавления в базу знаний
 """
 from aiogram import Dispatcher, F
-from aiogram.types import Message, ChatAction
+from aiogram.types import Message
+from aiogram.enums import ChatAction
 from aiogram.fsm.context import FSMContext
 from uuid import UUID
 
