@@ -56,7 +56,7 @@ def is_greeting_or_simple_message(text: str) -> bool:
     words = text_lower.split()
     if len(words) <= 2 and len(text_lower) < 20:
         # Исключаем вопросы (содержат вопросительные слова)
-        question_words = ["что", "как", "где", "когда", "кто", "почему", "зачем", "сколько"]
+        question_words = ["что", "как", "где", "когда", "кто", "почему", "зачем", "сколько", "чей", "чья", "чьё", "чьи"]
         if not any(qw in words for qw in question_words):
             return True
     
