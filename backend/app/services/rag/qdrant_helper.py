@@ -75,19 +75,53 @@ def get_qdrant_client() -> Optional[QdrantClient]:
             url=qdrant_url,
             api_key=qdrant_api_key if qdrant_api_key else None,
             prefer_grpc=False,
-            timeout=30
+            timeout=10  # Уменьшенный таймаут для быстрой проверки
         )
         
-        # Проверяем подключение
-        collections = _qdrant_client.get_collections()
-        collection_names = [c.name for c in collections.collections]
-        logger.info(f"✅ Подключено к Qdrant. Коллекции: {collection_names}")
+        # Проверяем подключение с коротким таймаутом
+        try:
+            collections = _qdrant_client.get_collections()
+            collection_names = [c.name for c in collections.collections]
+            logger.info(f"✅ Подключено к Qdrant. Коллекции: {collection_names}")
+        except Exception as check_error:
+            logger.warning(f"⚠️ Qdrant доступен, но проверка коллекций заняла слишком долго: {check_error}")
+            # Не возвращаем None, клиент может быть полезен для других операций
         
         return _qdrant_client
         
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к Qdrant: {e}")
         return None
+
+
+def is_qdrant_available() -> bool:
+    """
+    Быстрая проверка доступности Qdrant (без долгих операций)
+    
+    Returns:
+        True если Qdrant доступен, False если таймаут или ошибка
+    """
+    try:
+        client = get_qdrant_client()
+        if not client:
+            return False
+        
+        # Быстрая проверка - просто пытаемся получить коллекции
+        # Используем короткий таймаут на уровне клиента (уже установлен в get_qdrant_client)
+        try:
+            _ = client.get_collections()
+            return True
+        except Exception as e:
+            error_str = str(e).lower()
+            if "timeout" in error_str or "timed out" in error_str:
+                logger.warning(f"⚠️ Qdrant check timeout")
+            else:
+                logger.warning(f"⚠️ Qdrant check error: {e}")
+            return False
+            
+    except Exception as e:
+        logger.warning(f"⚠️ Qdrant availability check failed: {e}")
+        return False
 
 
 def ensure_collection() -> bool:

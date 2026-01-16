@@ -498,16 +498,60 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                     logger.error(f"[QUESTION HANDLER] GENERAL MODE: Error for user {user_id}: {general_error}", exc_info=True)
                     answer = "Извините, произошла ошибка при обработке вашего вопроса. Попробуйте позже."
             else:
-                # Режим RAG - сначала пробуем простой режим (jak prosty kod)
-                # Если не работает, пробуем полный RAG
+                # Режим RAG - проверяем доступность Qdrant перед использованием
+                from app.services.rag.qdrant_helper import is_qdrant_available
+                
+                qdrant_available = False
                 try:
-                    logger.info(f"[QUESTION HANDLER] Trying simple RAG mode first for user {user_id}")
-                    answer = await asyncio.wait_for(
-                        rag_service.generate_answer_simple(user_id, question, top_k=5, use_local_embeddings=True),
-                        timeout=15.0
+                    # Быстрая проверка доступности Qdrant (с таймаутом 3 секунды)
+                    qdrant_available = await asyncio.wait_for(
+                        asyncio.to_thread(is_qdrant_available),
+                        timeout=3.0
                     )
-                    logger.info(f"[QUESTION HANDLER] Simple RAG answer generated successfully for user {user_id}")
                 except asyncio.TimeoutError:
+                    logger.warning(f"[QUESTION HANDLER] Qdrant availability check timeout for user {user_id}")
+                    qdrant_available = False
+                except Exception as e:
+                    logger.warning(f"[QUESTION HANDLER] Qdrant availability check error: {e}")
+                    qdrant_available = False
+                
+                if not qdrant_available:
+                    logger.warning(f"[QUESTION HANDLER] Qdrant недоступен, используем простой ответ без RAG для user {user_id}")
+                    # Используем простой LLM ответ без RAG
+                    try:
+                        from app.llm.openrouter_client import OpenRouterClient
+                        from app.core.config import settings as app_settings
+                        
+                        llm_client = OpenRouterClient(
+                            model_primary=app_settings.OPENROUTER_MODEL_PRIMARY,
+                            model_fallback=app_settings.OPENROUTER_MODEL_FALLBACK
+                        )
+                        
+                        simple_answer = await llm_client.chat_completion(
+                            messages=[
+                                {"role": "system", "content": "Ты дружелюбный помощник. Отвечай кратко и по делу."},
+                                {"role": "user", "content": question}
+                            ],
+                            max_tokens=500,
+                            temperature=0.7
+                        )
+                        
+                        answer = simple_answer.strip() if simple_answer else "Извините, не могу ответить на этот вопрос. Qdrant временно недоступен."
+                        logger.info(f"[QUESTION HANDLER] Simple LLM answer (no RAG) generated for user {user_id}")
+                    except Exception as simple_error:
+                        logger.error(f"[QUESTION HANDLER] Simple LLM also failed: {simple_error}")
+                        answer = "Извините, сервис временно недоступен. Попробуйте позже."
+                else:
+                    # Qdrant доступен - используем RAG
+                    try:
+                        logger.info(f"[QUESTION HANDLER] Qdrant доступен, используем RAG для user {user_id}")
+                        logger.info(f"[QUESTION HANDLER] Trying simple RAG mode first for user {user_id}")
+                        answer = await asyncio.wait_for(
+                            rag_service.generate_answer_simple(user_id, question, top_k=5, use_local_embeddings=True),
+                            timeout=10.0  # Уменьшенный таймаут
+                        )
+                        logger.info(f"[QUESTION HANDLER] Simple RAG answer generated successfully for user {user_id}")
+                    except asyncio.TimeoutError:
                     logger.warning(f"[QUESTION HANDLER] Simple RAG timeout for user {user_id}, trying full RAG")
                     try:
                         answer = await asyncio.wait_for(
