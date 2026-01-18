@@ -3,6 +3,7 @@
 """
 from aiogram import Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.enums import ChatAction
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
@@ -997,6 +998,12 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
     import logging
     logger = logging.getLogger(__name__)
     
+    # Показываем ChatAction для всего проекта
+    try:
+        await callback.bot.send_chat_action(callback.message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send chat action: {e}")
+    
     current_state = await state.get_state()
     if current_state != AuthStates.authorized:
         await callback.answer("Пожалуйста, сначала авторизуйтесь через /start", show_alert=True)
@@ -1176,6 +1183,12 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
     """Обработка callback для скачивания и удаления документов"""
     import logging
     logger = logging.getLogger(__name__)
+    
+    # Показываем ChatAction для всего проекта
+    try:
+        await callback.bot.send_chat_action(callback.message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send chat action: {e}")
     
     current_state = await state.get_state()
     if current_state != AuthStates.authorized:
