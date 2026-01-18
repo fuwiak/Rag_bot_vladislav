@@ -35,7 +35,12 @@ def resolve_env_vars(value: Any) -> Any:
             var_name = match.group(1)
             value = os.getenv(var_name)
             if value is None:
-                logger.warning(f"Environment variable {var_name} is not set")
+                # Не критичные переменные для RAM режима Qdrant
+                non_critical_vars = ["QDRANT_HOST", "QDRANT_API_KEY", "QDRANT_PORT"]
+                if var_name in non_critical_vars:
+                    logger.debug(f"Environment variable {var_name} is not set (not required for RAM mode)")
+                else:
+                    logger.warning(f"Environment variable {var_name} is not set")
                 return match.group(0)  # Возвращаем исходную строку, если переменная не найдена
             return value
         

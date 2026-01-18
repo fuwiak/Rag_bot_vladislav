@@ -31,7 +31,7 @@ try:
     SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
-    logger.warning("sentence-transformers не установлен. Локальные embeddings недоступны. Установите: pip install sentence-transformers")
+    logger.info("sentence-transformers не установлен. Локальные embeddings недоступны. Используются API embeddings. Для локальных embeddings установите: pip install sentence-transformers")
 
 
 class EmbeddingService:

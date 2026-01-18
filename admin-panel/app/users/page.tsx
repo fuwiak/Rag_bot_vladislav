@@ -85,6 +85,11 @@ export default function UsersPage() {
       const projectsRes = await apiFetch('/api/projects')
 
       if (!projectsRes.ok) {
+        if (projectsRes.status === 401 || projectsRes.status === 403) {
+          // Проблема с авторизацией - перенаправляем на страницу входа
+          window.location.href = '/login'
+          return
+        }
         throw new Error(`Ошибка загрузки проектов: ${projectsRes.status}`)
       }
 
