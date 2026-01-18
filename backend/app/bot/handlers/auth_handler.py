@@ -195,7 +195,8 @@ async def handle_text_before_auth(message: Message, state: FSMContext):
     
     Этот обработчик срабатывает для всех текстовых сообщений, которые не обрабатываются
     более специфичными обработчиками (с фильтрами состояний).
-    Если пользователь вводит текст, а состояние не установлено, пытаемся обработать как пароль.
+    Если пользователь вводит текст, а состояние не установлено, проверяем существование пользователя в БД.
+    Если пользователь существует - автоматически авторизуем, иначе запрашиваем пароль.
     
     ВАЖНО: Этот обработчик НЕ должен перехватывать сообщения авторизованных пользователей!
     """
@@ -210,9 +211,53 @@ async def handle_text_before_auth(message: Message, state: FSMContext):
         logger.debug(f"[AUTH HANDLER] User is authorized, skipping handle_text_before_auth")
         return  # Пропускаем, чтобы вопрос обработал question_handler
     
-    # Если состояние не установлено, устанавливаем waiting_password и обрабатываем как пароль
+    # Если состояние не установлено, проверяем существование пользователя в БД
     if current_state is None:
-        logger.info(f"[AUTH HANDLER] No state set, setting waiting_password and processing as password")
+        logger.info(f"[AUTH HANDLER] No state set, checking if user exists in DB")
+        
+        async with AsyncSessionLocal() as db:
+            from app.models.user import User
+            from app.models.project import Project
+            from sqlalchemy import select
+            
+            telegram_user_id = str(message.from_user.id)
+            telegram_username = message.from_user.username
+            
+            # Ищем пользователя по telegram_id или username
+            user_result = await db.execute(
+                select(User).where(
+                    (User.telegram_id == telegram_user_id) | 
+                    (User.username == telegram_username)
+                )
+            )
+            existing_user = user_result.scalar_one_or_none()
+            
+            if existing_user and existing_user.status != "blocked":
+                # Пользователь существует - автоматически авторизуем
+                logger.info(f"[AUTH HANDLER] User {telegram_user_id} already exists, auto-authorizing")
+                
+                # Получаем проект
+                project_result = await db.execute(
+                    select(Project).where(Project.id == existing_user.project_id)
+                )
+                project = project_result.scalar_one_or_none()
+                
+                if project:
+                    # Сохраняем данные в состоянии
+                    await state.update_data(
+                        project_id=str(project.id),
+                        user_id=str(existing_user.id),
+                        answer_mode="rag_mode"  # По умолчанию режим RAG
+                    )
+                    await state.set_state(AuthStates.authorized)
+                    logger.info(f"[AUTH HANDLER] User auto-authorized, state set to authorized")
+                    # Возвращаемся, чтобы вопрос обработал question_handler
+                    return
+                else:
+                    logger.warning(f"[AUTH HANDLER] User exists but project not found")
+        
+        # Если пользователь не найден, запрашиваем пароль
+        logger.info(f"[AUTH HANDLER] User not found, setting waiting_password and processing as password")
         await state.set_state(AuthStates.waiting_password)
         # Рекурсивно вызываем handle_password
         await handle_password(message, state)
