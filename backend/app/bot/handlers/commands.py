@@ -10,6 +10,8 @@ from app.core.database import AsyncSessionLocal
 from app.models.project import Project
 from app.bot.handlers.auth_handler import AuthStates
 from sqlalchemy import select
+from pathlib import Path
+from uuid import UUID
 
 
 async def cmd_start(message: Message, state: FSMContext, project_id: str = None):
