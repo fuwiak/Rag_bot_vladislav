@@ -38,90 +38,95 @@ class RAGSuggestions:
         collection_name = f"project_{project_id}"
         
         try:
-            # Сначала пытаемся получить чанки из Qdrant (если документы уже проиндексированы)
-            chunk_texts = []
-            collection_exists = await self.vector_store.collection_exists(collection_name)
+            # Сначала проверяем наличие документов в БД (независимо от Qdrant)
+            from app.models.document import Document, DocumentChunk
+            from sqlalchemy import select, text
             
-            if collection_exists:
-                # Пытаемся получить несколько случайных точек из коллекции Qdrant
-                try:
-                    # Получаем клиент Qdrant через wrapper
-                    from app.vector_db.qdrant_client import QdrantClientWrapper
-                    qdrant_wrapper = QdrantClientWrapper()
-                    qdrant_client = qdrant_wrapper.get_client()
-                    
-                    # Получаем несколько случайных точек из коллекции через scroll
-                    scroll_result = qdrant_client.scroll(
-                        collection_name=collection_name,
-                        limit=10,
-                        with_payload=True,
-                        with_vectors=False
-                    )
-                    
-                    if scroll_result and len(scroll_result[0]) > 0:
-                        for point in scroll_result[0][:10]:
-                            if point.payload and 'chunk_text' in point.payload:
-                                chunk_text = point.payload['chunk_text']
-                                if chunk_text:
-                                    chunk_texts.append(chunk_text[:500])
-                        logger.info(f"[RAG SUGGESTIONS] Found {len(chunk_texts)} chunks in Qdrant for project {project_id}")
-                except Exception as qdrant_error:
-                    logger.warning(f"[RAG SUGGESTIONS] Error reading from Qdrant: {qdrant_error}, trying DB")
+            # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
+            try:
+                # Пробуем обычный запрос
+                result = await self.db.execute(
+                    select(Document)
+                    .where(Document.project_id == project_id)
+                    .limit(10)
+                )
+                documents = result.scalars().all()
+            except Exception as db_error:
+                # Если ошибка из-за отсутствия поля summary, используем raw SQL
+                error_str = str(db_error).lower()
+                if "summary" in error_str or "column" in error_str:
+                    logger.warning(f"[RAG SUGGESTIONS] Summary column not found in DB, using raw SQL query")
+                    # Используем raw SQL для получения документов без summary
+                    try:
+                        result = await self.db.execute(
+                            text("SELECT id, project_id, filename, content, file_type, created_at FROM documents WHERE project_id = :project_id LIMIT 10"),
+                            {"project_id": str(project_id)}
+                        )
+                        # Преобразуем результаты в объекты Document вручную
+                        documents = []
+                        for row in result:
+                            doc = Document()
+                            doc.id = row[0]
+                            doc.project_id = row[1]
+                            doc.filename = row[2]
+                            doc.content = row[3] if row[3] else ""
+                            doc.file_type = row[4]
+                            doc.created_at = row[5]
+                            # Поле summary отсутствует - устанавливаем None через setattr
+                            try:
+                                setattr(doc, 'summary', None)
+                            except:
+                                pass
+                            documents.append(doc)
+                    except Exception as sql_error:
+                        logger.error(f"[RAG SUGGESTIONS] Error with raw SQL query: {sql_error}")
+                        documents = []
+                else:
+                    # Другая ошибка - пробрасываем дальше
+                    raise
+            
+            if not documents:
+                logger.info(f"[RAG SUGGESTIONS] No documents found for project {project_id}")
+                return []
+            
+            logger.info(f"[RAG SUGGESTIONS] Found {len(documents)} documents in DB for project {project_id}")
+            
+            # Теперь пытаемся получить чанки из Qdrant (если доступен)
+            chunk_texts = []
+            try:
+                collection_exists = await self.vector_store.collection_exists(collection_name)
+                
+                if collection_exists:
+                    # Пытаемся получить несколько случайных точек из коллекции Qdrant
+                    try:
+                        # Получаем клиент Qdrant через wrapper
+                        from app.vector_db.qdrant_client import QdrantClientWrapper
+                        qdrant_wrapper = QdrantClientWrapper()
+                        qdrant_client = qdrant_wrapper.get_client()
+                        
+                        # Получаем несколько случайных точек из коллекции через scroll
+                        scroll_result = qdrant_client.scroll(
+                            collection_name=collection_name,
+                            limit=10,
+                            with_payload=True,
+                            with_vectors=False
+                        )
+                        
+                        if scroll_result and len(scroll_result[0]) > 0:
+                            for point in scroll_result[0][:10]:
+                                if point.payload and 'chunk_text' in point.payload:
+                                    chunk_text = point.payload['chunk_text']
+                                    if chunk_text:
+                                        chunk_texts.append(chunk_text[:500])
+                            logger.info(f"[RAG SUGGESTIONS] Found {len(chunk_texts)} chunks in Qdrant for project {project_id}")
+                    except Exception as qdrant_error:
+                        logger.warning(f"[RAG SUGGESTIONS] Error reading from Qdrant: {qdrant_error}, using DB chunks")
+            except Exception as qdrant_check_error:
+                logger.warning(f"[RAG SUGGESTIONS] Qdrant check failed: {qdrant_check_error}, using DB chunks")
             
             # Если не нашли в Qdrant, пытаемся из БД
             if not chunk_texts:
-                from app.models.document import Document, DocumentChunk
                 from app.services.document_summary_service import DocumentSummaryService
-                
-                # Получаем документы проекта (безопасно, даже если поле summary отсутствует)
-                try:
-                    # Пробуем обычный запрос
-                    result = await self.db.execute(
-                        select(Document)
-                        .where(Document.project_id == project_id)
-                        .limit(10)
-                    )
-                    documents = result.scalars().all()
-                except Exception as db_error:
-                    # Если ошибка из-за отсутствия поля summary, используем raw SQL
-                    error_str = str(db_error).lower()
-                    if "summary" in error_str or "column" in error_str:
-                        logger.warning(f"[RAG SUGGESTIONS] Summary column not found in DB, using raw SQL query")
-                        # Используем raw SQL для получения документов без summary
-                        from sqlalchemy import text
-                        try:
-                            result = await self.db.execute(
-                                text("SELECT id, project_id, filename, content, file_type, created_at FROM documents WHERE project_id = :project_id LIMIT 10"),
-                                {"project_id": str(project_id)}
-                            )
-                            # Преобразуем результаты в объекты Document вручную
-                            documents = []
-                            for row in result:
-                                doc = Document()
-                                doc.id = row[0]
-                                doc.project_id = row[1]
-                                doc.filename = row[2]
-                                doc.content = row[3] if row[3] else ""
-                                doc.file_type = row[4]
-                                doc.created_at = row[5]
-                                # Поле summary отсутствует - устанавливаем None через setattr
-                                try:
-                                    setattr(doc, 'summary', None)
-                                except:
-                                    pass
-                                documents.append(doc)
-                        except Exception as sql_error:
-                            logger.error(f"[RAG SUGGESTIONS] Error with raw SQL query: {sql_error}")
-                            documents = []
-                    else:
-                        # Другая ошибка - пробрасываем дальше
-                        raise
-                
-                if not documents:
-                    logger.info(f"[RAG SUGGESTIONS] No documents found for project {project_id}")
-                    return []
-                
-                logger.info(f"[RAG SUGGESTIONS] Found {len(documents)} documents in DB for project {project_id}")
                 
                 # Получаем несколько чанков из разных документов
                 for doc in documents[:5]:  # Берем максимум 5 документов
@@ -146,26 +151,20 @@ class RAGSuggestions:
                         if doc_summary and doc_summary.strip():
                             chunk_texts.append(f"Документ '{doc.filename}': {doc_summary}")
                         else:
-                            # Приоритет 2: пытаемся создать summary (только если поле существует в БД)
-                            try:
-                                # Проверяем, существует ли поле summary в модели
-                                if hasattr(Document, 'summary'):
-                                    summary = await summary_service.generate_summary(doc.id)
-                                    if summary and summary.strip():
-                                        chunk_texts.append(f"Документ '{doc.filename}': {summary}")
-                                        continue
-                            except Exception as e:
-                                logger.warning(f"Error generating summary for doc {doc.id}: {e}")
-                            
-                            # Приоритет 3: используем содержимое напрямую
-                        if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
-                            # Берем первые 1000 символов из содержимого
-                            content = doc.content[:1000]
-                            if content.strip():
+                            # Приоритет 2: используем содержимое напрямую (если не "Обработка...")
+                            if doc.content and doc.content not in ["Обработка...", "Обработан", ""]:
+                                # Берем первые 1000 символов из содержимого
+                                content = doc.content[:1000]
+                                if content.strip():
                                     chunk_texts.append(f"Документ '{doc.filename}': {content}")
+                            # Приоритет 3: если документ еще обрабатывается, используем хотя бы имя файла
+                            elif doc.content == "Обработка...":
+                                # Используем имя файла для генерации вопросов
+                                chunk_texts.append(f"Документ '{doc.filename}' (тип: {doc.file_type}) - документ обрабатывается")
             
+            # Если все еще нет контента, используем метаданные или имена файлов
             if not chunk_texts:
-                logger.warning(f"[RAG SUGGESTIONS] No content found for project {project_id} - documents may still be processing")
+                logger.warning(f"[RAG SUGGESTIONS] No content found for project {project_id} - using document names")
                 # Используем метаданные документов для генерации вопросов
                 try:
                     from app.services.document_metadata_service import DocumentMetadataService
@@ -186,13 +185,21 @@ class RAGSuggestions:
                 except Exception as metadata_error:
                     logger.warning(f"[RAG SUGGESTIONS] Error getting metadata for questions: {metadata_error}")
                 
+                # Если метаданных нет, используем хотя бы имена файлов
+                if not chunk_texts and documents:
+                    doc_names = [doc.filename for doc in documents[:5]]
+                    chunk_texts = [f"Доступные документы в проекте: {', '.join(doc_names)}"]
+                    logger.info(f"[RAG SUGGESTIONS] Using document names: {doc_names}")
+                
                 if not chunk_texts:
+                    logger.warning(f"[RAG SUGGESTIONS] No content available for generating questions")
                     return []
             
             # Объединяем чанки в контекст
             context = "\n\n".join(chunk_texts[:10])  # Максимум 10 чанков
             
             # Используем LLM для генерации вопросов на основе контекста
+            from app.models.project import Project
             project_result = await self.db.execute(
                 select(Project).where(Project.id == project_id)
             )
