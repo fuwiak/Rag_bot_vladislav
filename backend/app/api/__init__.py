@@ -2,7 +2,7 @@
 API роутеры
 """
 from fastapi import APIRouter
-from app.api import auth, projects, documents, users, bots, models, rag_debug
+from app.api import auth, projects, documents, users, bots, models, rag_debug, document_agent_api
 
 router = APIRouter()
 
@@ -14,4 +14,5 @@ router.include_router(users.router, prefix="/users", tags=["users"])
 router.include_router(bots.router, prefix="/bots", tags=["bots"])
 router.include_router(models.router, prefix="/models", tags=["models"])
 router.include_router(rag_debug.router, prefix="/rag", tags=["rag-debug"])
+router.include_router(document_agent_api.router)
 

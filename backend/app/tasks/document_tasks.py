@@ -15,8 +15,11 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация для больших документов
 LARGE_DOCUMENT_THRESHOLD = 500_000  # 500KB текста
+VERY_LARGE_DOCUMENT_THRESHOLD = 2_000_000  # 2MB текста (примерно 200+ страниц)
 MAX_BATCH_SIZE_LARGE = 5  # Меньший батч для больших документов
 MAX_BATCH_SIZE_NORMAL = 10  # Обычный размер батча
+MAX_BATCH_SIZE_VERY_LARGE = 3  # Еще меньший батч для очень больших документов
+PDF_PAGES_PER_BATCH = 50  # Обрабатываем PDF по 50 страниц за раз
 
 
 class DatabaseTask(Task):
@@ -476,9 +479,10 @@ async def process_large_document_async_langgraph(
             await db.commit()
             return
         
-        # Определяем, большой ли документ
+        # Определяем размер документа
         is_large_document = len(text) > LARGE_DOCUMENT_THRESHOLD
-        logger.info(f"[Celery LangGraph] Document size: {len(text)} chars, is_large: {is_large_document}")
+        is_very_large_document = len(text) > VERY_LARGE_DOCUMENT_THRESHOLD
+        logger.info(f"[Celery LangGraph] Document size: {len(text)} chars, is_large: {is_large_document}, is_very_large: {is_very_large_document}")
         
         # Сохраняем контент
         MAX_CONTENT_SIZE = 2_000_000
@@ -535,7 +539,14 @@ async def process_large_document_async_langgraph(
         vector_store = VectorStore()
         
         # Определяем размер батча в зависимости от размера документа
-        batch_size = MAX_BATCH_SIZE_LARGE if is_large_document else MAX_BATCH_SIZE_NORMAL
+        if is_very_large_document:
+            batch_size = MAX_BATCH_SIZE_VERY_LARGE
+            logger.info(f"[Celery LangGraph] Используем очень маленький батч ({batch_size}) для быстрой индексации")
+        elif is_large_document:
+            batch_size = MAX_BATCH_SIZE_LARGE
+        else:
+            batch_size = MAX_BATCH_SIZE_NORMAL
+        
         batch_points = []
         batch_chunks = []
         
@@ -598,10 +609,12 @@ async def process_large_document_async_langgraph(
                     batch_points = []
                     batch_chunks = []
                 
-                # Логируем прогресс
-                if chunk_index % 20 == 0:
+                # Логируем прогресс (чаще для очень больших документов)
+                log_interval = 10 if is_very_large_document else 20
+                if chunk_index % log_interval == 0:
                     chunk_memory_after = process.memory_info().rss / 1024 / 1024
-                    logger.info(f"[Celery LangGraph] Processed {chunk_index}/{len(chunks)}, memory: {chunk_memory_after:.2f}MB")
+                    progress_pct = (chunk_index + 1) / len(chunks) * 100
+                    logger.info(f"[Celery LangGraph] Processed {chunk_index + 1}/{len(chunks)} ({progress_pct:.1f}%), memory: {chunk_memory_after:.2f}MB")
                     gc.collect()
                 
             except Exception as e:

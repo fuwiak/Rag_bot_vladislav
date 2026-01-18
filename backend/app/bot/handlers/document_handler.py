@@ -18,7 +18,8 @@ import uuid as uuid_module
 from app.core.database import AsyncSessionLocal
 from app.bot.handlers.auth_handler import AuthStates
 from app.models.document import Document
-from app.tasks.document_tasks import process_document_task
+from app.tasks.document_tasks import process_document_task, process_large_document_with_langgraph
+from app.services.document_agent_adapter import DocumentAgentAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -287,16 +288,50 @@ async def handle_document(message: Message, state: FSMContext):
             with open(temp_path, 'wb') as f:
                 f.write(file_content)
             
-            # Запускаем обработку через Celery (для PostgreSQL)
-            task_result = process_document_task.delay(
-                str(document.id),
-                str(project_id),
-                str(temp_path),
-                file_name,
-                file_type
+            # Определяем, большой ли это PDF для использования быстрой индексации
+            is_large_pdf = (
+                file_type == "pdf" and 
+                file_size > 5 * 1024 * 1024  # Больше 5MB
             )
             
-            logger.info(f"[TELEGRAM UPLOAD] Celery task created: {task_result.id} for document {document.id}")
+            # Быстрая проверка размера для PDF
+            if is_large_pdf:
+                try:
+                    adapter = DocumentAgentAdapter()
+                    preview_text = await adapter._quick_pdf_preview(file_content)
+                    estimated_pages = len(preview_text) // 3000 if preview_text else 0
+                    
+                    if estimated_pages > 100:
+                        is_large_pdf = True
+                        logger.info(f"[TELEGRAM UPLOAD] Большой PDF обнаружен: ~{estimated_pages} страниц, используем быструю индексацию")
+                    else:
+                        is_large_pdf = False
+                except Exception as e:
+                    logger.warning(f"[TELEGRAM UPLOAD] Не удалось оценить размер PDF: {e}")
+                    is_large_pdf = False
+            
+            # Выбираем стратегию обработки
+            if is_large_pdf:
+                # Используем оптимизированную обработку для больших PDF
+                logger.info(f"[TELEGRAM UPLOAD] Используем быструю индексацию для большого PDF")
+                task_result = process_large_document_with_langgraph.delay(
+                    str(document.id),
+                    str(project_id),
+                    str(temp_path),
+                    file_name,
+                    file_type
+                )
+            else:
+                # Обычная обработка
+                task_result = process_document_task.delay(
+                    str(document.id),
+                    str(project_id),
+                    str(temp_path),
+                    file_name,
+                    file_type
+                )
+            
+            logger.info(f"[TELEGRAM UPLOAD] Celery task created: {task_result.id} for document {document.id}, is_large_pdf: {is_large_pdf}")
             
             # Также индексируем документ в Qdrant для RAG
             try:
@@ -339,16 +374,21 @@ async def handle_document(message: Message, state: FSMContext):
                         except:
                             pass
                         
-                        await processing_msg.edit_text(
+                        status_text = (
                             f"✅ Файл загружен и индексирован!\n\n"
                             f"📄 Название: {file_name}\n"
                             f"📊 Тип: {file_type.upper()}\n"
-                            f"📏 Размер: {file_size / 1024:.1f} KB\n"
-                            f"🔍 Чанков в RAG: {chunks_count}\n\n"
-                            f"⏳ Полная обработка документа продолжается в фоне.\n"
+                            f"📏 Размер: {file_size / 1024 / 1024:.2f} MB\n"
+                            f"🔍 Чанков в RAG: {chunks_count}\n"
+                        )
+                        if is_large_pdf:
+                            status_text += f"⚡ Используется быстрая индексация для большого PDF\n"
+                        status_text += (
+                            f"\n⏳ Полная обработка документа продолжается в фоне.\n"
                             f"📚 Документ уже доступен для поиска!\n"
                             f"Используйте /documents для просмотра списка документов."
                         )
+                        await processing_msg.edit_text(status_text)
                     else:
                         error_msg = qdrant_result.get("error", "Unknown error")
                         logger.warning(f"[TELEGRAM UPLOAD] ⚠️ Qdrant indexing failed: {error_msg}")

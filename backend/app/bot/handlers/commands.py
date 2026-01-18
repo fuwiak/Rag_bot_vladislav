@@ -825,7 +825,7 @@ async def cmd_upload(message: Message, state: FSMContext):
         "📤 <b>Загрузка файлов</b>\n\n"
         "Отправьте файл в этот чат, и он будет автоматически обработан и добавлен в базу знаний.\n\n"
         "📄 <b>Поддерживаемые форматы:</b>\n"
-        "• PDF (.pdf)\n"
+        "• PDF (.pdf) - автоматически используется быстрая индексация для больших файлов (200+ страниц)\n"
         "• Excel (.xlsx, .xls)\n"
         "• Word (.docx)\n"
         "• Текстовые файлы (.txt)\n\n"
@@ -833,13 +833,112 @@ async def cmd_upload(message: Message, state: FSMContext):
         "1. Просто отправьте файл в чат\n"
         "2. Бот автоматически обработает его\n"
         "3. Файл будет индексирован в RAG для поиска\n\n"
+        "⚡ <b>Оптимизация:</b>\n"
+        "• Большие PDF (200+ страниц) автоматически обрабатываются с быстрой индексацией\n"
+        "• Обработка выполняется в фоне через Celery\n\n"
         "⚠️ <b>Ограничения:</b>\n"
         "• Максимальный размер файла: 50 МБ\n"
         "• Обработка может занять некоторое время для больших файлов\n\n"
-        "📚 После загрузки файл будет доступен для поиска через RAG."
+        "📚 После загрузки файл будет доступен для поиска через RAG.\n\n"
+        "📁 <b>Также доступно:</b>\n"
+        "• /process_folder - обработать все файлы из папки проекта"
     )
     
     await message.answer(help_text, parse_mode="HTML")
+
+
+async def cmd_process_folder(message: Message, state: FSMContext):
+    """Обработка команды /process_folder - обработать все файлы из папки проекта"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Проверка авторизации
+    current_state = await state.get_state()
+    if current_state != AuthStates.authorized:
+        await message.answer("❌ Сначала авторизуйтесь через /start")
+        return
+    
+    data = await state.get_data()
+    project_id_str = data.get("project_id")
+    
+    if not project_id_str:
+        await message.answer("❌ Ошибка: проект не найден. Используйте /start")
+        return
+    
+    try:
+        project_id = UUID(project_id_str)
+    except ValueError:
+        await message.answer("❌ Ошибка: неверный ID проекта")
+        return
+    
+    processing_msg = await message.answer("⏳ Сканирую папку с документами...")
+    
+    try:
+        from app.services.document_agent_adapter import DocumentAgentAdapter
+        
+        adapter = DocumentAgentAdapter()
+        
+        # Сканируем папку
+        files = await adapter.scan_documents_folder(project_id=project_id)
+        
+        if not files:
+            await processing_msg.edit_text(
+                "📁 <b>Папка пуста</b>\n\n"
+                "В папке проекта не найдено файлов для обработки.\n\n"
+                "💡 <b>Как добавить файлы:</b>\n"
+                "1. Отправьте файл в чат бота (автоматическая обработка)\n"
+                "2. Или поместите файлы в папку: <code>media/documents/{project_id}/</code>",
+                parse_mode="HTML"
+            )
+            return
+        
+        # Показываем найденные файлы
+        files_text = f"📁 <b>Найдено файлов: {len(files)}</b>\n\n"
+        for i, file_info in enumerate(files[:10], 1):  # Показываем первые 10
+            size_mb = file_info['size'] / 1024 / 1024
+            files_text += f"{i}. {file_info['filename']} ({size_mb:.2f} MB)\n"
+        
+        if len(files) > 10:
+            files_text += f"\n... и еще {len(files) - 10} файлов\n"
+        
+        files_text += "\n⏳ Начинаю обработку..."
+        await processing_msg.edit_text(files_text, parse_mode="HTML")
+        
+        # Обрабатываем файлы
+        result = await adapter.process_all_files_from_folder(
+            project_id=project_id,
+            use_fast_indexing=True,  # Используем быструю индексацию
+            max_concurrent=3
+        )
+        
+        # Формируем итоговое сообщение
+        result_text = (
+            f"✅ <b>Обработка завершена!</b>\n\n"
+            f"📊 <b>Результаты:</b>\n"
+            f"• Обработано: {result['processed']}\n"
+            f"• Пропущено (уже обработаны): {result['skipped']}\n"
+            f"• Ошибки: {result['errors']}\n"
+            f"• Всего файлов: {result['total']}\n\n"
+        )
+        
+        if result['errors'] > 0:
+            result_text += "⚠️ Некоторые файлы не удалось обработать. Проверьте логи.\n\n"
+        
+        result_text += (
+            "📚 Обработка документов продолжается в фоне через Celery.\n"
+            "Используйте /documents для просмотра списка документов."
+        )
+        
+        await processing_msg.edit_text(result_text, parse_mode="HTML")
+        
+    except Exception as e:
+        logger.error(f"Error processing folder: {e}", exc_info=True)
+        await processing_msg.edit_text(
+            f"❌ <b>Ошибка обработки папки</b>\n\n"
+            f"Ошибка: {str(e)[:200]}\n\n"
+            f"Попробуйте позже или обратитесь к администратору.",
+            parse_mode="HTML"
+        )
 
 
 async def cmd_suggest_questions(message: Message, state: FSMContext):
@@ -1249,6 +1348,8 @@ def register_commands(dp: Dispatcher, project_id: str):
     dp.message.register(cmd_help, Command("help"))
     # Регистрируем команду /upload для загрузки файлов
     dp.message.register(cmd_upload, Command("upload", "загрузить", "загрузка", "файл"))
+    # Регистрируем команду /process_folder для обработки файлов из папки
+    dp.message.register(cmd_process_folder, Command("process_folder", "обработать_папку", "обработать_файлы"))
     # Регистрируем команду /documents и альтернативные варианты
     dp.message.register(cmd_documents, Command("documents"))
     dp.message.register(cmd_documents, Command("показать_документы"))
