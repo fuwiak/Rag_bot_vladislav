@@ -6,6 +6,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.enums import ChatAction
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+import asyncio
 
 from app.core.database import AsyncSessionLocal
 from app.models.project import Project
@@ -13,6 +14,28 @@ from app.bot.handlers.auth_handler import AuthStates
 from sqlalchemy import select
 from pathlib import Path
 from uuid import UUID
+
+
+async def keep_typing_indicator(bot, chat_id: int, duration: float = 60.0):
+    """
+    Периодически отправляет typing indicator во время длительной обработки
+    
+    Args:
+        bot: Экземпляр бота
+        chat_id: ID чата
+        duration: Продолжительность в секундах (по умолчанию 60)
+    """
+    try:
+        end_time = asyncio.get_event_loop().time() + duration
+        while asyncio.get_event_loop().time() < end_time:
+            await bot.send_chat_action(chat_id, ChatAction.TYPING)
+            await asyncio.sleep(3)  # Отправляем каждые 3 секунды (typing indicator живет ~5 секунд)
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error in keep_typing_indicator: {e}")
 
 
 async def cmd_start(message: Message, state: FSMContext, project_id: str = None):
@@ -998,7 +1021,7 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
     import logging
     logger = logging.getLogger(__name__)
     
-    # Показываем ChatAction для всего проекта
+    # Показываем ChatAction сразу при нажатии кнопки
     try:
         await callback.bot.send_chat_action(callback.message.chat.id, ChatAction.TYPING)
     except Exception as e:
@@ -1008,6 +1031,9 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
     if current_state != AuthStates.authorized:
         await callback.answer("Пожалуйста, сначала авторизуйтесь через /start", show_alert=True)
         return
+    
+    # Запускаем периодическую отправку ChatAction для длительных операций
+    typing_task = None
     
     data = await state.get_data()
     mode = callback.data
@@ -1117,12 +1143,23 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
     elif mode == "suggest_questions":
         # Вызываем команду предложения вопросов напрямую
         await callback.answer()
+        
+        # Запускаем периодическую отправку ChatAction
+        try:
+            typing_task = asyncio.create_task(
+                keep_typing_indicator(callback.bot, callback.message.chat.id, duration=30.0)
+            )
+        except Exception as e:
+            logger.warning(f"Failed to start typing task: {e}")
+        
         # Вызываем логику напрямую, используя callback.message
         import logging
         logger = logging.getLogger(__name__)
         
         current_state = await state.get_state()
         if current_state != AuthStates.authorized:
+            if typing_task:
+                typing_task.cancel()
             await callback.message.answer("Пожалуйста, сначала авторизуйтесь через /start")
             return
         
@@ -1130,6 +1167,8 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
         project_id_from_state = data.get("project_id")
         
         if not project_id_from_state:
+            if typing_task:
+                typing_task.cancel()
             await callback.message.answer("Ошибка: проект не определен. Используйте /start.")
             return
         
@@ -1165,18 +1204,60 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
             logger.error(f"Error generating suggested questions: {e}", exc_info=True)
             await processing_msg.delete()
             await callback.message.answer("❌ Произошла ошибка при генерации вопросов. Попробуйте позже.")
+        finally:
+            if typing_task:
+                typing_task.cancel()
     elif mode == "get_summary":
         # Вызываем команду summary напрямую
         await callback.answer()
-        await cmd_summary(callback.message, state)
+        
+        # Запускаем периодическую отправку ChatAction
+        try:
+            typing_task = asyncio.create_task(
+                keep_typing_indicator(callback.bot, callback.message.chat.id, duration=120.0)
+            )
+        except Exception as e:
+            logger.warning(f"Failed to start typing task: {e}")
+        
+        try:
+            await cmd_summary(callback.message, state)
+        finally:
+            if typing_task:
+                typing_task.cancel()
     elif mode == "get_description":
         # Вызываем команду describe напрямую
         await callback.answer()
-        await cmd_describe(callback.message, state)
+        
+        # Запускаем периодическую отправку ChatAction
+        try:
+            typing_task = asyncio.create_task(
+                keep_typing_indicator(callback.bot, callback.message.chat.id, duration=120.0)
+            )
+        except Exception as e:
+            logger.warning(f"Failed to start typing task: {e}")
+        
+        try:
+            await cmd_describe(callback.message, state)
+        finally:
+            if typing_task:
+                typing_task.cancel()
     elif mode == "get_analysis":
         # Вызываем команду analyze напрямую
         await callback.answer()
-        await cmd_analyze(callback.message, state)
+        
+        # Запускаем периодическую отправку ChatAction
+        try:
+            typing_task = asyncio.create_task(
+                keep_typing_indicator(callback.bot, callback.message.chat.id, duration=180.0)
+            )
+        except Exception as e:
+            logger.warning(f"Failed to start typing task: {e}")
+        
+        try:
+            await cmd_analyze(callback.message, state)
+        finally:
+            if typing_task:
+                typing_task.cancel()
 
 
 async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
@@ -1184,175 +1265,193 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
     import logging
     logger = logging.getLogger(__name__)
     
-    # Показываем ChatAction для всего проекта
+    # Показываем ChatAction сразу при нажатии кнопки
     try:
         await callback.bot.send_chat_action(callback.message.chat.id, ChatAction.TYPING)
     except Exception as e:
         logger.warning(f"Failed to send chat action: {e}")
     
-    current_state = await state.get_state()
-    if current_state != AuthStates.authorized:
-        await callback.answer("Пожалуйста, сначала авторизуйтесь через /start", show_alert=True)
-        return
-    
-    data = await state.get_data()
-    project_id_str = data.get("project_id")
-    
-    if not project_id_str:
-        await callback.answer("❌ Ошибка: проект не найден", show_alert=True)
-        return
+    # Запускаем периодическую отправку ChatAction
+    typing_task = None
+    try:
+        typing_task = asyncio.create_task(
+            keep_typing_indicator(callback.bot, callback.message.chat.id, duration=30.0)
+        )
+    except Exception as e:
+        logger.warning(f"Failed to start typing task: {e}")
     
     try:
-        project_id = UUID(project_id_str)
-    except ValueError:
-        await callback.answer("❌ Ошибка: неверный ID проекта", show_alert=True)
-        return
-    
-    callback_data = callback.data
-    
-    if callback_data.startswith("download_doc_"):
-        # Скачивание документа
-        doc_id_str = callback_data.replace("download_doc_", "")
-        try:
-            doc_id = UUID(doc_id_str)
-        except ValueError:
-            await callback.answer("❌ Ошибка: неверный ID документа", show_alert=True)
+        current_state = await state.get_state()
+        if current_state != AuthStates.authorized:
+            await callback.answer("Пожалуйста, сначала авторизуйтесь через /start", show_alert=True)
             return
         
-        async with AsyncSessionLocal() as db:
-            from app.models.document import Document
-            from sqlalchemy import select
-            
-            result = await db.execute(select(Document).where(Document.id == doc_id))
-            document = result.scalar_one_or_none()
-            
-            if not document:
-                await callback.answer("❌ Документ не найден", show_alert=True)
-                return
-            
-            if document.project_id != project_id:
-                await callback.answer("❌ Доступ запрещен", show_alert=True)
-                return
-            
-            # Проверяем, существует ли файл
-            file_path = Path("media") / "documents" / str(project_id) / f"{document.id}_{document.filename}"
-            
-            if not file_path.exists():
-                await callback.answer("❌ Файл не найден на сервере", show_alert=True)
-                return
-            
-            try:
-                await callback.answer("📥 Отправляю файл...")
-                with open(file_path, 'rb') as f:
-                    await callback.message.bot.send_document(
-                        chat_id=callback.message.chat.id,
-                        document=f,
-                        caption=f"📄 {document.filename}"
-                    )
-            except Exception as e:
-                logger.error(f"Error sending document: {e}")
-                await callback.answer("❌ Ошибка при отправке файла", show_alert=True)
-    
-    elif callback_data.startswith("delete_doc_"):
-        # Удаление документа
-        doc_id_str = callback_data.replace("delete_doc_", "")
-        try:
-            doc_id = UUID(doc_id_str)
-        except ValueError:
-            await callback.answer("❌ Ошибка: неверный ID документа", show_alert=True)
+        data = await state.get_data()
+        project_id_str = data.get("project_id")
+        
+        if not project_id_str:
+            await callback.answer("❌ Ошибка: проект не найден", show_alert=True)
             return
         
-        # Показываем уведомление о начале удаления
-        await callback.answer("⏳ Удаляю документ...", show_alert=False)
+        try:
+            project_id = UUID(project_id_str)
+        except ValueError:
+            await callback.answer("❌ Ошибка: неверный ID проекта", show_alert=True)
+            return
         
-        async with AsyncSessionLocal() as db:
-            from app.models.document import Document
-            from sqlalchemy import select
-            
-            result = await db.execute(select(Document).where(Document.id == doc_id))
-            document = result.scalar_one_or_none()
-            
-            if not document:
-                await callback.answer("❌ Документ не найден", show_alert=True)
-                return
-            
-            if document.project_id != project_id:
-                await callback.answer("❌ Доступ запрещен", show_alert=True)
-                return
-            
-            filename = document.filename
-            delete_status = []
-            
-            # Удаляем файл с диска
-            file_path = Path("media") / "documents" / str(project_id) / f"{document.id}_{document.filename}"
-            if file_path.exists():
-                try:
-                    file_path.unlink()
-                    logger.info(f"Deleted file: {file_path}")
-                    delete_status.append("✅ Файл удален с диска")
-                except Exception as e:
-                    logger.warning(f"Error deleting file {file_path}: {e}")
-                    delete_status.append(f"⚠️ Ошибка удаления файла: {str(e)[:50]}")
-            else:
-                delete_status.append("ℹ️ Файл не найден на диске")
-            
-            # Удаляем документ из БД (каскадно удалятся чанки)
+        callback_data = callback.data
+        
+        if callback_data.startswith("download_doc_"):
+            # Скачивание документа
+            doc_id_str = callback_data.replace("download_doc_", "")
             try:
-                await db.delete(document)
-                await db.commit()
-                delete_status.append("✅ Документ удален из БД")
-            except Exception as e:
-                logger.error(f"Error deleting document from DB: {e}")
-                await db.rollback()
-                await callback.answer(f"❌ Ошибка удаления из БД: {str(e)[:100]}", show_alert=True)
+                doc_id = UUID(doc_id_str)
+            except ValueError:
+                await callback.answer("❌ Ошибка: неверный ID документа", show_alert=True)
                 return
             
-            # Удаляем из Qdrant
-            qdrant_status = ""
-            try:
-                from app.vector_db.vector_store import VectorStore
-                vector_store = VectorStore()
-                collection_name = f"project_{project_id}"
+            async with AsyncSessionLocal() as db:
+                from app.models.document import Document
+                from sqlalchemy import select
                 
-                # Удаляем все точки связанные с документом
-                from qdrant_client.models import Filter, FieldCondition, MatchValue
-                vector_store.client.delete(
-                    collection_name=collection_name,
-                    points_selector=Filter(
-                        must=[
-                            FieldCondition(
-                                key="document_id",
-                                match=MatchValue(value=str(doc_id))
-                            )
-                        ]
-                    )
-                )
-                logger.info(f"Deleted document {doc_id} from Qdrant")
-                qdrant_status = "✅ Векторы удалены из Qdrant"
-            except Exception as e:
-                logger.warning(f"Error deleting from Qdrant: {e}")
-                qdrant_status = f"⚠️ Ошибка удаления из Qdrant: {str(e)[:50]}"
-            
-            # Формируем итоговое сообщение
-            status_message = f"🗑️ <b>Документ удален</b>\n\n"
-            status_message += f"📄 <b>{filename}</b>\n\n"
-            status_message += "\n".join(delete_status) + "\n"
-            if qdrant_status:
-                status_message += qdrant_status
-            
-            # Обновляем сообщение с результатом удаления
+                result = await db.execute(select(Document).where(Document.id == doc_id))
+                document = result.scalar_one_or_none()
+                
+                if not document:
+                    await callback.answer("❌ Документ не найден", show_alert=True)
+                    return
+                
+                if document.project_id != project_id:
+                    await callback.answer("❌ Доступ запрещен", show_alert=True)
+                    return
+                
+                # Проверяем, существует ли файл
+                file_path = Path("media") / "documents" / str(project_id) / f"{document.id}_{document.filename}"
+                
+                if not file_path.exists():
+                    await callback.answer("❌ Файл не найден на сервере", show_alert=True)
+                    return
+                
+                try:
+                    await callback.answer("📥 Отправляю файл...")
+                    with open(file_path, 'rb') as f:
+                        await callback.message.bot.send_document(
+                            chat_id=callback.message.chat.id,
+                            document=f,
+                            caption=f"📄 {document.filename}"
+                        )
+                except Exception as e:
+                    logger.error(f"Error sending document: {e}")
+                    await callback.answer("❌ Ошибка при отправке файла", show_alert=True)
+        
+        elif callback_data.startswith("delete_doc_"):
+            # Удаление документа
+            doc_id_str = callback_data.replace("delete_doc_", "")
             try:
-                await callback.message.edit_text(
-                    status_message,
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                logger.warning(f"Error editing message: {e}")
-                # Если не удалось обновить, отправляем новое сообщение
-                await callback.message.answer(status_message, parse_mode="HTML")
+                doc_id = UUID(doc_id_str)
+            except ValueError:
+                await callback.answer("❌ Ошибка: неверный ID документа", show_alert=True)
+                return
             
-            # Показываем уведомление
-            await callback.answer(f"✅ Документ '{filename}' успешно удален", show_alert=False)
+            # Показываем уведомление о начале удаления
+            await callback.answer("⏳ Удаляю документ...", show_alert=False)
+            
+            async with AsyncSessionLocal() as db:
+                from app.models.document import Document
+                from sqlalchemy import select
+                
+                result = await db.execute(select(Document).where(Document.id == doc_id))
+                document = result.scalar_one_or_none()
+                
+                if not document:
+                    await callback.answer("❌ Документ не найден", show_alert=True)
+                    return
+                
+                if document.project_id != project_id:
+                    await callback.answer("❌ Доступ запрещен", show_alert=True)
+                    return
+                
+                filename = document.filename
+                delete_status = []
+                
+                # Удаляем файл с диска
+                file_path = Path("media") / "documents" / str(project_id) / f"{document.id}_{document.filename}"
+                if file_path.exists():
+                    try:
+                        file_path.unlink()
+                        logger.info(f"Deleted file: {file_path}")
+                        delete_status.append("✅ Файл удален с диска")
+                    except Exception as e:
+                        logger.warning(f"Error deleting file {file_path}: {e}")
+                        delete_status.append(f"⚠️ Ошибка удаления файла: {str(e)[:50]}")
+                else:
+                    delete_status.append("ℹ️ Файл не найден на диске")
+                
+                # Удаляем документ из БД (каскадно удалятся чанки)
+                try:
+                    await db.delete(document)
+                    await db.commit()
+                    delete_status.append("✅ Документ удален из БД")
+                except Exception as e:
+                    logger.error(f"Error deleting document from DB: {e}")
+                    await db.rollback()
+                    await callback.answer(f"❌ Ошибка удаления из БД: {str(e)[:100]}", show_alert=True)
+                    return
+                
+                # Удаляем из Qdrant
+                qdrant_status = ""
+                try:
+                    from app.vector_db.vector_store import VectorStore
+                    vector_store = VectorStore()
+                    collection_name = f"project_{project_id}"
+                    
+                    # Удаляем все точки связанные с документом
+                    from qdrant_client.models import Filter, FieldCondition, MatchValue
+                    vector_store.client.delete(
+                        collection_name=collection_name,
+                        points_selector=Filter(
+                            must=[
+                                FieldCondition(
+                                    key="document_id",
+                                    match=MatchValue(value=str(doc_id))
+                                )
+                            ]
+                        )
+                    )
+                    logger.info(f"Deleted document {doc_id} from Qdrant")
+                    qdrant_status = "✅ Векторы удалены из Qdrant"
+                except Exception as e:
+                    logger.warning(f"Error deleting from Qdrant: {e}")
+                    qdrant_status = f"⚠️ Ошибка удаления из Qdrant: {str(e)[:50]}"
+                
+                # Формируем итоговое сообщение
+                status_message = f"🗑️ <b>Документ удален</b>\n\n"
+                status_message += f"📄 <b>{filename}</b>\n\n"
+                status_message += "\n".join(delete_status) + "\n"
+                if qdrant_status:
+                    status_message += qdrant_status
+                
+                # Обновляем сообщение с результатом удаления
+                try:
+                    await callback.message.edit_text(
+                        status_message,
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.warning(f"Error editing message: {e}")
+                    # Если не удалось обновить, отправляем новое сообщение
+                    await callback.message.answer(status_message, parse_mode="HTML")
+                
+                # Показываем уведомление
+                await callback.answer(f"✅ Документ '{filename}' успешно удален", show_alert=False)
+    finally:
+        # Отменяем периодическую отправку ChatAction
+        if typing_task:
+            typing_task.cancel()
+            try:
+                await typing_task
+            except asyncio.CancelledError:
+                pass
 
 
 def register_commands(dp: Dispatcher, project_id: str):
