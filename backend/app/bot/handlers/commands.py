@@ -1150,6 +1150,9 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
             await callback.answer("❌ Ошибка: неверный ID документа", show_alert=True)
             return
         
+        # Показываем уведомление о начале удаления
+        await callback.answer("⏳ Удаляю документ...", show_alert=False)
+        
         async with AsyncSessionLocal() as db:
             from app.models.document import Document
             from sqlalchemy import select
@@ -1166,6 +1169,7 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
                 return
             
             filename = document.filename
+            delete_status = []
             
             # Удаляем файл с диска
             file_path = Path("media") / "documents" / str(project_id) / f"{document.id}_{document.filename}"
@@ -1173,14 +1177,26 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
                 try:
                     file_path.unlink()
                     logger.info(f"Deleted file: {file_path}")
+                    delete_status.append("✅ Файл удален с диска")
                 except Exception as e:
                     logger.warning(f"Error deleting file {file_path}: {e}")
+                    delete_status.append(f"⚠️ Ошибка удаления файла: {str(e)[:50]}")
+            else:
+                delete_status.append("ℹ️ Файл не найден на диске")
             
             # Удаляем документ из БД (каскадно удалятся чанки)
-            await db.delete(document)
-            await db.commit()
+            try:
+                await db.delete(document)
+                await db.commit()
+                delete_status.append("✅ Документ удален из БД")
+            except Exception as e:
+                logger.error(f"Error deleting document from DB: {e}")
+                await db.rollback()
+                await callback.answer(f"❌ Ошибка удаления из БД: {str(e)[:100]}", show_alert=True)
+                return
             
             # Удаляем из Qdrant
+            qdrant_status = ""
             try:
                 from app.vector_db.vector_store import VectorStore
                 vector_store = VectorStore()
@@ -1200,16 +1216,31 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
                     )
                 )
                 logger.info(f"Deleted document {doc_id} from Qdrant")
+                qdrant_status = "✅ Векторы удалены из Qdrant"
             except Exception as e:
                 logger.warning(f"Error deleting from Qdrant: {e}")
+                qdrant_status = f"⚠️ Ошибка удаления из Qdrant: {str(e)[:50]}"
             
-            await callback.answer(f"✅ Документ '{filename}' удален", show_alert=False)
+            # Формируем итоговое сообщение
+            status_message = f"🗑️ <b>Документ удален</b>\n\n"
+            status_message += f"📄 <b>{filename}</b>\n\n"
+            status_message += "\n".join(delete_status) + "\n"
+            if qdrant_status:
+                status_message += qdrant_status
             
-            # Удаляем сообщение с кнопками
+            # Обновляем сообщение с результатом удаления
             try:
-                await callback.message.delete()
+                await callback.message.edit_text(
+                    status_message,
+                    parse_mode="HTML"
+                )
             except Exception as e:
-                logger.warning(f"Error deleting message: {e}")
+                logger.warning(f"Error editing message: {e}")
+                # Если не удалось обновить, отправляем новое сообщение
+                await callback.message.answer(status_message, parse_mode="HTML")
+            
+            # Показываем уведомление
+            await callback.answer(f"✅ Документ '{filename}' успешно удален", show_alert=False)
 
 
 def register_commands(dp: Dispatcher, project_id: str):
