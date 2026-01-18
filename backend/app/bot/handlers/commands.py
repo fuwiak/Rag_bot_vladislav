@@ -375,9 +375,7 @@ async def cmd_documents(message: Message, state: FSMContext):
                                "Обратитесь к администратору для загрузки документов.")
             return
         
-        # Формируем список документов
-        docs_text = f"📄 <b>Документы проекта ({len(documents)}):</b>\n\n"
-        
+        # Отправляем документы по одному с кнопками для скачивания и удаления
         for i, doc in enumerate(documents, 1):
             # Определяем тип файла
             file_type_emoji = "📄"
@@ -388,25 +386,57 @@ async def cmd_documents(message: Message, state: FSMContext):
             elif doc.file_type == "txt":
                 file_type_emoji = "📝"
             
-            docs_text += f"{i}. {file_type_emoji} <b>{doc.filename}</b>\n"
+            # Формируем текст сообщения
+            doc_text = f"{file_type_emoji} <b>{doc.filename}</b>\n"
             if doc.content and doc.content != "Обработка..." and doc.content != "Обработан":
-                # Показываем первые 50 символов содержимого
-                preview = doc.content[:50].replace('\n', ' ')
-                if len(doc.content) > 50:
+                # Показываем первые 100 символов содержимого
+                preview = doc.content[:100].replace('\n', ' ')
+                if len(doc.content) > 100:
                     preview += "..."
-                docs_text += f"   <i>{preview}</i>\n"
-            docs_text += "\n"
-        
-        docs_text += "\n💡 <b>Совет:</b> Задавайте вопросы о содержании этих документов!"
-        
-        # Разбиваем на части, если слишком длинное
-        max_length = 4096
-        if len(docs_text) > max_length:
-            parts = [docs_text[i:i+max_length] for i in range(0, len(docs_text), max_length)]
-            for part in parts:
-                await message.answer(part)
-        else:
-            await message.answer(docs_text)
+                doc_text += f"<i>{preview}</i>\n"
+            
+            # Создаем кнопки
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+            
+            # Кнопка для скачивания (только для PDF)
+            if doc.file_type == "pdf":
+                file_path = Path("media") / "documents" / str(project_id) / f"{doc.id}_{doc.filename}"
+                if file_path.exists():
+                    # Отправляем файл напрямую
+                    try:
+                        with open(file_path, 'rb') as f:
+                            await message.bot.send_document(
+                                chat_id=message.chat.id,
+                                document=f,
+                                caption=doc_text,
+                                parse_mode="HTML",
+                                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                    [InlineKeyboardButton(
+                                        text="🗑️ Удалить",
+                                        callback_data=f"delete_doc_{doc.id}"
+                                    )]
+                                ])
+                            )
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error sending PDF file: {e}")
+                        # Если не удалось отправить файл, показываем кнопку
+                        keyboard.inline_keyboard.append([
+                            InlineKeyboardButton(
+                                text="📥 Скачать PDF",
+                                callback_data=f"download_doc_{doc.id}"
+                            )
+                        ])
+            
+            # Кнопка для удаления
+            keyboard.inline_keyboard.append([
+                InlineKeyboardButton(
+                    text="🗑️ Удалить",
+                    callback_data=f"delete_doc_{doc.id}"
+                )
+            ])
+            
+            await message.answer(doc_text, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def cmd_summary(message: Message, state: FSMContext):
@@ -1041,6 +1071,145 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
         await cmd_analyze(callback.message, state)
 
 
+async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработка callback для скачивания и удаления документов"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    current_state = await state.get_state()
+    if current_state != AuthStates.authorized:
+        await callback.answer("Пожалуйста, сначала авторизуйтесь через /start", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    project_id_str = data.get("project_id")
+    
+    if not project_id_str:
+        await callback.answer("❌ Ошибка: проект не найден", show_alert=True)
+        return
+    
+    try:
+        project_id = UUID(project_id_str)
+    except ValueError:
+        await callback.answer("❌ Ошибка: неверный ID проекта", show_alert=True)
+        return
+    
+    callback_data = callback.data
+    
+    if callback_data.startswith("download_doc_"):
+        # Скачивание документа
+        doc_id_str = callback_data.replace("download_doc_", "")
+        try:
+            doc_id = UUID(doc_id_str)
+        except ValueError:
+            await callback.answer("❌ Ошибка: неверный ID документа", show_alert=True)
+            return
+        
+        async with AsyncSessionLocal() as db:
+            from app.models.document import Document
+            from sqlalchemy import select
+            
+            result = await db.execute(select(Document).where(Document.id == doc_id))
+            document = result.scalar_one_or_none()
+            
+            if not document:
+                await callback.answer("❌ Документ не найден", show_alert=True)
+                return
+            
+            if document.project_id != project_id:
+                await callback.answer("❌ Доступ запрещен", show_alert=True)
+                return
+            
+            # Проверяем, существует ли файл
+            file_path = Path("media") / "documents" / str(project_id) / f"{document.id}_{document.filename}"
+            
+            if not file_path.exists():
+                await callback.answer("❌ Файл не найден на сервере", show_alert=True)
+                return
+            
+            try:
+                await callback.answer("📥 Отправляю файл...")
+                with open(file_path, 'rb') as f:
+                    await callback.message.bot.send_document(
+                        chat_id=callback.message.chat.id,
+                        document=f,
+                        caption=f"📄 {document.filename}"
+                    )
+            except Exception as e:
+                logger.error(f"Error sending document: {e}")
+                await callback.answer("❌ Ошибка при отправке файла", show_alert=True)
+    
+    elif callback_data.startswith("delete_doc_"):
+        # Удаление документа
+        doc_id_str = callback_data.replace("delete_doc_", "")
+        try:
+            doc_id = UUID(doc_id_str)
+        except ValueError:
+            await callback.answer("❌ Ошибка: неверный ID документа", show_alert=True)
+            return
+        
+        async with AsyncSessionLocal() as db:
+            from app.models.document import Document
+            from sqlalchemy import select
+            
+            result = await db.execute(select(Document).where(Document.id == doc_id))
+            document = result.scalar_one_or_none()
+            
+            if not document:
+                await callback.answer("❌ Документ не найден", show_alert=True)
+                return
+            
+            if document.project_id != project_id:
+                await callback.answer("❌ Доступ запрещен", show_alert=True)
+                return
+            
+            filename = document.filename
+            
+            # Удаляем файл с диска
+            file_path = Path("media") / "documents" / str(project_id) / f"{document.id}_{document.filename}"
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                    logger.info(f"Deleted file: {file_path}")
+                except Exception as e:
+                    logger.warning(f"Error deleting file {file_path}: {e}")
+            
+            # Удаляем документ из БД (каскадно удалятся чанки)
+            await db.delete(document)
+            await db.commit()
+            
+            # Удаляем из Qdrant
+            try:
+                from app.vector_db.vector_store import VectorStore
+                vector_store = VectorStore()
+                collection_name = f"project_{project_id}"
+                
+                # Удаляем все точки связанные с документом
+                from qdrant_client.models import Filter, FieldCondition, MatchValue
+                vector_store.client.delete(
+                    collection_name=collection_name,
+                    points_selector=Filter(
+                        must=[
+                            FieldCondition(
+                                key="document_id",
+                                match=MatchValue(value=str(doc_id))
+                            )
+                        ]
+                    )
+                )
+                logger.info(f"Deleted document {doc_id} from Qdrant")
+            except Exception as e:
+                logger.warning(f"Error deleting from Qdrant: {e}")
+            
+            await callback.answer(f"✅ Документ '{filename}' удален", show_alert=False)
+            
+            # Удаляем сообщение с кнопками
+            try:
+                await callback.message.delete()
+            except Exception as e:
+                logger.warning(f"Error deleting message: {e}")
+
+
 def register_commands(dp: Dispatcher, project_id: str):
     """Регистрация команд"""
     dp.message.register(cmd_start, Command("start"))
@@ -1061,3 +1230,5 @@ def register_commands(dp: Dispatcher, project_id: str):
     dp.message.register(cmd_analyze, Command("analyze", "анализ", "analysis", "анализ_документа"))
     # Регистрируем обработчик callback для переключения режимов и типовых запросов
     dp.callback_query.register(handle_mode_callback)
+    # Регистрируем обработчик для callback документов (download_doc_*, delete_doc_*)
+    dp.callback_query.register(handle_document_callback, F.data.startswith("download_doc_") | F.data.startswith("delete_doc_"))

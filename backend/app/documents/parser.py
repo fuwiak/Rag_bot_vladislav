@@ -176,11 +176,17 @@ class DocumentParser:
                         if i == 0:
                             preview = text[:500] if len(text) > 500 else text
                             logger.info(f"[PDF PARSER PyPDF2] Preview страницы 1: {preview}...")
+                        # Логируем прогресс каждые 5 страниц или на последней странице
+                        if (i + 1) % 5 == 0 or (i + 1) == total_pages:
+                            logger.info(f"[PDF PARSER PyPDF2] Обработано страниц: {i + 1}/{total_pages} ({((i + 1) / total_pages * 100):.1f}%), извлечено текстовых: {len(text_parts)}")
                     else:
                         empty_pages += 1
                         logger.warning(f"[PDF PARSER PyPDF2] Страница {i+1}/{total_pages} пустая")
+                        # Логируем прогресс даже для пустых страниц
+                        if (i + 1) % 10 == 0 or (i + 1) == total_pages:
+                            logger.info(f"[PDF PARSER PyPDF2] Обработано страниц: {i + 1}/{total_pages} ({((i + 1) / total_pages * 100):.1f}%), пустых: {empty_pages}")
                 except Exception as e:
-                    logger.warning(f"[PDF PARSER PyPDF2] Ошибка страницы {i+1}: {e}")
+                    logger.warning(f"[PDF PARSER PyPDF2] Ошибка страницы {i+1}/{total_pages}: {e}")
                     empty_pages += 1
                     continue
                 
@@ -195,7 +201,7 @@ class DocumentParser:
                 return ""
             
             result = "\n\n".join(text_parts)
-            logger.info(f"[PDF PARSER PyPDF2] Извлечено {len(text_parts)} страниц, {empty_pages} пустых, всего {len(result)} символов")
+            logger.info(f"[PDF PARSER PyPDF2] ✅ ЗАВЕРШЕНО: Всего страниц: {total_pages}, обработано: {len(text_parts)}, пустых: {empty_pages}, извлечено символов: {len(result)}")
             return result
             
         except Exception as e:
@@ -230,11 +236,17 @@ class DocumentParser:
                             if i == 0:
                                 preview = text[:500] if len(text) > 500 else text
                                 logger.info(f"[PDF PARSER pdfplumber] Preview страницы 1: {preview}...")
+                            # Логируем прогресс каждые 5 страниц или на последней странице
+                            if (i + 1) % 5 == 0 or (i + 1) == total_pages:
+                                logger.info(f"[PDF PARSER pdfplumber] Обработано страниц: {i + 1}/{total_pages} ({((i + 1) / total_pages * 100):.1f}%), извлечено текстовых: {len(text_parts)}")
                         else:
                             empty_pages += 1
                             logger.warning(f"[PDF PARSER pdfplumber] Страница {i+1}/{total_pages} пустая")
+                            # Логируем прогресс даже для пустых страниц
+                            if (i + 1) % 10 == 0 or (i + 1) == total_pages:
+                                logger.info(f"[PDF PARSER pdfplumber] Обработано страниц: {i + 1}/{total_pages} ({((i + 1) / total_pages * 100):.1f}%), пустых: {empty_pages}")
                     except Exception as e:
-                        logger.warning(f"[PDF PARSER pdfplumber] Ошибка страницы {i+1}: {e}")
+                        logger.warning(f"[PDF PARSER pdfplumber] Ошибка страницы {i+1}/{total_pages}: {e}")
                         empty_pages += 1
                         continue
                     
@@ -245,7 +257,7 @@ class DocumentParser:
                 return ""
             
             result = "\n\n".join(text_parts)
-            logger.info(f"[PDF PARSER pdfplumber] Извлечено {len(text_parts)} страниц, {empty_pages} пустых, всего {len(result)} символов")
+            logger.info(f"[PDF PARSER pdfplumber] ✅ ЗАВЕРШЕНО: Всего страниц: {total_pages}, обработано: {len(text_parts)}, пустых: {empty_pages}, извлечено символов: {len(result)}")
             return result
             
         except Exception as e:
@@ -283,10 +295,16 @@ class DocumentParser:
                         if i == 0:
                             preview = text[:500] if len(text) > 500 else text
                             logger.info(f"[PDF PARSER PyMuPDF] Preview страницы 1: {preview}...")
+                        # Логируем прогресс каждые 5 страниц или на последней странице
+                        if (i + 1) % 5 == 0 or (i + 1) == total_pages:
+                            logger.info(f"[PDF PARSER PyMuPDF] Обработано страниц: {i + 1}/{total_pages} ({((i + 1) / total_pages * 100):.1f}%), извлечено текстовых: {len(text_parts)}")
                     else:
                         logger.warning(f"[PDF PARSER PyMuPDF] Страница {i+1}/{total_pages} пустая")
+                        # Логируем прогресс даже для пустых страниц
+                        if (i + 1) % 10 == 0 or (i + 1) == total_pages:
+                            logger.info(f"[PDF PARSER PyMuPDF] Обработано страниц: {i + 1}/{total_pages} ({((i + 1) / total_pages * 100):.1f}%)")
                 except Exception as e:
-                    logger.warning(f"[PDF PARSER PyMuPDF] Ошибка страницы {i+1}: {e}")
+                    logger.warning(f"[PDF PARSER PyMuPDF] Ошибка страницы {i+1}/{total_pages}: {e}")
                     continue
                 
                 if i % 10 == 0:
@@ -300,7 +318,7 @@ class DocumentParser:
                 return ""
             
             result = "\n\n".join(text_parts)
-            logger.info(f"[PDF PARSER PyMuPDF] Извлечено {len(text_parts)} страниц, всего {len(result)} символов")
+            logger.info(f"[PDF PARSER PyMuPDF] ✅ ЗАВЕРШЕНО: Всего страниц: {total_pages}, обработано: {len(text_parts)}, извлечено символов: {len(result)}")
             return result
             
         except Exception as e:

@@ -272,6 +272,16 @@ async def handle_document(message: Message, state: FSMContext):
             
             logger.info(f"[TELEGRAM UPLOAD] Document created in DB: {document.id}")
             
+            # Сохраняем файл в постоянное место для возможности скачивания
+            media_dir = Path("media") / "documents" / str(project_id)
+            media_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Сохраняем оригинальный файл для скачивания
+            original_file_path = media_dir / f"{document.id}_{file_name}"
+            with open(original_file_path, 'wb') as f:
+                f.write(file_content)
+            logger.info(f"[TELEGRAM UPLOAD] Original file saved: {original_file_path}")
+            
             # Сохраняем файл во временное место для Celery задачи
             temp_path = temp_dir / f"celery_doc_{document.id}_{file_name}"
             with open(temp_path, 'wb') as f:
