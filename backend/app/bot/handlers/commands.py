@@ -2,7 +2,7 @@
 Обработчики команд бота (/start, /help, /documents)
 """
 from aiogram import Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from aiogram.enums import ChatAction
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -36,6 +36,15 @@ async def keep_typing_indicator(bot, chat_id: int, duration: float = 60.0):
         import logging
         logger = logging.getLogger(__name__)
         logger.warning(f"Error in keep_typing_indicator: {e}")
+
+
+def get_hide_menu_keyboard():
+    """Создает клавиатуру с кнопкой для скрытия меню"""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="❌ Скрыть меню")]],
+        resize_keyboard=True,
+        one_time_keyboard=False
+    )
 
 
 async def cmd_start(message: Message, state: FSMContext, project_id: str = None):
@@ -134,15 +143,10 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                             text="🔍 Глубокий анализ",
                             callback_data="get_analysis"
                         )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text="❌ Скрыть меню",
-                            callback_data="hide_menu"
-                        )
                     ]
                 ])
                 await message.answer("🔧 <b>Управление режимом и типовые запросы (LangGraph):</b>", reply_markup=mode_keyboard)
+                await message.answer("💡", reply_markup=get_hide_menu_keyboard())
                 return
         
         # Если пользователь уже авторизован в текущей сессии
@@ -191,15 +195,10 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                                 text="💡 Предложить вопросы",
                                 callback_data="suggest_questions"
                             )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                text="❌ Скрыть меню",
-                                callback_data="hide_menu"
-                            )
                         ]
                     ])
                     await message.answer("🔧 <b>Управление режимом ответа:</b>", reply_markup=mode_keyboard)
+                    await message.answer("💡", reply_markup=get_hide_menu_keyboard())
                     return
         
         # Если не нашли пользователя или проект, продолжаем с обычной авторизацией
@@ -1089,12 +1088,6 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
                     text="🔍 Глубокий анализ",
                     callback_data="get_analysis"
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="❌ Скрыть меню",
-                    callback_data="hide_menu"
-                )
             ]
         ])
         try:
@@ -1145,12 +1138,6 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
                 InlineKeyboardButton(
                     text="🔍 Глубокий анализ",
                     callback_data="get_analysis"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="❌ Скрыть меню",
-                    callback_data="hide_menu"
                 )
             ]
         ])
@@ -1282,15 +1269,6 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
         finally:
             if typing_task:
                 typing_task.cancel()
-    elif mode == "hide_menu":
-        # Скрываем меню - удаляем сообщение
-        try:
-            await callback.message.delete()
-            await callback.answer("Меню скрыто", show_alert=False)
-        except Exception as e:
-            logger.warning(f"Error deleting menu message: {e}")
-            # Если не удалось удалить, просто отвечаем
-            await callback.answer("Меню скрыто", show_alert=False)
 
 
 async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
@@ -1487,6 +1465,21 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
                 pass
 
 
+async def handle_hide_menu(message: Message, state: FSMContext):
+    """Обработка команды скрытия меню через обычную клавиатуру"""
+    # Удаляем клавиатуру
+    await message.answer("✅ Меню скрыто", reply_markup=ReplyKeyboardRemove())
+    
+    # Пытаемся удалить последние сообщения с меню (если возможно)
+    try:
+        # Удаляем текущее сообщение пользователя
+        await message.delete()
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error deleting message: {e}")
+
+
 def register_commands(dp: Dispatcher, project_id: str):
     """Регистрация команд"""
     dp.message.register(cmd_start, Command("start"))
@@ -1511,3 +1504,5 @@ def register_commands(dp: Dispatcher, project_id: str):
     dp.callback_query.register(handle_mode_callback)
     # Регистрируем обработчик для callback документов (download_doc_*, delete_doc_*)
     dp.callback_query.register(handle_document_callback, F.data.startswith("download_doc_") | F.data.startswith("delete_doc_"))
+    # Регистрируем обработчик для скрытия меню через обычную клавиатуру
+    dp.message.register(handle_hide_menu, F.text == "❌ Скрыть меню")
