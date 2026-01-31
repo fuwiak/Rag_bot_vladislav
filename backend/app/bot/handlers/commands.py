@@ -38,13 +38,28 @@ async def keep_typing_indicator(bot, chat_id: int, duration: float = 60.0):
         logger.warning(f"Error in keep_typing_indicator: {e}")
 
 
-def get_hide_menu_keyboard():
-    """Создает клавиатуру с кнопкой для скрытия меню"""
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="❌ Скрыть меню")]],
+def get_menu_keyboard(answer_mode: str = "rag_mode"):
+    """Создает клавиатуру со всеми кнопками меню"""
+    # Определяем текст кнопок в зависимости от режима
+    mode_rag_text = "📄 Режим: Документы" if answer_mode == "rag_mode" else "📄 Переключить на Документы"
+    mode_general_text = "💬 Режим: Общие вопросы" if answer_mode == "general_mode" else "💬 Переключить на Общие вопросы"
+    
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=mode_rag_text)],
+            [KeyboardButton(text=mode_general_text)],
+            [KeyboardButton(text="💡 Предложить вопросы")],
+            [
+                KeyboardButton(text="📋 Резюме документа"),
+                KeyboardButton(text="📝 Описание")
+            ],
+            [KeyboardButton(text="🔍 Глубокий анализ")],
+            [KeyboardButton(text="❌ Скрыть меню")]
+        ],
         resize_keyboard=True,
         one_time_keyboard=False
     )
+    return keyboard
 
 
 async def cmd_start(message: Message, state: FSMContext, project_id: str = None):
@@ -108,45 +123,8 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                 welcome_text += "\n❓ <b>Задайте ваш вопрос:</b>"
                 await message.answer(welcome_text)
                 
-                # Отправляем клавиатуру с режимами и типовыми запросами (LangGraph)
-                mode_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="📄 Режим: Документы" if answer_mode == "rag_mode" else "📄 Переключить на Документы",
-                            callback_data="set_mode_rag"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text="💬 Режим: Общие вопросы" if answer_mode == "general_mode" else "💬 Переключить на Общие вопросы",
-                            callback_data="set_mode_general"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text="💡 Предложить вопросы",
-                            callback_data="suggest_questions"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text="📋 Резюме документа",
-                            callback_data="get_summary"
-                        ),
-                        InlineKeyboardButton(
-                            text="📝 Описание",
-                            callback_data="get_description"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text="🔍 Глубокий анализ",
-                            callback_data="get_analysis"
-                        )
-                    ]
-                ])
-                await message.answer("🔧 <b>Управление режимом и типовые запросы (LangGraph):</b>", reply_markup=mode_keyboard)
-                await message.answer("💡", reply_markup=get_hide_menu_keyboard())
+                # Отправляем клавиатуру с режимами и типовыми запросами
+                await message.answer("🔧 <b>Управление режимом и типовые запросы:</b>", reply_markup=get_menu_keyboard(answer_mode))
                 return
         
         # Если пользователь уже авторизован в текущей сессии
@@ -177,28 +155,7 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                     await message.answer(welcome_text)
                     
                     # Отправляем клавиатуру с режимами
-                    mode_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="📄 Режим: Документы" if answer_mode == "rag_mode" else "📄 Переключить на Документы",
-                                callback_data="set_mode_rag"
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                text="💬 Режим: Общие вопросы" if answer_mode == "general_mode" else "💬 Переключить на Общие вопросы",
-                                callback_data="set_mode_general"
-                            )
-                        ],
-                        [
-                            InlineKeyboardButton(
-                                text="💡 Предложить вопросы",
-                                callback_data="suggest_questions"
-                            )
-                        ]
-                    ])
-                    await message.answer("🔧 <b>Управление режимом ответа:</b>", reply_markup=mode_keyboard)
-                    await message.answer("💡", reply_markup=get_hide_menu_keyboard())
+                    await message.answer("🔧 <b>Управление режимом ответа:</b>", reply_markup=get_menu_keyboard(answer_mode))
                     return
         
         # Если не нашли пользователя или проект, продолжаем с обычной авторизацией
@@ -1465,19 +1422,54 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
                 pass
 
 
-async def handle_hide_menu(message: Message, state: FSMContext):
-    """Обработка команды скрытия меню через обычную клавиатуру"""
-    # Удаляем клавиатуру
-    await message.answer("✅ Меню скрыто", reply_markup=ReplyKeyboardRemove())
+async def handle_menu_button(message: Message, state: FSMContext):
+    """Обработка нажатий кнопок меню через обычную клавиатуру"""
+    import logging
+    logger = logging.getLogger(__name__)
     
-    # Пытаемся удалить последние сообщения с меню (если возможно)
-    try:
-        # Удаляем текущее сообщение пользователя
-        await message.delete()
-    except Exception as e:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.warning(f"Error deleting message: {e}")
+    current_state = await state.get_state()
+    if current_state != AuthStates.authorized:
+        await message.answer("❌ Сначала авторизуйтесь через /start")
+        return
+    
+    data = await state.get_data()
+    button_text = message.text
+    
+    # Определяем, какая кнопка была нажата
+    if button_text in ["📄 Режим: Документы", "📄 Переключить на Документы"]:
+        await state.update_data(answer_mode="rag_mode")
+        answer_mode = "rag_mode"
+        await message.answer("✅ Режим изменен: Ответы на основе документов", reply_markup=get_menu_keyboard(answer_mode))
+        
+    elif button_text in ["💬 Режим: Общие вопросы", "💬 Переключить на Общие вопросы"]:
+        await state.update_data(answer_mode="general_mode")
+        answer_mode = "general_mode"
+        await message.answer("✅ Режим изменен: Общие вопросы", reply_markup=get_menu_keyboard(answer_mode))
+        
+    elif button_text == "💡 Предложить вопросы":
+        # Вызываем команду предложения вопросов
+        await cmd_suggest_questions(message, state)
+        
+    elif button_text == "📋 Резюме документа":
+        # Вызываем команду summary
+        await cmd_summary(message, state)
+        
+    elif button_text == "📝 Описание":
+        # Вызываем команду describe
+        await cmd_describe(message, state)
+        
+    elif button_text == "🔍 Глубокий анализ":
+        # Вызываем команду analyze
+        await cmd_analyze(message, state)
+        
+    elif button_text == "❌ Скрыть меню":
+        # Удаляем клавиатуру
+        await message.answer("✅ Меню скрыто", reply_markup=ReplyKeyboardRemove())
+        try:
+            # Удаляем текущее сообщение пользователя
+            await message.delete()
+        except Exception as e:
+            logger.warning(f"Error deleting message: {e}")
 
 
 def register_commands(dp: Dispatcher, project_id: str):
@@ -1500,9 +1492,22 @@ def register_commands(dp: Dispatcher, project_id: str):
     dp.message.register(cmd_summary, Command("summary", "резюме", "summary_doc", "резюме_документа"))
     dp.message.register(cmd_describe, Command("describe", "описание", "describe_doc", "описание_документа"))
     dp.message.register(cmd_analyze, Command("analyze", "анализ", "analysis", "анализ_документа"))
-    # Регистрируем обработчик callback для переключения режимов и типовых запросов
+    # Регистрируем обработчик callback для переключения режимов и типовых запросов (для обратной совместимости)
     dp.callback_query.register(handle_mode_callback)
     # Регистрируем обработчик для callback документов (download_doc_*, delete_doc_*)
     dp.callback_query.register(handle_document_callback, F.data.startswith("download_doc_") | F.data.startswith("delete_doc_"))
-    # Регистрируем обработчик для скрытия меню через обычную клавиатуру
-    dp.message.register(handle_hide_menu, F.text == "❌ Скрыть меню")
+    # Регистрируем обработчик для всех кнопок меню через обычную клавиатуру
+    dp.message.register(
+        handle_menu_button,
+        F.text.in_([
+            "📄 Режим: Документы",
+            "📄 Переключить на Документы",
+            "💬 Режим: Общие вопросы",
+            "💬 Переключить на Общие вопросы",
+            "💡 Предложить вопросы",
+            "📋 Резюме документа",
+            "📝 Описание",
+            "🔍 Глубокий анализ",
+            "❌ Скрыть меню"
+        ])
+    )
