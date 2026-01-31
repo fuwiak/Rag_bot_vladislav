@@ -134,6 +134,12 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                             text="🔍 Глубокий анализ",
                             callback_data="get_analysis"
                         )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="❌ Скрыть меню",
+                            callback_data="hide_menu"
+                        )
                     ]
                 ])
                 await message.answer("🔧 <b>Управление режимом и типовые запросы (LangGraph):</b>", reply_markup=mode_keyboard)
@@ -184,6 +190,12 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                             InlineKeyboardButton(
                                 text="💡 Предложить вопросы",
                                 callback_data="suggest_questions"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text="❌ Скрыть меню",
+                                callback_data="hide_menu"
                             )
                         ]
                     ])
@@ -1077,6 +1089,12 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
                     text="🔍 Глубокий анализ",
                     callback_data="get_analysis"
                 )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Скрыть меню",
+                    callback_data="hide_menu"
+                )
             ]
         ])
         try:
@@ -1127,6 +1145,12 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
                 InlineKeyboardButton(
                     text="🔍 Глубокий анализ",
                     callback_data="get_analysis"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Скрыть меню",
+                    callback_data="hide_menu"
                 )
             ]
         ])
@@ -1258,6 +1282,15 @@ async def handle_mode_callback(callback: CallbackQuery, state: FSMContext):
         finally:
             if typing_task:
                 typing_task.cancel()
+    elif mode == "hide_menu":
+        # Скрываем меню - удаляем сообщение
+        try:
+            await callback.message.delete()
+            await callback.answer("Меню скрыто", show_alert=False)
+        except Exception as e:
+            logger.warning(f"Error deleting menu message: {e}")
+            # Если не удалось удалить, просто отвечаем
+            await callback.answer("Меню скрыто", show_alert=False)
 
 
 async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
