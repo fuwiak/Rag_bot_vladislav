@@ -121,7 +121,49 @@ class Settings(BaseSettings):
         # Try REDIS_URL first (Railway provides this automatically)
         redis_url = os.getenv('REDIS_URL', '')
         if redis_url:
-            return resolve_env_vars_in_string(redis_url)
+            resolved_url = resolve_env_vars_in_string(redis_url)
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            # Проверяем, есть ли пароль в URL (формат: redis://:password@host или redis://password@host)
+            has_password_in_url = '@' in resolved_url and (':@' in resolved_url or resolved_url.count('@') > 0)
+            
+            # Если пароля нет в URL, но REDIS_PASSWORD установлен, добавляем пароль
+            if not has_password_in_url:
+                redis_password = os.getenv('REDIS_PASSWORD', '')
+                if redis_password:
+                    # Парсим URL и добавляем пароль
+                    if resolved_url.startswith('redis://'):
+                        # Убираем redis://
+                        url_without_protocol = resolved_url.replace('redis://', '')
+                        # Разделяем на host:port/db
+                        if '/' in url_without_protocol:
+                            host_port, db = url_without_protocol.split('/', 1)
+                        else:
+                            host_port = url_without_protocol
+                            db = '0'
+                        
+                        # Формируем URL с паролем: redis://:password@host:port/db
+                        resolved_url = f"redis://:{redis_password}@{host_port}/{db}"
+                        logger.info(f"[REDIS] ✅ Добавлен пароль в REDIS_URL из REDIS_PASSWORD")
+                    elif resolved_url.startswith('rediss://'):
+                        # TLS соединение
+                        url_without_protocol = resolved_url.replace('rediss://', '')
+                        if '/' in url_without_protocol:
+                            host_port, db = url_without_protocol.split('/', 1)
+                        else:
+                            host_port = url_without_protocol
+                            db = '0'
+                        resolved_url = f"rediss://:{redis_password}@{host_port}/{db}"
+                        logger.info(f"[REDIS] ✅ Добавлен пароль в REDIS_URL (TLS) из REDIS_PASSWORD")
+            
+            # Безопасное логирование (скрываем пароль)
+            if '@' in resolved_url:
+                masked_url = resolved_url.split('@')[0].split(':')[-1] + '@***' + '@'.join(resolved_url.split('@')[1:])
+            else:
+                masked_url = resolved_url
+            logger.info(f"[REDIS] Используется REDIS_URL: {masked_url}")
+            return resolved_url
         
         # Build from components (for private networking with password)
         redis_password = os.getenv('REDIS_PASSWORD', '')
@@ -165,7 +207,49 @@ class Settings(BaseSettings):
         # Try REDIS_URL first (Railway provides this automatically)
         redis_url = os.getenv('REDIS_URL', '')
         if redis_url:
-            return resolve_env_vars_in_string(redis_url)
+            resolved_url = resolve_env_vars_in_string(redis_url)
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            # Проверяем, есть ли пароль в URL (формат: redis://:password@host или redis://password@host)
+            has_password_in_url = '@' in resolved_url and (':@' in resolved_url or resolved_url.count('@') > 0)
+            
+            # Если пароля нет в URL, но REDIS_PASSWORD установлен, добавляем пароль
+            if not has_password_in_url:
+                redis_password = os.getenv('REDIS_PASSWORD', '')
+                if redis_password:
+                    # Парсим URL и добавляем пароль
+                    if resolved_url.startswith('redis://'):
+                        # Убираем redis://
+                        url_without_protocol = resolved_url.replace('redis://', '')
+                        # Разделяем на host:port/db
+                        if '/' in url_without_protocol:
+                            host_port, db = url_without_protocol.split('/', 1)
+                        else:
+                            host_port = url_without_protocol
+                            db = '0'
+                        
+                        # Формируем URL с паролем: redis://:password@host:port/db
+                        resolved_url = f"redis://:{redis_password}@{host_port}/{db}"
+                        logger.info(f"[REDIS] ✅ Добавлен пароль в REDIS_URL из REDIS_PASSWORD")
+                    elif resolved_url.startswith('rediss://'):
+                        # TLS соединение
+                        url_without_protocol = resolved_url.replace('rediss://', '')
+                        if '/' in url_without_protocol:
+                            host_port, db = url_without_protocol.split('/', 1)
+                        else:
+                            host_port = url_without_protocol
+                            db = '0'
+                        resolved_url = f"rediss://:{redis_password}@{host_port}/{db}"
+                        logger.info(f"[REDIS] ✅ Добавлен пароль в REDIS_URL (TLS) из REDIS_PASSWORD")
+            
+            # Безопасное логирование (скрываем пароль)
+            if '@' in resolved_url:
+                masked_url = resolved_url.split('@')[0].split(':')[-1] + '@***' + '@'.join(resolved_url.split('@')[1:])
+            else:
+                masked_url = resolved_url
+            logger.info(f"[REDIS] Используется REDIS_URL: {masked_url}")
+            return resolved_url
         
         # Build from components (for private networking with password)
         redis_password = os.getenv('REDIS_PASSWORD', '')

@@ -37,8 +37,29 @@ celery_app.conf.update(
 
 # Логируем настройки подключения к Redis
 logger.info(f"[CELERY] Инициализация Celery приложения...")
-logger.info(f"[CELERY] Broker URL: {settings.CELERY_BROKER_URL if settings.CELERY_BROKER_URL else 'НЕ УСТАНОВЛЕН!'}")
-logger.info(f"[CELERY] Result Backend: {settings.CELERY_RESULT_BACKEND if settings.CELERY_RESULT_BACKEND else 'НЕ УСТАНОВЛЕН!'}")
+
+# Безопасное логирование URL (скрываем пароль)
+def mask_redis_url(url: str) -> str:
+    """Скрывает пароль в Redis URL для логирования"""
+    if not url:
+        return "НЕ УСТАНОВЛЕН!"
+    if '@' in url:
+        # Формат: redis://:password@host:port/db
+        parts = url.split('@')
+        if len(parts) == 2:
+            return f"{parts[0].split(':')[0]}://:***@{parts[1]}"
+    return url
+
+broker_url_masked = mask_redis_url(settings.CELERY_BROKER_URL)
+backend_url_masked = mask_redis_url(settings.CELERY_RESULT_BACKEND)
+
+logger.info(f"[CELERY] Broker URL: {broker_url_masked}")
+logger.info(f"[CELERY] Result Backend: {backend_url_masked}")
+
+# Проверяем наличие пароля в URL
+if settings.CELERY_BROKER_URL and '@' not in settings.CELERY_BROKER_URL:
+    logger.warning(f"[CELERY] ⚠️ ВНИМАНИЕ: Broker URL не содержит пароль (@ отсутствует)")
+    logger.warning(f"[CELERY] ⚠️ Если Redis требует пароль, добавьте REDIS_PASSWORD в переменные окружения")
 
 if not settings.CELERY_BROKER_URL or not settings.CELERY_RESULT_BACKEND:
     logger.error("[CELERY] ❌ КРИТИЧЕСКАЯ ОШИБКА: Redis не настроен!")
