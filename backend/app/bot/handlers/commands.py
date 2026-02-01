@@ -2,7 +2,7 @@
 Обработчики команд бота (/start, /help, /documents)
 """
 from aiogram import Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from aiogram.enums import ChatAction
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -38,28 +38,6 @@ async def keep_typing_indicator(bot, chat_id: int, duration: float = 60.0):
         logger.warning(f"Error in keep_typing_indicator: {e}")
 
 
-def get_menu_keyboard(answer_mode: str = "rag_mode"):
-    """Создает клавиатуру со всеми кнопками меню"""
-    # Определяем текст кнопок в зависимости от режима
-    mode_rag_text = "📄 Режим: Документы" if answer_mode == "rag_mode" else "📄 Переключить на Документы"
-    mode_general_text = "💬 Режим: Общие вопросы" if answer_mode == "general_mode" else "💬 Переключить на Общие вопросы"
-    
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=mode_rag_text)],
-            [KeyboardButton(text=mode_general_text)],
-            [KeyboardButton(text="💡 Предложить вопросы")],
-            [
-                KeyboardButton(text="📋 Резюме документа"),
-                KeyboardButton(text="📝 Описание")
-            ],
-            [KeyboardButton(text="🔍 Глубокий анализ")],
-            [KeyboardButton(text="❌ Скрыть меню")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
-    return keyboard
 
 
 async def cmd_start(message: Message, state: FSMContext, project_id: str = None):
@@ -107,24 +85,13 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                 await state.set_state(AuthStates.authorized)
                 
                 welcome_text = f"👋 <b>Добро пожаловать обратно в проект «{project.name}»!</b>\n\n"
-                welcome_text += "Вы уже авторизованы. Можете:\n"
-                welcome_text += "• Задавать вопросы о документах (/documents - показать список документов)\n"
-                welcome_text += "• Получать ответы на основе загруженных документов\n"
-                welcome_text += "• Использовать /help для справки\n\n"
-                
-                # Показываем текущий режим
-                data = await state.get_data()
-                answer_mode = data.get("answer_mode", "rag_mode")
-                if answer_mode == "rag_mode":
-                    welcome_text += "📄 <b>Режим:</b> Ответы на основе документов\n"
-                else:
-                    welcome_text += "💬 <b>Режим:</b> Общие вопросы\n"
-                
-                welcome_text += "\n❓ <b>Задайте ваш вопрос:</b>"
+                welcome_text += "Вы уже авторизованы.\n\n"
+                welcome_text += "🤖 <b>Как использовать:</b>\n"
+                welcome_text += "• Отправьте файл для загрузки\n"
+                welcome_text += "• Задавайте вопросы о загруженных документах\n"
+                welcome_text += "• Используйте /documents для просмотра и удаления файлов\n\n"
+                welcome_text += "❓ <b>Задайте ваш вопрос или отправьте файл:</b>"
                 await message.answer(welcome_text)
-                
-                # Отправляем клавиатуру с режимами и типовыми запросами
-                await message.answer("🔧 <b>Управление режимом и типовые запросы:</b>", reply_markup=get_menu_keyboard(answer_mode))
                 return
         
         # Если пользователь уже авторизован в текущей сессии
@@ -140,22 +107,12 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
                 
                 if project:
                     welcome_text = f"👋 <b>Вы уже авторизованы в проекте «{project.name}»!</b>\n\n"
-                    welcome_text += "Вы можете:\n"
-                    welcome_text += "• Задавать вопросы о документах (/documents - показать список документов)\n"
-                    welcome_text += "• Получать ответы на основе загруженных документов\n"
-                    welcome_text += "• Использовать /help для справки\n\n"
-                    
-                    answer_mode = data.get("answer_mode", "rag_mode")
-                    if answer_mode == "rag_mode":
-                        welcome_text += "📄 <b>Режим:</b> Ответы на основе документов\n"
-                    else:
-                        welcome_text += "💬 <b>Режим:</b> Общие вопросы\n"
-                    
-                    welcome_text += "\n❓ <b>Задайте ваш вопрос:</b>"
+                    welcome_text += "🤖 <b>Как использовать:</b>\n"
+                    welcome_text += "• Отправьте файл для загрузки\n"
+                    welcome_text += "• Задавайте вопросы о загруженных документах\n"
+                    welcome_text += "• Используйте /documents для просмотра и удаления файлов\n\n"
+                    welcome_text += "❓ <b>Задайте ваш вопрос или отправьте файл:</b>"
                     await message.answer(welcome_text)
-                    
-                    # Отправляем клавиатуру с режимами
-                    await message.answer("🔧 <b>Управление режимом ответа:</b>", reply_markup=get_menu_keyboard(answer_mode))
                     return
         
         # Если не нашли пользователя или проект, продолжаем с обычной авторизацией
@@ -295,8 +252,8 @@ async def cmd_help(message: Message, state: FSMContext):
     await message.answer(help_text)
 
 
-async def cmd_documents(message: Message, state: FSMContext):
-    """Обработка команды /documents или /показать_документы - показать список документов проекта"""
+async def cmd_documents(message: Message, state: FSMContext, page: int = 0):
+    """Обработка команды /documents - показать список документов проекта с пагинацией"""
     # Проверка авторизации
     current_state = await state.get_state()
     if current_state != AuthStates.authorized:
@@ -320,36 +277,57 @@ async def cmd_documents(message: Message, state: FSMContext):
         await message.answer("❌ Ошибка: неверный ID проекта")
         return
     
+    # Количество документов на странице
+    ITEMS_PER_PAGE = 5
+    
     async with AsyncSessionLocal() as db:
         # Получаем список документов проекта
-        # Используем load_only для загрузки только нужных полей, исключая summary
-        # чтобы избежать ошибки если summary колонка не существует в БД
         from sqlalchemy.orm import load_only
         import logging
         logger = logging.getLogger(__name__)
         
         try:
+            # Сначала получаем общее количество
+            count_result = await db.execute(
+                select(Document).where(Document.project_id == project_id)
+            )
+            total_documents = len(count_result.scalars().all())
+            
+            # Получаем документы для текущей страницы
             result = await db.execute(
                 select(Document)
                 .options(load_only(Document.id, Document.project_id, Document.filename, Document.content, Document.file_type, Document.created_at))
                 .where(Document.project_id == project_id)
                 .order_by(Document.created_at.desc())
-                .limit(50)
+                .offset(page * ITEMS_PER_PAGE)
+                .limit(ITEMS_PER_PAGE)
             )
             documents = result.scalars().all()
         except Exception as e:
             # Если ошибка из-за summary в модели, используем raw SQL
             logger.warning(f"Error loading documents: {e}, using raw SQL query")
             from sqlalchemy import text
+            # Получаем общее количество
+            count_result = await db.execute(
+                text("SELECT COUNT(*) FROM documents WHERE project_id = :project_id"),
+                {"project_id": project_id}
+            )
+            total_documents = count_result.scalar() or 0
+            
+            # Получаем документы для текущей страницы
             result = await db.execute(
                 text("""
                     SELECT id, project_id, filename, content, file_type, created_at 
                     FROM documents 
                     WHERE project_id = :project_id 
                     ORDER BY created_at DESC 
-                    LIMIT 50
+                    LIMIT :limit OFFSET :offset
                 """),
-                {"project_id": project_id}
+                {
+                    "project_id": project_id,
+                    "limit": ITEMS_PER_PAGE,
+                    "offset": page * ITEMS_PER_PAGE
+                }
             )
             rows = result.all()
             documents = []
@@ -363,14 +341,29 @@ async def cmd_documents(message: Message, state: FSMContext):
                 doc.created_at = row[5]
                 documents.append(doc)
         
-        if not documents:
-            await message.answer("📄 <b>Документы проекта</b>\n\n"
-                               "В проекте пока нет загруженных документов.\n"
-                               "Обратитесь к администратору для загрузки документов.")
+        if not documents and page == 0:
+            await message.answer(
+                "📄 <b>Документы проекта</b>\n\n"
+                "В проекте пока нет загруженных документов.\n"
+                "Просто отправьте файл в чат для загрузки."
+            )
             return
         
-        # Отправляем документы по одному с кнопками для скачивания и удаления
-        for i, doc in enumerate(documents, 1):
+        if not documents:
+            await message.answer("❌ Страница не найдена")
+            return
+        
+        # Формируем сообщение со списком документов
+        total_pages = (total_documents + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        header_text = f"📄 <b>Загруженные файлы</b> ({total_documents} шт.)\n"
+        if total_pages > 1:
+            header_text += f"Страница {page + 1} из {total_pages}\n"
+        header_text += "\n"
+        
+        # Создаем inline клавиатуру с кнопками удаления
+        keyboard_buttons = []
+        
+        for doc in documents:
             # Определяем тип файла
             file_type_emoji = "📄"
             if doc.file_type == "pdf":
@@ -379,58 +372,34 @@ async def cmd_documents(message: Message, state: FSMContext):
                 file_type_emoji = "📘"
             elif doc.file_type == "txt":
                 file_type_emoji = "📝"
+            elif doc.file_type in ["xlsx", "xls"]:
+                file_type_emoji = "📊"
             
-            # Формируем текст сообщения
-            doc_text = f"{file_type_emoji} <b>{doc.filename}</b>\n"
-            if doc.content and doc.content != "Обработка..." and doc.content != "Обработан":
-                # Показываем первые 100 символов содержимого
-                preview = doc.content[:100].replace('\n', ' ')
-                if len(doc.content) > 100:
-                    preview += "..."
-                doc_text += f"<i>{preview}</i>\n"
-            
-            # Создаем кнопки
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[])
-            
-            # Кнопка для скачивания (только для PDF)
-            if doc.file_type == "pdf":
-                file_path = Path("media") / "documents" / str(project_id) / f"{doc.id}_{doc.filename}"
-                if file_path.exists():
-                    # Отправляем файл напрямую
-                    try:
-                        with open(file_path, 'rb') as f:
-                            await message.bot.send_document(
-                                chat_id=message.chat.id,
-                                document=f,
-                                caption=doc_text,
-                                parse_mode="HTML",
-                                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                    [InlineKeyboardButton(
-                                        text="🗑️ Удалить",
-                                        callback_data=f"delete_doc_{doc.id}"
-                                    )]
-                                ])
-                            )
-                        continue
-                    except Exception as e:
-                        logger.error(f"Error sending PDF file: {e}")
-                        # Если не удалось отправить файл, показываем кнопку
-                        keyboard.inline_keyboard.append([
-                            InlineKeyboardButton(
-                                text="📥 Скачать PDF",
-                                callback_data=f"download_doc_{doc.id}"
-                            )
-                        ])
-            
-            # Кнопка для удаления
-            keyboard.inline_keyboard.append([
+            # Добавляем кнопку удаления для каждого документа
+            keyboard_buttons.append([
                 InlineKeyboardButton(
-                    text="🗑️ Удалить",
+                    text=f"🗑️ {file_type_emoji} {doc.filename[:30]}{'...' if len(doc.filename) > 30 else ''}",
                     callback_data=f"delete_doc_{doc.id}"
                 )
             ])
-            
-            await message.answer(doc_text, parse_mode="HTML", reply_markup=keyboard)
+        
+        # Добавляем кнопки навигации, если есть несколько страниц
+        navigation_buttons = []
+        if total_pages > 1:
+            if page > 0:
+                navigation_buttons.append(
+                    InlineKeyboardButton(text="◀️ Назад", callback_data=f"docs_page_{page - 1}")
+                )
+            if page < total_pages - 1:
+                navigation_buttons.append(
+                    InlineKeyboardButton(text="Вперед ▶️", callback_data=f"docs_page_{page + 1}")
+                )
+            if navigation_buttons:
+                keyboard_buttons.append(navigation_buttons)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        
+        await message.answer(header_text, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def cmd_summary(message: Message, state: FSMContext):
@@ -1269,6 +1238,133 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
         
         callback_data = callback.data
         
+        if callback_data.startswith("docs_page_"):
+            # Обработка пагинации списка документов
+            try:
+                page = int(callback_data.replace("docs_page_", ""))
+                await callback.answer()
+                
+                # Получаем данные для обновления списка
+                try:
+                    project_id = UUID(project_id_str)
+                except ValueError:
+                    await callback.answer("❌ Ошибка: неверный ID проекта", show_alert=True)
+                    return
+                
+                ITEMS_PER_PAGE = 5
+                
+                async with AsyncSessionLocal() as db:
+                    from app.models.document import Document
+                    from sqlalchemy.orm import load_only
+                    from sqlalchemy import select
+                    
+                    try:
+                        count_result = await db.execute(
+                            select(Document).where(Document.project_id == project_id)
+                        )
+                        total_documents = len(count_result.scalars().all())
+                        
+                        result = await db.execute(
+                            select(Document)
+                            .options(load_only(Document.id, Document.project_id, Document.filename, Document.content, Document.file_type, Document.created_at))
+                            .where(Document.project_id == project_id)
+                            .order_by(Document.created_at.desc())
+                            .offset(page * ITEMS_PER_PAGE)
+                            .limit(ITEMS_PER_PAGE)
+                        )
+                        documents = result.scalars().all()
+                    except Exception as e:
+                        from sqlalchemy import text
+                        count_result = await db.execute(
+                            text("SELECT COUNT(*) FROM documents WHERE project_id = :project_id"),
+                            {"project_id": project_id}
+                        )
+                        total_documents = count_result.scalar() or 0
+                        
+                        result = await db.execute(
+                            text("""
+                                SELECT id, project_id, filename, content, file_type, created_at 
+                                FROM documents 
+                                WHERE project_id = :project_id 
+                                ORDER BY created_at DESC 
+                                LIMIT :limit OFFSET :offset
+                            """),
+                            {
+                                "project_id": project_id,
+                                "limit": ITEMS_PER_PAGE,
+                                "offset": page * ITEMS_PER_PAGE
+                            }
+                        )
+                        rows = result.all()
+                        documents = []
+                        for row in rows:
+                            doc = Document()
+                            doc.id = row[0]
+                            doc.project_id = row[1]
+                            doc.filename = row[2]
+                            doc.content = row[3]
+                            doc.file_type = row[4]
+                            doc.created_at = row[5]
+                            documents.append(doc)
+                    
+                    if not documents:
+                        await callback.answer("❌ Страница не найдена", show_alert=True)
+                        return
+                    
+                    # Формируем обновленное сообщение
+                    total_pages = (total_documents + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+                    header_text = f"📄 <b>Загруженные файлы</b> ({total_documents} шт.)\n"
+                    if total_pages > 1:
+                        header_text += f"Страница {page + 1} из {total_pages}\n"
+                    header_text += "\n"
+                    
+                    # Создаем inline клавиатуру
+                    keyboard_buttons = []
+                    for doc in documents:
+                        file_type_emoji = "📄"
+                        if doc.file_type == "pdf":
+                            file_type_emoji = "📕"
+                        elif doc.file_type == "docx":
+                            file_type_emoji = "📘"
+                        elif doc.file_type == "txt":
+                            file_type_emoji = "📝"
+                        elif doc.file_type in ["xlsx", "xls"]:
+                            file_type_emoji = "📊"
+                        
+                        keyboard_buttons.append([
+                            InlineKeyboardButton(
+                                text=f"🗑️ {file_type_emoji} {doc.filename[:30]}{'...' if len(doc.filename) > 30 else ''}",
+                                callback_data=f"delete_doc_{doc.id}"
+                            )
+                        ])
+                    
+                    navigation_buttons = []
+                    if total_pages > 1:
+                        if page > 0:
+                            navigation_buttons.append(
+                                InlineKeyboardButton(text="◀️ Назад", callback_data=f"docs_page_{page - 1}")
+                            )
+                        if page < total_pages - 1:
+                            navigation_buttons.append(
+                                InlineKeyboardButton(text="Вперед ▶️", callback_data=f"docs_page_{page + 1}")
+                            )
+                        if navigation_buttons:
+                            keyboard_buttons.append(navigation_buttons)
+                    
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+                    
+                    # Обновляем существующее сообщение
+                    try:
+                        await callback.message.edit_text(header_text, parse_mode="HTML", reply_markup=keyboard)
+                    except Exception as e:
+                        logger.warning(f"Error editing message: {e}")
+                        # Если не удалось обновить, отправляем новое
+                        await callback.message.answer(header_text, parse_mode="HTML", reply_markup=keyboard)
+                        
+            except ValueError:
+                await callback.answer("❌ Ошибка: неверный номер страницы", show_alert=True)
+            return
+        
         if callback_data.startswith("download_doc_"):
             # Скачивание документа
             doc_id_str = callback_data.replace("download_doc_", "")
@@ -1321,8 +1417,23 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
                 await callback.answer("❌ Ошибка: неверный ID документа", show_alert=True)
                 return
             
+            # Показываем typing indicator сразу
+            try:
+                await callback.bot.send_chat_action(callback.message.chat.id, ChatAction.TYPING)
+            except Exception as e:
+                logger.warning(f"Failed to send typing indicator: {e}")
+            
             # Показываем уведомление о начале удаления
             await callback.answer("⏳ Удаляю документ...", show_alert=False)
+            
+            # Запускаем периодическую отправку typing indicator на время удаления
+            delete_typing_task = None
+            try:
+                delete_typing_task = asyncio.create_task(
+                    keep_typing_indicator(callback.bot, callback.message.chat.id, duration=60.0)
+                )
+            except Exception as e:
+                logger.warning(f"Failed to start delete typing task: {e}")
             
             async with AsyncSessionLocal() as db:
                 from app.models.document import Document
@@ -1332,15 +1443,25 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
                 document = result.scalar_one_or_none()
                 
                 if not document:
+                    if delete_typing_task:
+                        delete_typing_task.cancel()
                     await callback.answer("❌ Документ не найден", show_alert=True)
                     return
                 
                 if document.project_id != project_id:
+                    if delete_typing_task:
+                        delete_typing_task.cancel()
                     await callback.answer("❌ Доступ запрещен", show_alert=True)
                     return
                 
                 filename = document.filename
                 delete_status = []
+                
+                # Показываем typing indicator перед удалением файла
+                try:
+                    await callback.bot.send_chat_action(callback.message.chat.id, ChatAction.TYPING)
+                except Exception as e:
+                    logger.warning(f"Failed to send typing indicator: {e}")
                 
                 # Удаляем файл с диска
                 file_path = Path("media") / "documents" / str(project_id) / f"{document.id}_{document.filename}"
@@ -1355,6 +1476,12 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
                 else:
                     delete_status.append("ℹ️ Файл не найден на диске")
                 
+                # Показываем typing indicator перед удалением из БД
+                try:
+                    await callback.bot.send_chat_action(callback.message.chat.id, ChatAction.TYPING)
+                except Exception as e:
+                    logger.warning(f"Failed to send typing indicator: {e}")
+                
                 # Удаляем документ из БД (каскадно удалятся чанки)
                 try:
                     await db.delete(document)
@@ -1363,8 +1490,16 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
                 except Exception as e:
                     logger.error(f"Error deleting document from DB: {e}")
                     await db.rollback()
+                    if delete_typing_task:
+                        delete_typing_task.cancel()
                     await callback.answer(f"❌ Ошибка удаления из БД: {str(e)[:100]}", show_alert=True)
                     return
+                
+                # Показываем typing indicator перед удалением из Qdrant
+                try:
+                    await callback.bot.send_chat_action(callback.message.chat.id, ChatAction.TYPING)
+                except Exception as e:
+                    logger.warning(f"Failed to send typing indicator: {e}")
                 
                 # Удаляем из Qdrant
                 qdrant_status = ""
@@ -1410,8 +1545,50 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
                     # Если не удалось обновить, отправляем новое сообщение
                     await callback.message.answer(status_message, parse_mode="HTML")
                 
+                # Останавливаем typing indicator для удаления
+                if delete_typing_task:
+                    delete_typing_task.cancel()
+                    try:
+                        await delete_typing_task
+                    except asyncio.CancelledError:
+                        pass
+                
                 # Показываем уведомление
                 await callback.answer(f"✅ Документ '{filename}' успешно удален", show_alert=False)
+                
+                # Обновляем список документов (показываем первую страницу)
+                # Используем edit_text для обновления сообщения со списком, если это возможно
+                try:
+                    # Пытаемся найти сообщение со списком документов и обновить его
+                    # Если не получается, отправляем новое сообщение
+                    try:
+                        # Получаем обновленный список
+                        from app.models.document import Document
+                        from sqlalchemy.orm import load_only
+                        from sqlalchemy import select
+                        
+                        count_result = await db.execute(
+                            select(Document).where(Document.project_id == project_id)
+                        )
+                        total_documents = len(count_result.scalars().all())
+                        
+                        if total_documents == 0:
+                            # Если документов не осталось, обновляем сообщение
+                            await callback.message.edit_text(
+                                "📄 <b>Документы проекта</b>\n\n"
+                                "В проекте пока нет загруженных документов.\n"
+                                "Просто отправьте файл в чат для загрузки.",
+                                parse_mode="HTML"
+                            )
+                        else:
+                            # Обновляем список документов
+                            await cmd_documents(callback.message, state, page=0)
+                    except Exception as refresh_error:
+                        logger.warning(f"Error refreshing documents list: {refresh_error}")
+                        # Отправляем новое сообщение со списком
+                        await cmd_documents(callback.message, state, page=0)
+                except Exception as e:
+                    logger.warning(f"Error refreshing documents list: {e}")
     finally:
         # Отменяем периодическую отправку ChatAction
         if typing_task:
@@ -1422,54 +1599,6 @@ async def handle_document_callback(callback: CallbackQuery, state: FSMContext):
                 pass
 
 
-async def handle_menu_button(message: Message, state: FSMContext):
-    """Обработка нажатий кнопок меню через обычную клавиатуру"""
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    current_state = await state.get_state()
-    if current_state != AuthStates.authorized:
-        await message.answer("❌ Сначала авторизуйтесь через /start")
-        return
-    
-    data = await state.get_data()
-    button_text = message.text
-    
-    # Определяем, какая кнопка была нажата
-    if button_text in ["📄 Режим: Документы", "📄 Переключить на Документы"]:
-        await state.update_data(answer_mode="rag_mode")
-        answer_mode = "rag_mode"
-        await message.answer("✅ Режим изменен: Ответы на основе документов", reply_markup=get_menu_keyboard(answer_mode))
-        
-    elif button_text in ["💬 Режим: Общие вопросы", "💬 Переключить на Общие вопросы"]:
-        await state.update_data(answer_mode="general_mode")
-        answer_mode = "general_mode"
-        await message.answer("✅ Режим изменен: Общие вопросы", reply_markup=get_menu_keyboard(answer_mode))
-        
-    elif button_text == "💡 Предложить вопросы":
-        # Вызываем команду предложения вопросов
-        await cmd_suggest_questions(message, state)
-        
-    elif button_text == "📋 Резюме документа":
-        # Вызываем команду summary
-        await cmd_summary(message, state)
-        
-    elif button_text == "📝 Описание":
-        # Вызываем команду describe
-        await cmd_describe(message, state)
-        
-    elif button_text == "🔍 Глубокий анализ":
-        # Вызываем команду analyze
-        await cmd_analyze(message, state)
-        
-    elif button_text == "❌ Скрыть меню":
-        # Удаляем клавиатуру
-        await message.answer("✅ Меню скрыто", reply_markup=ReplyKeyboardRemove())
-        try:
-            # Удаляем текущее сообщение пользователя
-            await message.delete()
-        except Exception as e:
-            logger.warning(f"Error deleting message: {e}")
 
 
 def register_commands(dp: Dispatcher, project_id: str):
@@ -1494,20 +1623,10 @@ def register_commands(dp: Dispatcher, project_id: str):
     dp.message.register(cmd_analyze, Command("analyze", "анализ", "analysis", "анализ_документа"))
     # Регистрируем обработчик callback для переключения режимов и типовых запросов (для обратной совместимости)
     dp.callback_query.register(handle_mode_callback)
-    # Регистрируем обработчик для callback документов (download_doc_*, delete_doc_*)
-    dp.callback_query.register(handle_document_callback, F.data.startswith("download_doc_") | F.data.startswith("delete_doc_"))
-    # Регистрируем обработчик для всех кнопок меню через обычную клавиатуру
-    dp.message.register(
-        handle_menu_button,
-        F.text.in_([
-            "📄 Режим: Документы",
-            "📄 Переключить на Документы",
-            "💬 Режим: Общие вопросы",
-            "💬 Переключить на Общие вопросы",
-            "💡 Предложить вопросы",
-            "📋 Резюме документа",
-            "📝 Описание",
-            "🔍 Глубокий анализ",
-            "❌ Скрыть меню"
-        ])
+    # Регистрируем обработчик для callback документов (download_doc_*, delete_doc_*, docs_page_*)
+    dp.callback_query.register(
+        handle_document_callback, 
+        F.data.startswith("download_doc_") | 
+        F.data.startswith("delete_doc_") | 
+        F.data.startswith("docs_page_")
     )
