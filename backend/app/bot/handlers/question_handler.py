@@ -632,7 +632,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                             
                             from app.llm.openrouter_client import OpenRouterClient
                             from app.core.config import settings as app_settings
-                            from app.config.config_loader import load_small_files_prompts_config
+                            from config.config_loader import load_small_files_prompts_config
                             
                             # Загружаем конфигурацию промптов для маленьких файлов
                             small_files_config = load_small_files_prompts_config()
