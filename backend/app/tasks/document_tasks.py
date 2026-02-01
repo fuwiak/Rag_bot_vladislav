@@ -202,12 +202,12 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             else:
                 logger.warning(f"[Celery] ⚠️ Content preview недоступен (слишком короткий или пустой)")
             
-            # Разбивка на чанки - используем продвинутый chunker с fallback-ами
+            # Разбивка на чанки - используем правильные параметры из рабочего скрипта (1000/200)
             logger.info(f"[Celery] 🔪 Начинаем разбивку документа на чанки: {filename}, размер текста: {len(text)} символов")
             from app.documents.advanced_chunker import AdvancedChunker
             advanced_chunker = AdvancedChunker(
-                default_chunk_size=800,
-                default_overlap=200,
+                default_chunk_size=1000,  # Правильный размер из рабочего скрипта
+                default_overlap=200,  # Правильное перекрытие из рабочего скрипта
                 min_chunk_size=100,
                 max_chunk_size=2000
             )
@@ -225,7 +225,9 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             
             # Fallback на простой chunker если продвинутый не сработал
             if not chunks or len(chunks) == 0:
-                logger.warning(f"[Celery] ⚠️ Advanced chunking failed, using simple chunker")
+                logger.warning(f"[Celery] ⚠️ Advanced chunking failed, using simple chunker with correct params (1000/200)")
+                # Используем правильные параметры chunking
+                chunker = DocumentChunker(chunk_size=1000, chunk_overlap=200)
                 chunks = chunker.chunk_text(text)
             if not chunks:
                 logger.warning(f"[Celery] ❌ Документ {document_id} не содержит текста после chunking")
@@ -240,7 +242,7 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             logger.info(f"[Celery]   - Максимальный размер: {max(len(c) for c in chunks) if chunks else 0} символов")
             logger.info(f"[Celery]   - Память после chunking: {chunking_end_memory:.2f}MB (delta: {chunking_end_memory - chunking_start_memory:.2f}MB)")
             
-            # Создание эмбеддингов по одному для минимального использования памяти
+            # Создание эмбеддингов батчами для эффективности (как в рабочем скрипте)
             from app.services.embedding_service import EmbeddingService
             from app.vector_db.vector_store import VectorStore
             from app.models.document import DocumentChunk
@@ -248,124 +250,152 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             embedding_service = EmbeddingService()
             vector_store = VectorStore()
             
-            # Batch processing для szybszego zapisu do Qdrant
-            BATCH_SIZE = 10  # Zapisujemy po 10 chunks naraz
+            # Batch processing для эффективной обработки (как в рабочем скрипте)
+            EMBEDDING_BATCH_SIZE = 100  # Размер батча для эмбеддингов (как в рабочем скрипте)
+            QDRANT_BATCH_SIZE = 100  # Размер батча для Qdrant (как в рабочем скрипте)
             batch_points = []
             batch_chunks = []
             
-            # Обрабатываем чанки по одному для минимального использования памяти
-            logger.info(f"[Celery] 🚀 Начинаем обработку {len(chunks)} чанков: создание эмбеддингов и сохранение в Qdrant")
+            # Обрабатываем чанки батчами для эффективности
+            logger.info(f"[Celery] 🚀 Начинаем обработку {len(chunks)} чанков: создание эмбеддингов батчами и сохранение в Qdrant")
             embedding_start_memory = process.memory_info().rss / 1024 / 1024
             logger.info(f"[Celery] 📊 Память перед созданием эмбеддингов: {embedding_start_memory:.2f}MB")
             
             successful_chunks = 0
             failed_chunks = 0
             
-            for chunk_index, chunk_text in enumerate(chunks):
+            # Обрабатываем чанки батчами
+            for batch_start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
+                batch_chunk_texts = chunks[batch_start:batch_start + EMBEDDING_BATCH_SIZE]
+                batch_indices = list(range(batch_start, min(batch_start + EMBEDDING_BATCH_SIZE, len(chunks))))
+                
                 try:
-                    chunk_memory_before = process.memory_info().rss / 1024 / 1024
+                    logger.info(f"[Celery] 🔄 Обработка батча {batch_start // EMBEDDING_BATCH_SIZE + 1}: чанки {batch_start + 1}-{batch_start + len(batch_chunk_texts)} из {len(chunks)}")
                     
-                    # Создаем эмбеддинг для одного чанка
+                    # Создаем эмбеддинги для батча (как в рабочем скрипте)
                     try:
-                        logger.debug(f"[Celery] 🔄 Обработка чанка {chunk_index + 1}/{len(chunks)}: создание эмбеддинга ({len(chunk_text)} символов)")
-                        embedding = await embedding_service.create_embedding(chunk_text)
-                        logger.debug(f"[Celery] ✅ Эмбеддинг создан для чанка {chunk_index + 1}, размерность: {len(embedding)}")
+                        embeddings = await embedding_service.create_embeddings_batch(batch_chunk_texts)
+                        logger.info(f"[Celery] ✅ Эмбеддинги созданы для батча: {len(embeddings)} эмбеддингов")
                     except Exception as e:
-                        logger.error(f"[Celery] ❌ Ошибка создания эмбеддинга для чанка {chunk_index + 1}: {e}")
-                        failed_chunks += 1
-                        continue
+                        logger.error(f"[Celery] ❌ Ошибка создания эмбеддингов для батча: {e}, пробуем по одному")
+                        # Fallback: создаем по одному
+                        embeddings = []
+                        for chunk_text in batch_chunk_texts:
+                            try:
+                                emb = await embedding_service.create_embedding(chunk_text)
+                                embeddings.append(emb)
+                            except Exception as single_error:
+                                logger.error(f"[Celery] ❌ Ошибка создания эмбеддинга для чанка: {single_error}")
+                                embeddings.append(None)
+                                failed_chunks += 1
                     
-                    # Сохраняем чанк в БД (сохраняем полный текст чанка)
-                    # Максимальный размер чанка: 10KB текста (примерно 10,000 символов)
-                    MAX_CHUNK_SIZE = 10_000
-                    chunk_text_to_save = chunk_text[:MAX_CHUNK_SIZE] if len(chunk_text) > MAX_CHUNK_SIZE else chunk_text
-                    if len(chunk_text) > MAX_CHUNK_SIZE:
-                        logger.warning(f"[Celery] ⚠️ Chunk {chunk_index + 1} слишком большой ({len(chunk_text)} символов), обрезаем до {MAX_CHUNK_SIZE}")
-                    
-                    chunk = DocumentChunk(
-                        document_id=document_id,
-                        chunk_text=chunk_text_to_save,
-                        chunk_index=chunk_index
-                    )
-                    db.add(chunk)
-                    await db.flush()  # Получаем ID чанка
-                    
-                    # Dodajemy do batcha dla szybszego zapisu do Qdrant
-                    from qdrant_client.models import PointStruct
-                    point_id = chunk.id  # Używamy chunk.id jako point_id
-                    batch_points.append(PointStruct(
-                        id=str(point_id),
-                        vector=embedding,
-                        payload={
-                            "document_id": str(document_id),
-                            "chunk_id": str(chunk.id),
-                            "chunk_index": chunk_index,
-                            "filename": filename,
-                            "chunk_text": chunk_text[:500]  # Ограничиваем для Qdrant
-                        }
-                    ))
-                    batch_chunks.append((chunk, point_id))
-                    
-                    # Zapisujemy batch co BATCH_SIZE chunks
-                    if len(batch_points) >= BATCH_SIZE or chunk_index == len(chunks) - 1:
-                        try:
-                            # Batch upsert do Qdrant
-                            collection_name = f"project_{project_id}"
-                            logger.info(f"[Celery] 💾 Сохранение батча из {len(batch_points)} чанков в Qdrant (коллекция: {collection_name})")
-                            await vector_store.ensure_collection(collection_name, len(embedding))
-                            vector_store.client.upsert(
-                                collection_name=collection_name,
-                                points=batch_points
-                            )
-                            
-                            # Aktualizujemy qdrant_point_id dla wszystkich chunks w batchu
-                            for batch_chunk, batch_point_id in batch_chunks:
-                                batch_chunk.qdrant_point_id = batch_point_id
-                            await db.flush()
-                            
-                            successful_chunks += len(batch_points)
-                            progress_pct = ((chunk_index + 1) / len(chunks)) * 100
-                            logger.info(f"[Celery] ✅ Батч из {len(batch_points)} чанков сохранен в Qdrant (прогресс: {chunk_index + 1}/{len(chunks)} = {progress_pct:.1f}%)")
-                        except Exception as e:
-                            logger.error(f"[Celery] ❌ Ошибка batch upsert в Qdrant: {e}", exc_info=True)
-                            failed_chunks += len(batch_points)
-                            # Próbujemy zapisać pojedynczo jako fallback
-                            for batch_chunk, batch_point_id in batch_chunks:
-                                try:
-                                    await vector_store.store_vector(
-                                        collection_name=f"project_{project_id}",
-                                        vector=embedding,  # Używamy ostatniego embedding
-                                        payload={
-                                            "document_id": str(document_id),
-                                            "chunk_id": str(batch_chunk.id),
-                                            "chunk_index": batch_chunk.chunk_index,
-                                            "filename": filename,
-                                            "chunk_text": batch_chunk.chunk_text[:500]
-                                        }
-                                    )
-                                    batch_chunk.qdrant_point_id = batch_point_id
-                                    successful_chunks += 1
-                                    failed_chunks -= 1
-                                except Exception as fallback_error:
-                                    logger.error(f"[Celery] ❌ Fallback сохранение чанка {batch_chunk.chunk_index} тоже не удалось: {fallback_error}")
+                    # Обрабатываем результаты батча
+                    for chunk_index, (chunk_text, embedding) in enumerate(zip(batch_chunk_texts, embeddings)):
+                        actual_index = batch_indices[chunk_index]
                         
-                        # Czyszczenie batcha
-                        batch_points = []
-                        batch_chunks = []
+                        if embedding is None:
+                            logger.warning(f"[Celery] ⚠️ Пропуск чанка {actual_index + 1}: эмбеддинг не создан")
+                            failed_chunks += 1
+                            continue
+                        
+                        try:
                     
-                    chunk_memory_after = process.memory_info().rss / 1024 / 1024
-                    if (chunk_index + 1) % 10 == 0:
-                        progress_pct = ((chunk_index + 1) / len(chunks)) * 100
-                        logger.info(f"[Celery] 📊 Прогресс: {chunk_index + 1}/{len(chunks)} чанков ({progress_pct:.1f}%), память: {chunk_memory_after:.2f}MB, успешно: {successful_chunks}, ошибок: {failed_chunks}")
+                            # Сохраняем чанк в БД (сохраняем полный текст чанка)
+                            # Максимальный размер чанка: 10KB текста (примерно 10,000 символов)
+                            MAX_CHUNK_SIZE = 10_000
+                            chunk_text_to_save = chunk_text[:MAX_CHUNK_SIZE] if len(chunk_text) > MAX_CHUNK_SIZE else chunk_text
+                            if len(chunk_text) > MAX_CHUNK_SIZE:
+                                logger.warning(f"[Celery] ⚠️ Chunk {actual_index + 1} слишком большой ({len(chunk_text)} символов), обрезаем до {MAX_CHUNK_SIZE}")
+                            
+                            chunk = DocumentChunk(
+                                document_id=document_id,
+                                chunk_text=chunk_text_to_save,
+                                chunk_index=actual_index
+                            )
+                            db.add(chunk)
+                            await db.flush()  # Получаем ID чанка
+                            
+                            # Добавляем в батч для Qdrant (как в рабочем скрипте)
+                            from qdrant_client.models import PointStruct
+                            import hashlib
+                            
+                            # Генерируем уникальный ID (как в рабочем скрипте)
+                            chunk_hash = hashlib.md5(chunk_text.encode()).hexdigest()
+                            point_id = abs(hash(f"{document_id}_{actual_index}_{chunk_hash}")) % (10 ** 10)
+                            
+                            batch_points.append(PointStruct(
+                                id=point_id,
+                                vector=embedding,
+                                payload={
+                                    "document_id": str(document_id),
+                                    "chunk_id": str(chunk.id),
+                                    "chunk_index": actual_index,
+                                    "filename": filename,
+                                    "chunk_text": chunk_text[:500],  # Ограничиваем для Qdrant
+                                    "text": chunk_text[:500]  # Дублируем для совместимости
+                                }
+                            ))
+                            batch_chunks.append((chunk, point_id))
+                            successful_chunks += 1
+                            
+                        except Exception as chunk_error:
+                            logger.error(f"[Celery] ❌ Ошибка обработки чанка {actual_index + 1}: {chunk_error}")
+                            failed_chunks += 1
+                            continue
                     
-                    # Освобождаем память каждые 10 чанков
-                    if (chunk_index + 1) % 10 == 0:
-                        gc.collect()
-                    
-                except Exception as e:
-                    logger.error(f"[Celery] ❌ Ошибка обработки чанка {chunk_index + 1}: {e}", exc_info=True)
-                    failed_chunks += 1
+                    # Сохраняем батч в Qdrant когда накопилось достаточно или это последний батч
+                    if len(batch_points) >= QDRANT_BATCH_SIZE or batch_start + EMBEDDING_BATCH_SIZE >= len(chunks):
+                            try:
+                                # Batch upsert в Qdrant (как в рабочем скрипте)
+                                collection_name = f"project_{project_id}"
+                                logger.info(f"[Celery] 💾 Сохранение батча из {len(batch_points)} чанков в Qdrant (коллекция: {collection_name})")
+                                await vector_store.ensure_collection(collection_name, len(embedding))
+                                vector_store.client.upsert(
+                                    collection_name=collection_name,
+                                    points=batch_points
+                                )
+                                
+                                # Обновляем qdrant_point_id для всех чанков в батче
+                                for batch_chunk, batch_point_id in batch_chunks:
+                                    batch_chunk.qdrant_point_id = batch_point_id
+                                await db.flush()
+                                
+                                progress_pct = ((batch_start + len(batch_chunk_texts)) / len(chunks)) * 100
+                                logger.info(f"[Celery] ✅ Батч из {len(batch_points)} чанков сохранен в Qdrant (прогресс: {batch_start + len(batch_chunk_texts)}/{len(chunks)} = {progress_pct:.1f}%)")
+                            except Exception as e:
+                                logger.error(f"[Celery] ❌ Ошибка batch upsert в Qdrant: {e}", exc_info=True)
+                                # Пробуем сохранить по одному как fallback
+                                for batch_chunk, batch_point_id in batch_chunks:
+                                    try:
+                                        point_data = next((p for p in batch_points if str(p.id) == str(batch_point_id)), None)
+                                        if point_data:
+                                            await vector_store.store_vector(
+                                                collection_name=f"project_{project_id}",
+                                                vector=point_data.vector,
+                                                payload=point_data.payload
+                                            )
+                                            batch_chunk.qdrant_point_id = batch_point_id
+                                            successful_chunks += 1
+                                            failed_chunks -= 1
+                                    except Exception as fallback_error:
+                                        logger.error(f"[Celery] ❌ Fallback сохранение чанка {batch_chunk.chunk_index} тоже не удалось: {fallback_error}")
+                            
+                            # Очищаем батч
+                            batch_points = []
+                            batch_chunks = []
+                            
+                except Exception as batch_error:
+                    logger.error(f"[Celery] ❌ Ошибка обработки батча {batch_start // EMBEDDING_BATCH_SIZE + 1}: {batch_error}", exc_info=True)
+                    failed_chunks += len(batch_chunk_texts)
                     continue
+                
+                # Логируем прогресс и освобождаем память
+                chunk_memory_after = process.memory_info().rss / 1024 / 1024
+                progress_pct = ((batch_start + len(batch_chunk_texts)) / len(chunks)) * 100
+                logger.info(f"[Celery] 📊 Прогресс: {batch_start + len(batch_chunk_texts)}/{len(chunks)} чанков ({progress_pct:.1f}%), память: {chunk_memory_after:.2f}MB, успешно: {successful_chunks}, ошибок: {failed_chunks}")
+                
+                # Освобождаем память после каждого батча
+                gc.collect()
             
             embedding_end_memory = process.memory_info().rss / 1024 / 1024
             logger.info(f"[Celery] ✅ Обработка чанков завершена:")
@@ -584,10 +614,10 @@ async def process_large_document_async_langgraph(
         await db.refresh(document)
         logger.info(f"[Celery LangGraph] ✅ Document content saved: {len(document.content)} chars")
         
-        # Используем advanced chunker с иерархическим разбиением для больших документов
+        # Используем advanced chunker с правильными параметрами (1000/200 для обычных, больше для больших)
         advanced_chunker = AdvancedChunker(
-            default_chunk_size=1500 if is_large_document else 800,
-            default_overlap=300 if is_large_document else 200,
+            default_chunk_size=1500 if is_large_document else 1000,  # Правильный размер из рабочего скрипта
+            default_overlap=300 if is_large_document else 200,  # Правильное перекрытие из рабочего скрипта
             min_chunk_size=100,
             max_chunk_size=3000 if is_large_document else 2000
         )
@@ -781,7 +811,8 @@ async def reindex_document_async(document_id: UUID, project_id: UUID):
             
             if document and document.content:
                 from app.documents.chunker import DocumentChunker
-                chunker = DocumentChunker(chunk_size=800, chunk_overlap=200)
+                # Используем правильные параметры chunking (1000/200)
+                chunker = DocumentChunker(chunk_size=1000, chunk_overlap=200)
                 text_chunks = chunker.chunk_text(document.content)
                 
                 chunks = []

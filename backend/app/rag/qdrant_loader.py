@@ -30,12 +30,13 @@ class QdrantLoader:
     def __init__(
         self,
         collection_name: str = "rag_docs",
-        chunk_size: int = 500,
-        chunk_overlap: int = 50
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200
     ):
         self.collection_name = collection_name
         self.vector_store = VectorStore()
         self.embedding_service = EmbeddingService()
+        # Используем правильные параметры chunking из рабочего скрипта: 1000 символов, перекрытие 200
         self.chunker = DocumentChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         
         # BM25 индекс (будет построен при необходимости)
@@ -84,35 +85,129 @@ class QdrantLoader:
         chunks = self.chunker.chunk_text(text)
         logger.info(f"Split document into {len(chunks)} chunks")
         
-        # Создаем embeddings и сохраняем в Qdrant
+        if not chunks:
+            logger.warning("No chunks generated from document")
+            return 0
+        
+        # Фильтруем слишком короткие чанки (минимум 50 символов, как в рабочем скрипте)
+        chunks = [chunk for chunk in chunks if len(chunk.strip()) >= 50]
+        if not chunks:
+            logger.warning("All chunks filtered out (too short)")
+            return 0
+        
+        logger.info(f"After filtering: {len(chunks)} chunks")
+        
+        # Создаем embeddings батчами (как в рабочем скрипте)
+        from qdrant_client.models import PointStruct
+        import hashlib
+        
+        # Генерируем эмбеддинги батчами для эффективности
+        batch_size = 100  # Размер батча для эмбеддингов
+        points = []
         chunks_count = 0
-        for i, chunk in enumerate(chunks):
+        
+        for batch_start in range(0, len(chunks), batch_size):
+            batch_chunks = chunks[batch_start:batch_start + batch_size]
+            
             try:
-                # Создаем embedding
-                embedding = await self.embedding_service.create_embedding(chunk)
+                # Генерируем эмбеддинги для батча
+                logger.info(f"Generating embeddings for batch {batch_start // batch_size + 1} ({len(batch_chunks)} chunks)")
+                embeddings = await self.embedding_service.create_embeddings_batch(batch_chunks)
                 
-                # Подготавливаем метаданные
-                point_metadata = {
-                    **metadata,
-                    "chunk_index": i,
-                    "chunk_text": chunk,
-                    "source_url": source_url
-                }
+                # Создаем точки для батча
+                for i, (chunk, embedding) in enumerate(zip(batch_chunks, embeddings)):
+                    if embedding is None:
+                        logger.warning(f"Failed to generate embedding for chunk {batch_start + i}")
+                        continue
+                    
+                    # Генерируем уникальный ID (как в рабочем скрипте)
+                    chunk_hash = hashlib.md5(chunk.encode()).hexdigest()
+                    point_id = abs(hash(f"{source_url}_{batch_start + i}_{chunk_hash}")) % (10 ** 10)
+                    
+                    # Подготавливаем метаданные
+                    point_metadata = {
+                        **metadata,
+                        "chunk_index": batch_start + i,
+                        "chunk_text": chunk,
+                        "text": chunk,  # Дублируем для совместимости
+                        "source_url": source_url,
+                        "total_chunks": len(chunks)
+                    }
+                    
+                    if project_id:
+                        point_metadata["project_id"] = project_id
+                    
+                    points.append(
+                        PointStruct(
+                            id=point_id,
+                            vector=embedding,
+                            payload=point_metadata
+                        )
+                    )
+                    chunks_count += 1
                 
-                if project_id:
-                    point_metadata["project_id"] = project_id
-                
-                # Сохраняем в Qdrant
-                await self.vector_store.store_vector(
-                    collection_name=self.collection_name,
-                    vector=embedding,
-                    payload=point_metadata
-                )
-                
-                chunks_count += 1
             except Exception as e:
-                logger.error(f"Error storing chunk {i}: {str(e)}")
-                continue
+                logger.error(f"Error generating embeddings for batch {batch_start // batch_size + 1}: {str(e)}")
+                # Пробуем создать эмбеддинги по одному для этого батча
+                for i, chunk in enumerate(batch_chunks):
+                    try:
+                        embedding = await self.embedding_service.create_embedding(chunk)
+                        if embedding:
+                            chunk_hash = hashlib.md5(chunk.encode()).hexdigest()
+                            point_id = abs(hash(f"{source_url}_{batch_start + i}_{chunk_hash}")) % (10 ** 10)
+                            
+                            point_metadata = {
+                                **metadata,
+                                "chunk_index": batch_start + i,
+                                "chunk_text": chunk,
+                                "text": chunk,
+                                "source_url": source_url,
+                                "total_chunks": len(chunks)
+                            }
+                            
+                            if project_id:
+                                point_metadata["project_id"] = project_id
+                            
+                            points.append(
+                                PointStruct(
+                                    id=point_id,
+                                    vector=embedding,
+                                    payload=point_metadata
+                                )
+                            )
+                            chunks_count += 1
+                    except Exception as chunk_error:
+                        logger.error(f"Error storing chunk {batch_start + i}: {str(chunk_error)}")
+                        continue
+        
+        # Сохраняем все точки в Qdrant батчами
+        if points:
+            qdrant_batch_size = 100  # Размер батча для Qdrant
+            for qdrant_batch_start in range(0, len(points), qdrant_batch_size):
+                qdrant_batch = points[qdrant_batch_start:qdrant_batch_start + qdrant_batch_size]
+                try:
+                    # Получаем клиент Qdrant напрямую для batch upsert
+                    from app.vector_db.qdrant_client import qdrant_client
+                    client = qdrant_client.get_client()
+                    
+                    client.upsert(
+                        collection_name=self.collection_name,
+                        points=qdrant_batch
+                    )
+                    logger.info(f"Inserted batch of {len(qdrant_batch)} points into {self.collection_name}")
+                except Exception as e:
+                    logger.error(f"Error inserting batch into Qdrant: {str(e)}")
+                    # Пробуем сохранить по одному
+                    for point in qdrant_batch:
+                        try:
+                            await self.vector_store.store_vector(
+                                collection_name=self.collection_name,
+                                vector=point.vector,
+                                payload=point.payload
+                            )
+                        except Exception as single_error:
+                            logger.error(f"Error storing single point: {str(single_error)}")
+                            continue
         
         logger.info(f"Inserted {chunks_count} chunks into {self.collection_name}")
         
