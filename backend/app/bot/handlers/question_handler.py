@@ -540,13 +540,15 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                         except ValueError:
                             logger.warning(f"[QUESTION HANDLER] Invalid last_document_id format: {last_document_id_str}")
                     
-                    # Если есть last_document_id, пытаемся использовать контент документа из БД
+                    # Если есть last_document_id, пытаемся использовать контент документа
+                    # Сначала проверяем Redis, потом БД
                     document_content = None
                     document_filename = None
                     if last_document_id:
                         try:
                             from app.models.document import Document
                             from sqlalchemy import select
+                            from app.services.cache_service import cache_service
                             
                             # Показываем typing indicator во время проверки контента
                             try:
@@ -554,42 +556,70 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                             except:
                                 pass
                             
-                            # Ждем готовности контента (максимум 10 секунд для маленьких файлов)
-                            max_wait_time = 10.0
-                            wait_interval = 0.5
-                            waited_time = 0.0
+                            # СНАЧАЛА проверяем Redis
+                            try:
+                                cached_content = await cache_service.get_document_content(str(last_document_id))
+                                if cached_content:
+                                    # Получаем имя файла из БД
+                                    doc_result = await db.execute(select(Document).where(Document.id == last_document_id))
+                                    document = doc_result.scalar_one_or_none()
+                                    if document:
+                                        document_content = cached_content
+                                        document_filename = document.filename
+                                        logger.info(f"[QUESTION HANDLER] Found document content in Redis: {document_filename}, length: {len(document_content)}")
+                            except Exception as redis_error:
+                                logger.warning(f"[QUESTION HANDLER] Error getting from Redis: {redis_error}, trying DB")
                             
-                            while waited_time < max_wait_time:
-                                doc_result = await db.execute(select(Document).where(Document.id == last_document_id))
-                                document = doc_result.scalar_one_or_none()
-                                
-                                if document and document.content and document.content.strip() and document.content != "Обработка...":
-                                    document_content = document.content
-                                    document_filename = document.filename
-                                    logger.info(f"[QUESTION HANDLER] Found document content in DB: {document_filename}, length: {len(document_content)}, waited: {waited_time:.1f}s")
-                                    break
-                                
-                                # Показываем typing indicator во время ожидания
-                                if waited_time > 0:
-                                    try:
-                                        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
-                                    except:
-                                        pass
-                                
-                                await asyncio.sleep(wait_interval)
-                                waited_time += wait_interval
-                            
+                            # Если не нашли в Redis, проверяем БД
                             if not document_content:
-                                logger.warning(f"[QUESTION HANDLER] Document {last_document_id} content not ready after {waited_time:.1f}s, content may still be processing")
-                                # Пробуем еще раз получить документ
-                                doc_result = await db.execute(select(Document).where(Document.id == last_document_id))
-                                document = doc_result.scalar_one_or_none()
-                                if document and document.content and document.content.strip() and document.content != "Обработка...":
-                                    document_content = document.content
-                                    document_filename = document.filename
-                                    logger.info(f"[QUESTION HANDLER] Found document content after final check: {document_filename}, length: {len(document_content)}")
+                                # Ждем готовности контента (максимум 10 секунд для маленьких файлов)
+                                max_wait_time = 10.0
+                                wait_interval = 0.5
+                                waited_time = 0.0
+                                
+                                while waited_time < max_wait_time:
+                                    doc_result = await db.execute(select(Document).where(Document.id == last_document_id))
+                                    document = doc_result.scalar_one_or_none()
+                                    
+                                    if document and document.content and document.content.strip() and document.content != "Обработка...":
+                                        document_content = document.content
+                                        document_filename = document.filename
+                                        logger.info(f"[QUESTION HANDLER] Found document content in DB: {document_filename}, length: {len(document_content)}, waited: {waited_time:.1f}s")
+                                        
+                                        # Сохраняем в Redis для следующего раза
+                                        try:
+                                            await cache_service.set_document_content(
+                                                str(last_document_id),
+                                                document_content,
+                                                ttl=3600
+                                            )
+                                            logger.debug(f"[QUESTION HANDLER] Saved document content to Redis for future use")
+                                        except Exception as redis_save_error:
+                                            logger.warning(f"[QUESTION HANDLER] Failed to save to Redis: {redis_save_error}")
+                                        
+                                        break
+                                    
+                                    # Показываем typing indicator во время ожидания
+                                    if waited_time > 0:
+                                        try:
+                                            await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                                        except:
+                                            pass
+                                    
+                                    await asyncio.sleep(wait_interval)
+                                    waited_time += wait_interval
+                                
+                                if not document_content:
+                                    logger.warning(f"[QUESTION HANDLER] Document {last_document_id} content not ready after {waited_time:.1f}s, content may still be processing")
+                                    # Пробуем еще раз получить документ
+                                    doc_result = await db.execute(select(Document).where(Document.id == last_document_id))
+                                    document = doc_result.scalar_one_or_none()
+                                    if document and document.content and document.content.strip() and document.content != "Обработка...":
+                                        document_content = document.content
+                                        document_filename = document.filename
+                                        logger.info(f"[QUESTION HANDLER] Found document content after final check: {document_filename}, length: {len(document_content)}")
                         except Exception as doc_error:
-                            logger.warning(f"[QUESTION HANDLER] Failed to get document from DB: {doc_error}")
+                            logger.warning(f"[QUESTION HANDLER] Failed to get document: {doc_error}")
                     
                     # Если есть контент документа, используем его для ответа с промптами из конфига
                     if document_content:

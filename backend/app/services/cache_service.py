@@ -303,6 +303,67 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Error invalidating project cache: {e}")
     
+    async def set_document_content(
+        self,
+        document_id: str,
+        content: str,
+        ttl: Optional[int] = None
+    ):
+        """
+        Zapisuje контент документа в Redis для быстрого доступа
+        
+        Args:
+            document_id: ID документа
+            content: Контент документа
+            ttl: Time to live в секундах (по умолчанию 1 час)
+        """
+        if not self.enabled or not self.redis_client:
+            return
+        
+        try:
+            key = self._make_key("document_content", document_id)
+            ttl = ttl or 3600  # 1 час по умолчанию
+            
+            await self.redis_client.setex(
+                key,
+                ttl,
+                content
+            )
+            logger.debug(f"Cached document content: {document_id} (TTL: {ttl}s, size: {len(content)} chars)")
+            
+        except Exception as e:
+            logger.warning(f"Error setting document content in cache: {e}")
+    
+    async def get_document_content(
+        self,
+        document_id: str
+    ) -> Optional[str]:
+        """
+        Получает контент документа из Redis
+        
+        Args:
+            document_id: ID документа
+        
+        Returns:
+            Контент документа или None если не найден
+        """
+        if not self.enabled or not self.redis_client:
+            return None
+        
+        try:
+            key = self._make_key("document_content", document_id)
+            content = await self.redis_client.get(key)
+            
+            if content:
+                logger.debug(f"Retrieved document content from cache: {document_id} ({len(content)} chars)")
+                return content
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Error getting document content from cache: {e}")
+            return None
+    
     async def get_cache_stats(self) -> Dict[str, Any]:
         """Zwraca statystyki cache"""
         if not self.enabled or not self.redis_client:

@@ -397,14 +397,28 @@ async def handle_document(message: Message, state: FSMContext):
                         text_content = await extract_text_from_file(str(temp_extract_path), file_type)
                         
                         if text_content and text_content.strip():
-                            # Сохраняем контент в БД СРАЗУ
+                            # Сначала сохраняем в Redis для быстрого доступа
+                            from app.services.cache_service import cache_service
+                            
                             MAX_CONTENT_SIZE = 2_000_000
+                            content_to_save = text_content
                             if len(text_content) > MAX_CONTENT_SIZE:
                                 logger.warning(f"[TELEGRAM UPLOAD] Текст слишком большой ({len(text_content)} символов), обрезаем до {MAX_CONTENT_SIZE}")
-                                document.content = text_content[:MAX_CONTENT_SIZE] + f"\n\n[... документ обрезан, всего {len(text_content)} символов ...]"
-                            else:
-                                document.content = text_content
+                                content_to_save = text_content[:MAX_CONTENT_SIZE] + f"\n\n[... документ обрезан, всего {len(text_content)} символов ...]"
                             
+                            # Сохраняем в Redis СНАЧАЛА
+                            try:
+                                await cache_service.set_document_content(
+                                    str(document.id),
+                                    content_to_save,
+                                    ttl=3600  # 1 час
+                                )
+                                logger.info(f"[TELEGRAM UPLOAD] ✅ Текст сохранен в Redis: {len(content_to_save)} символов для документа {document.id}")
+                            except Exception as redis_error:
+                                logger.warning(f"[TELEGRAM UPLOAD] Ошибка сохранения в Redis: {redis_error}, продолжаем с БД")
+                            
+                            # Затем сохраняем в БД
+                            document.content = content_to_save
                             await db.commit()
                             await db.refresh(document)
                             
