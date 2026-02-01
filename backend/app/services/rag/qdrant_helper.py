@@ -75,7 +75,7 @@ def get_qdrant_client() -> Optional[QdrantClient]:
             url=qdrant_url,
             api_key=qdrant_api_key if qdrant_api_key else None,
             prefer_grpc=False,
-            timeout=30  # Увеличенный таймаут для стабильности
+            timeout=60.0  # Увеличенный таймаут для стабильности (60 секунд)
         )
         
         # Проверяем подключение (не критично, если не получится - клиент все равно может работать)
