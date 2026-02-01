@@ -1,115 +1,115 @@
 # Конфигурация промптов для работы с маленькими файлами (< 1MB)
 # Для маленьких файлов используется прямой доступ к содержимому из БД через LLM
-# Язык по умолчанию: польский
+# Язык по умолчанию: русский
 
 small_files:
   # Основной язык для промптов
-  default_language: "pl"
+  default_language: "ru"
   
   # Системный промпт для ассистента
   system_prompt: |
-    Jesteś pomocnym asystentem, który odpowiada na pytania na podstawie zawartości dokumentu.
-    Twoim zadaniem jest dokładnie przeanalizować dokument i odpowiedzieć na pytania użytkownika w sposób ciekawy i dociekliwy.
+    Ты полезный ассистент, который отвечает на вопросы на основе содержимого документа.
+    Твоя задача - тщательно проанализировать документ и ответить на вопросы пользователя интересным и любопытным способом.
     
-    INSTRUKCJE:
-    - Czytaj dokument uważnie, strona po stronie
-    - Odpowiadaj na podstawie FAKTYCZNEJ zawartości dokumentu
-    - Jeśli informacji nie ma w dokumencie, powiedz to jasno
-    - Bądź precyzyjny i konkretny
-    - Używaj języka polskiego
-    - Jeśli dokument zawiera liczby, daty, nazwy - podaj je dokładnie
+    ИНСТРУКЦИИ:
+    - Читай документ внимательно, страница за страницей
+    - Отвечай на основе ФАКТИЧЕСКОГО содержимого документа
+    - Если информации нет в документе, скажи это четко
+    - Будь точным и конкретным
+    - Используй русский язык
+    - Если документ содержит числа, даты, названия - указывай их точно
   
   # Промпт для анализа документа с любопытными вопросами
   analysis_prompt: |
-    Przeanalizuj poniższy dokument i odpowiedz na pytanie użytkownika.
+    Проанализируй следующий документ и ответь на вопрос пользователя.
     
-    DOKUMENT: {filename}
+    ДОКУМЕНТ: {filename}
     
-    ZAWARTOŚĆ DOKUMENTU:
+    СОДЕРЖИМОЕ ДОКУМЕНТА:
     {content}
     
-    PYTANIE UŻYTKOWNIKA: {question}
+    ВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}
     
-    INSTRUKCJE:
-    1. Najpierw dokładnie przeczytaj cały dokument
-    2. Znajdź wszystkie informacje związane z pytaniem
-    3. Odpowiedz precyzyjnie na podstawie zawartości dokumentu
-    4. Jeśli pytanie jest ogólne (np. "o czym jest plik?"), zadaj sobie pomocnicze pytania:
-       - Jaki jest główny temat dokumentu?
-       - Jakie są kluczowe informacje?
-       - Kto jest autorem/odbiorcą?
-       - Jakie są ważne daty, liczby, nazwy?
-       - Jaki jest cel dokumentu?
-    5. Odpowiedz w sposób ciekawy i informacyjny
+    ИНСТРУКЦИИ:
+    1. Сначала внимательно прочитай весь документ
+    2. Найди всю информацию, связанную с вопросом
+    3. Ответь точно на основе содержимого документа
+    4. Если вопрос общий (например, "о чем файл?"), задай себе вспомогательные вопросы:
+       - Какова основная тема документа?
+       - Какая ключевая информация?
+       - Кто автор/получатель?
+       - Какие важные даты, числа, названия?
+       - Какова цель документа?
+    5. Ответь интересным и информативным способом
   
   # Вложенные промпты для любопытного анализа
   nested_prompts:
     # Промпт для определения темы документа
     identify_topic: |
-      Na podstawie zawartości dokumentu określ:
-      - Główny temat dokumentu
-      - Kluczowe słowa i pojęcia
-      - Kontekst i cel dokumentu
+      На основе содержимого документа определи:
+      - Основную тему документа
+      - Ключевые слова и понятия
+      - Контекст и цель документа
       
-      Zawartość: {content}
+      Содержимое: {content}
     
     # Промпт для извлечения ключевых фактов
     extract_facts: |
-      Wyciągnij z dokumentu najważniejsze fakty:
-      - Daty i terminy
-      - Liczby i kwoty
-      - Nazwy osób, firm, miejsc
-      - Kluczowe wydarzenia lub działania
+      Извлеки из документа самые важные факты:
+      - Даты и сроки
+      - Числа и суммы
+      - Названия людей, компаний, мест
+      - Ключевые события или действия
       
-      Zawartość: {content}
+      Содержимое: {content}
     
     # Промпт для анализа структуры
     analyze_structure: |
-      Przeanalizuj strukturę dokumentu:
-      - Jakie sekcje zawiera?
-      - Jaka jest kolejność informacji?
-      - Jakie są najważniejsze elementy?
+      Проанализируй структуру документа:
+      - Какие разделы содержит?
+      - Какой порядок информации?
+      - Какие самые важные элементы?
       
-      Zawartość: {content}
+      Содержимое: {content}
   
   # Промпт для общих вопросов о документе
   general_question_prompt: |
-    Użytkownik pyta ogólnie o dokument. Przeanalizuj go dokładnie i odpowiedz w sposób ciekawy.
+    Пользователь задает общий вопрос о документе. Проанализируй его тщательно и ответь интересным способом.
     
-    DOKUMENT: {filename}
+    ДОКУМЕНТ: {filename}
     
-    ZAWARTOŚĆ:
+    СОДЕРЖИМОЕ:
     {content}
     
-    PYTANIE: {question}
+    ВОПРОС: {question}
     
-    KROKI ANALIZY:
-    1. Określ główny temat dokumentu
-    2. Wyciągnij kluczowe informacje (daty, liczby, nazwy)
-    3. Zidentyfikuj strukturę i najważniejsze sekcje
-    4. Określ cel i kontekst dokumentu
-    5. Sformułuj ciekawą i informacyjną odpowiedź
+    ШАГИ АНАЛИЗА:
+    1. Определи основную тему документа
+    2. Извлеки ключевую информацию (даты, числа, названия)
+    3. Определи структуру и самые важные разделы
+    4. Определи цель и контекст документа
+    5. Сформулируй интересный и информативный ответ
     
-    ODPOWIEDŹ:
+    ОТВЕТ:
   
   # Промпт для конкретных вопросов
   specific_question_prompt: |
-    Użytkownik zadaje konkretne pytanie o dokument. Odpowiedz precyzyjnie na podstawie zawartości.
+    Пользователь задает конкретный вопрос о документе. Ответь точно на основе содержимого.
     
-    DOKUMENT: {filename}
+    ДОКУМЕНТ: {filename}
     
-    ZAWARTOŚĆ:
+    СОДЕРЖИМОЕ:
     {content}
     
-    PYTANIE: {question}
+    ВОПРОС: {question}
     
-    INSTRUKCJE:
-    - Znajdź dokładnie te fragmenty dokumentu, które odpowiadają na pytanie
-    - Jeśli informacja jest w dokumencie - podaj ją dokładnie
-    - Jeśli informacji nie ma - powiedz to jasno
-    - Używaj cytatów z dokumentu, jeśli to pomaga w odpowiedzi
+    ИНСТРУКЦИИ:
+    - Найди точно те фрагменты документа, которые отвечают на вопрос
+    - Если информация есть в документе - укажи ее точно
+    - Если информации нет - скажи это четко
+    - Используй цитаты из документа, если это помогает в ответе
     
-    ODPOWIEDŹ:
+    ОТВЕТ:
   
   # Константы для работы с маленькими файлами
   constants:
@@ -123,4 +123,4 @@ small_files:
     temperature: 0.7
     
     # Префикс для обрезанного контента
-    content_truncated_suffix: "\n\n[... dokument został obcięty, pokazano pierwsze {length} znaków z {total} ...]"
+    content_truncated_suffix: "\n\n[... документ обрезан, показано первые {length} символов из {total} ...]"

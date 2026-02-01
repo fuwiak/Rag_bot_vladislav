@@ -591,7 +591,13 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                             
                             # Определяем тип вопроса (общий или конкретный)
                             question_lower = question.lower()
+                            # Поддержка русского и польского языков
                             is_general_question = any(word in question_lower for word in [
+                                # Русский
+                                "о чем", "чем является", "что это", "что содержит", "какой", 
+                                "какая", "какое", "какая тема", "какая тематика", "о чем файл",
+                                "о чем документ", "что в файле", "что в документе",
+                                # Польский (для обратной совместимости)
                                 "o czym", "czym jest", "co to", "co zawiera", "jaki jest", 
                                 "jaka jest", "jaki temat", "jaka tematyka", "o czym jest plik"
                             ])
@@ -600,25 +606,25 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                             if is_general_question:
                                 # Общий вопрос - используем промпт с вложенными вопросами
                                 prompt_template = small_files.get("general_question_prompt", 
-                                    "Przeanalizuj dokument i odpowiedz na pytanie: {question}\n\nDokument: {filename}\n\nZawartość: {content}")
+                                    "Проанализируй документ и ответь на вопрос: {question}\n\nДокумент: {filename}\n\nСодержимое: {content}")
                                 user_prompt = prompt_template.format(
                                     filename=document_filename,
                                     content=content_preview,
                                     question=question
                                 )
                                 system_prompt = small_files.get("system_prompt", 
-                                    "Jesteś pomocnym asystentem, który odpowiada na pytania na podstawie zawartości dokumentu.")
+                                    "Ты полезный ассистент, который отвечает на вопросы на основе содержимого документа.")
                             else:
                                 # Конкретный вопрос
                                 prompt_template = small_files.get("specific_question_prompt",
-                                    "Odpowiedz na pytanie na podstawie dokumentu: {question}\n\nDokument: {filename}\n\nZawartość: {content}")
+                                    "Ответь на вопрос на основе документа: {question}\n\nДокумент: {filename}\n\nСодержимое: {content}")
                                 user_prompt = prompt_template.format(
                                     filename=document_filename,
                                     content=content_preview,
                                     question=question
                                 )
                                 system_prompt = small_files.get("system_prompt",
-                                    "Jesteś pomocnym asystentem, który odpowiada na pytania na podstawie zawartości dokumentu.")
+                                    "Ты полезный ассистент, который отвечает на вопросы на основе содержимого документа.")
                             
                             logger.info(f"[QUESTION HANDLER] Using small files prompt config: general={is_general_question}, content_length={len(content_preview)}")
                             
@@ -631,11 +637,11 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                                 temperature=temperature
                             )
                             
-                            answer = simple_answer.strip() if simple_answer else "Przepraszam, nie udało się wygenerować odpowiedzi na podstawie dokumentu."
+                            answer = simple_answer.strip() if simple_answer else "Извините, не удалось сгенерировать ответ на основе документа."
                             logger.info(f"[QUESTION HANDLER] Answer generated using document content from DB with config prompts for user {user_id}")
                         except Exception as doc_llm_error:
                             logger.error(f"[QUESTION HANDLER] Failed to generate answer with document content: {doc_llm_error}", exc_info=True)
-                            answer = "Przepraszam, wystąpił błąd podczas przetwarzania pytania. Spróbuj ponownie później."
+                            answer = "Извините, произошла ошибка при обработке вопроса. Попробуйте позже."
                     else:
                         # Нет документа в БД или контент пустой - используем простой LLM ответ
                         logger.warning(f"[QUESTION HANDLER] No document content available, using simple LLM answer for user {user_id}")
