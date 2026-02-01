@@ -451,42 +451,72 @@ async def upload_documents(
             # КРИТИЧНО: Для małych plików (< 5MB) zapisujemy content synchronicznie PRZED Celery
             # To pozwala RAG użyć dokumentu natychmiast
             SMALL_FILE_THRESHOLD = 5 * 1024 * 1024  # 5MB
+            file_size_mb = total_size / 1024 / 1024
+            
+            logger.info(f"[Upload] 📊 Проверка размера файла для синхронного парсинга:")
+            logger.info(f"[Upload]   - Размер файла: {file_size_mb:.2f} MB")
+            logger.info(f"[Upload]   - Порог для синхронного парсинга: {SMALL_FILE_THRESHOLD / 1024 / 1024:.2f} MB")
+            logger.info(f"[Upload]   - Файл меньше порога: {total_size < SMALL_FILE_THRESHOLD}")
+            
             if total_size < SMALL_FILE_THRESHOLD:
                 try:
-                    logger.info(f"[Upload] Small file detected ({total_size / 1024 / 1024:.2f}MB), parsing synchronously for immediate RAG availability")
+                    logger.info(f"[Upload] ✅ Small file detected ({file_size_mb:.2f}MB), parsing synchronously for immediate RAG availability")
                     from app.documents.parser import DocumentParser
                     parser = DocumentParser()
                     
                     # Czytamy plik ponownie dla parsowania
+                    logger.info(f"[Upload] 📖 Чтение файла для парсинга: {temp_path}")
                     with open(temp_path, 'rb') as f:
                         file_content = f.read()
+                    logger.info(f"[Upload] 📖 Файл прочитан: {len(file_content)} байт")
                     
                     # Parsujemy synchronicznie
+                    logger.info(f"[Upload] 🔄 Начало синхронного парсинга файла типа: {file_type}")
                     text = await parser.parse(file_content, file_type)
+                    logger.info(f"[Upload] ✅ Парсинг завершен: извлечено {len(text)} символов текста")
+                    
+                    if not text or len(text.strip()) < 50:
+                        logger.error(f"[Upload] ❌ Парсинг вернул пустой или слишком короткий текст ({len(text) if text else 0} символов)")
+                        logger.error(f"[Upload] ❌ Это может означать, что PDF сканированный или поврежден")
+                        raise ValueError(f"Парсинг вернул пустой текст: {len(text) if text else 0} символов")
                     
                     # Zapisujemy content natychmiast
                     MAX_CONTENT_SIZE = 2_000_000
                     if len(text) > MAX_CONTENT_SIZE:
+                        logger.warning(f"[Upload] ⚠️ Текст слишком большой ({len(text)} символов), обрезаем до {MAX_CONTENT_SIZE}")
                         document.content = text[:MAX_CONTENT_SIZE] + f"\n\n[... документ обрезан, всего {len(text)} символов ...]"
                     else:
                         document.content = text
                     
                     await db.commit()
                     await db.refresh(document)
+                    
+                    # Проверяем что контент действительно сохранился
+                    saved_content_length = len(document.content) if document.content else 0
                     logger.info(f"[Upload] ✅✅✅ ДОКУМЕНТ ГОТОВ ДЛЯ RAG ЗАПРОСОВ ✅✅✅")
                     logger.info(f"[Upload] 📄 Document ID: {document.id}")
                     logger.info(f"[Upload] 📄 Filename: {filename}")
-                    logger.info(f"[Upload] 📄 Content saved synchronously - {len(text)} символов")
+                    logger.info(f"[Upload] 📄 Content saved synchronously - {len(text)} символов извлечено, {saved_content_length} символов сохранено")
+                    logger.info(f"[Upload] 📄 Content preview (первые 200 символов): {document.content[:200] if document.content else 'EMPTY'}...")
                     logger.info(f"[Upload] 📄 Document ready for RAG - можно сразу задавать вопросы!")
+                    
+                    if saved_content_length < 100:
+                        logger.error(f"[Upload] ❌ КРИТИЧЕСКАЯ ОШИБКА: Контент не сохранился! Сохранено только {saved_content_length} символов")
                     
                     # Usuwamy file_content z pamięci
                     del file_content
                     del text
                 except Exception as sync_error:
-                    logger.warning(f"[Upload] Synchronous parsing failed, will use Celery: {sync_error}")
+                    logger.error(f"[Upload] ❌ Synchronous parsing failed, will use Celery: {sync_error}", exc_info=True)
+                    logger.error(f"[Upload] ❌ Ошибка типа: {type(sync_error).__name__}")
+                    logger.error(f"[Upload] ❌ Сообщение об ошибке: {str(sync_error)}")
                     # Jeśli synchroniczne parsowanie się nie powiodło, używamy Celery
                     document.content = "Обработка..."
                     await db.commit()
+                    logger.info(f"[Upload] 📝 Статус документа установлен на 'Обработка...', будет обработан через Celery")
+            else:
+                logger.info(f"[Upload] 📦 Большой файл ({file_size_mb:.2f}MB), будет обработан через Celery (асинхронно)")
+                logger.info(f"[Upload] 📝 Статус документа: 'Обработка...' (будет обновлен после обработки в Celery)")
             
             # Запускаем обработку через Celery в отдельном воркере
             # Для małych plików Celery tylko przetworzy chunks, content już jest zapisany
@@ -511,6 +541,9 @@ async def upload_documents(
                 logger.info(f"  - File type: {file_type}")
                 logger.info(f"  - Temp file: {temp_path}")
                 logger.info(f"  - Task state: {task_result.state}")
+                logger.info(f"  - File size: {total_size / 1024 / 1024:.2f} MB")
+                logger.info(f"[Upload] 📝 ВАЖНО: Для больших файлов контент будет сохранен после выполнения Celery задачи")
+                logger.info(f"[Upload] 📝 Проверьте логи Celery worker для отслеживания прогресса обработки")
             except Exception as celery_error:
                 logger.error(f"[Upload] ❌ Failed to create Celery task for document {document.id}: {celery_error}", exc_info=True)
                 # Обновляем статус документа на ошибку

@@ -130,8 +130,20 @@ class DocumentSummaryService:
             
             # Получаем текст документа
             content = document.content
+            content_length = len(content) if content else 0
+            
+            logger.info(f"[SUMMARY] 🔍 Проверка контента документа {document_id} ({document.filename}):")
+            logger.info(f"[SUMMARY]   - Content length: {content_length} символов")
+            logger.info(f"[SUMMARY]   - Content status: {content[:100] if content else 'EMPTY'}...")
+            logger.info(f"[SUMMARY]   - Content is 'Обработка...': {content == 'Обработка...'}")
+            logger.info(f"[SUMMARY]   - Content is empty: {not content or content == ''}")
+            
             if not content or content in ["Обработка...", "Обработан", ""]:
-                logger.warning(f"Document {document_id} has no content yet")
+                logger.warning(f"[SUMMARY] ⚠️ Document {document_id} ({document.filename}) has no content yet!")
+                logger.warning(f"[SUMMARY] ⚠️ Content value: '{content}'")
+                logger.warning(f"[SUMMARY] ⚠️ Это означает, что документ еще не обработан или обработка не завершена")
+                logger.warning(f"[SUMMARY] ⚠️ Summary будет создан только на основе метаданных (название файла)")
+                # Возвращаем None, чтобы использовались метаданные
                 return None
             
             # ✅ ОПТИМИЗАЦИЯ: Анализируем весь документ с умным подходом

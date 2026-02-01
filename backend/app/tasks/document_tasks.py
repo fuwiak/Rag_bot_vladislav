@@ -135,10 +135,28 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                 return
             
             # Парсинг документа
+            logger.info(f"[Celery] 🔄 Начало парсинга документа {document_id} ({filename})")
+            logger.info(f"[Celery]   - Тип файла: {file_type}")
+            logger.info(f"[Celery]   - Размер файла: {len(file_content) / 1024 / 1024:.2f} MB")
+            
             try:
                 text = await parser.parse(file_content, file_type)
+                logger.info(f"[Celery] ✅ Парсинг завершен успешно: извлечено {len(text)} символов")
+                
+                if not text or len(text.strip()) < 50:
+                    logger.error(f"[Celery] ❌ КРИТИЧЕСКАЯ ОШИБКА: Парсинг вернул пустой или слишком короткий текст!")
+                    logger.error(f"[Celery] ❌ Длина текста: {len(text) if text else 0} символов")
+                    logger.error(f"[Celery] ❌ Это может означать, что PDF сканированный, поврежден или парсер не смог извлечь текст")
+                    raise ValueError(f"Парсинг вернул пустой текст: {len(text) if text else 0} символов")
+                
+                # Логируем превью извлеченного текста
+                preview = text[:500] if len(text) > 500 else text
+                logger.info(f"[Celery] 📄 Превью извлеченного текста (первые 500 символов): {preview}...")
+                
             except Exception as e:
-                logger.error(f"[Celery] Ошибка парсинга документа {document_id} ({filename}): {e}")
+                logger.error(f"[Celery] ❌ Ошибка парсинга документа {document_id} ({filename}): {e}", exc_info=True)
+                logger.error(f"[Celery] ❌ Тип ошибки: {type(e).__name__}")
+                logger.error(f"[Celery] ❌ Сообщение: {str(e)}")
                 document.content = f"Ошибка обработки: {str(e)[:200]}"
                 await db.commit()
                 return
@@ -154,20 +172,35 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                 document.content = text
             
             # КОММИТИМ СРАЗУ, чтобы content był dostępен для RAG
+            logger.info(f"[Celery] 💾 Коммит изменений в БД...")
             await db.commit()
             await db.refresh(document)
+            
+            # КРИТИЧЕСКАЯ ПРОВЕРКА: убеждаемся что контент действительно сохранился
+            saved_content = document.content
+            saved_content_length = len(saved_content) if saved_content else 0
             
             logger.info(f"[Celery] ✅✅✅ ДОКУМЕНТ ГОТОВ ДЛЯ RAG ЗАПРОСОВ ✅✅✅")
             logger.info(f"[Celery] 📄 Document ID: {document_id}")
             logger.info(f"[Celery] 📄 Filename: {filename}")
-            logger.info(f"[Celery] 📄 Text length: {len(text)} символов")
-            logger.info(f"[Celery] 📄 Content saved: {len(document.content)} символов")
+            logger.info(f"[Celery] 📄 Text length (извлечено): {len(text)} символов")
+            logger.info(f"[Celery] 📄 Content saved (в БД): {saved_content_length} символов")
+            logger.info(f"[Celery] 📄 Content status: {'READY' if saved_content_length > 100 else 'EMPTY/ERROR'}")
+            logger.info(f"[Celery] 📄 Content is 'Обработка...': {saved_content == 'Обработка...'}")
             logger.info(f"[Celery] 📄 Document is now READY for RAG queries - можно сразу задавать вопросы!")
             
+            if saved_content_length < 100:
+                logger.error(f"[Celery] ❌ КРИТИЧЕСКАЯ ОШИБКА: Контент не сохранился в БД!")
+                logger.error(f"[Celery] ❌ Ожидалось: {len(text)} символов")
+                logger.error(f"[Celery] ❌ Сохранено: {saved_content_length} символов")
+                logger.error(f"[Celery] ❌ Значение content: '{saved_content[:200] if saved_content else 'EMPTY'}...'")
+            
             # Логируем превью контента для отладки
-            if document.content:
+            if document.content and saved_content_length > 100:
                 preview = document.content[:500] if len(document.content) > 500 else document.content
                 logger.info(f"[Celery] 📄 Content preview (первые 500 символов): {preview}...")
+            else:
+                logger.warning(f"[Celery] ⚠️ Content preview недоступен (слишком короткий или пустой)")
             
             # Разбивка на чанки - используем продвинутый chunker с fallback-ами
             logger.info(f"[Celery] 🔪 Начинаем разбивку документа на чанки: {filename}, размер текста: {len(text)} символов")
@@ -345,16 +378,32 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             await db.commit()
             
             # Проверяем финальное состояние документа
+            logger.info(f"[Celery] 🔍 Финальная проверка состояния документа {document_id}...")
             result = await db.execute(select(Document).where(Document.id == document_id))
             document = result.scalar_one_or_none()
             if document:
                 content_length = len(document.content) if document.content else 0
+                content_value = document.content if document.content else "EMPTY"
+                is_processing = content_value in ["Обработка...", "Обработан", ""] or content_length < 100
+                
                 logger.info(f"[Celery] ✅ Document {document_id} processed successfully:")
                 logger.info(f"  - Filename: {filename}")
                 logger.info(f"  - Chunks created: {len(chunks)}")
                 logger.info(f"  - Content length: {content_length} chars")
-                logger.info(f"  - Content status: {'READY' if content_length > 100 else 'EMPTY'}")
-                if document.content and content_length > 0:
+                logger.info(f"  - Content status: {'READY' if not is_processing else 'NOT_READY'}")
+                logger.info(f"  - Content is 'Обработка...': {content_value == 'Обработка...'}")
+                logger.info(f"  - Content is empty: {not content_value or content_value == ''}")
+                logger.info(f"  - Content preview (первые 200 символов): {content_value[:200] if content_value and len(content_value) > 200 else content_value}...")
+                
+                if is_processing:
+                    logger.error(f"[Celery] ❌ КРИТИЧЕСКАЯ ПРОБЛЕМА: Документ все еще в статусе обработки после завершения задачи!")
+                    logger.error(f"[Celery] ❌ Это означает, что контент не был сохранен или был перезаписан")
+                    logger.error(f"[Celery] ❌ Значение content: '{content_value}'")
+                    logger.error(f"[Celery] ❌ Длина: {content_length} символов")
+                else:
+                    logger.info(f"[Celery] ✅ Документ готов для RAG - контент сохранен и доступен")
+                    
+                if document.content and content_length > 0 and not is_processing:
                     preview = document.content[:300] if content_length > 300 else document.content
                     logger.info(f"  - Content preview: {preview}...")
             else:

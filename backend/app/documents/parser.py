@@ -88,12 +88,18 @@ class DocumentParser:
         
         # Показываем preview файла для диагностики
         file_size = len(content) / 1024  # KB
-        logger.info(f"[PDF PARSER] Начало парсинга PDF: размер {file_size:.2f} KB")
+        file_size_mb = file_size / 1024
+        logger.info(f"[PDF PARSER] 🚀 Начало парсинга PDF:")
+        logger.info(f"[PDF PARSER]   - Размер файла: {file_size:.2f} KB ({file_size_mb:.2f} MB)")
+        logger.info(f"[PDF PARSER]   - Первые байты: {content[:20] if len(content) >= 20 else content}")
         
         # Проверяем, что файл действительно PDF
         if not content.startswith(b'%PDF'):
-            logger.warning(f"[PDF PARSER] Файл не начинается с %PDF, возможно поврежден")
+            logger.warning(f"[PDF PARSER] ⚠️ Файл не начинается с %PDF, возможно поврежден")
+            logger.warning(f"[PDF PARSER] ⚠️ Первые 20 байт: {content[:20]}")
             # Пробуем все равно парсить
+        else:
+            logger.info(f"[PDF PARSER] ✅ Файл является валидным PDF (начинается с %PDF)")
         
         # Fallback 1: PyPDF2
         try:
@@ -165,13 +171,15 @@ class DocumentParser:
         try:
             pdf_reader = PyPDF2.PdfReader(pdf_file)
             total_pages = len(pdf_reader.pages)
-            logger.info(f"[PDF PARSER PyPDF2] Всего страниц: {total_pages}")
+            logger.info(f"[PDF PARSER PyPDF2] 📄 Всего страниц в PDF: {total_pages}")
             
             for i, page in enumerate(pdf_reader.pages):
                 try:
                     text = page.extract_text()
                     if text and text.strip():
                         text_parts.append(text)
+                        if (i + 1) % 10 == 0:
+                            logger.info(f"[PDF PARSER PyPDF2] 📄 Обработано страниц: {i + 1}/{total_pages}, извлечено текста: {sum(len(t) for t in text_parts)} символов")
                         # Показываем preview первой страницы
                         if i == 0:
                             preview = text[:500] if len(text) > 500 else text
