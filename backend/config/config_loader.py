@@ -185,6 +185,22 @@ def load_prompts_config(base_path: Optional[Path] = None) -> Dict[str, Any]:
     return {}
 
 
+def load_small_files_prompts_config(base_path: Optional[Path] = None) -> Dict[str, Any]:
+    """
+    Загрузить конфигурацию промптов для маленьких файлов из config/small_files_prompts.yaml
+    
+    Args:
+        base_path: Базовый путь к директории проекта (если None, определяется автоматически)
+    
+    Returns:
+        Словарь с конфигурацией промптов для маленьких файлов
+    """
+    config_dir = get_config_dir(base_path)
+    config_path = config_dir / "small_files_prompts.yaml"
+    
+    return load_config_file(config_path, "small_files_prompts")
+
+
 def reload_config(config_name: Optional[str] = None):
     """
     Перезагрузить конфигурацию (очистить кэш)

@@ -560,44 +560,82 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                         except Exception as doc_error:
                             logger.warning(f"[QUESTION HANDLER] Failed to get document from DB: {doc_error}")
                     
-                    # Если есть контент документа, используем его для ответа
+                    # Если есть контент документа, используем его для ответа с промптами из конфига
                     if document_content:
                         try:
                             from app.llm.openrouter_client import OpenRouterClient
                             from app.core.config import settings as app_settings
+                            from app.config.config_loader import load_small_files_prompts_config
+                            
+                            # Загружаем конфигурацию промптов для маленьких файлов
+                            small_files_config = load_small_files_prompts_config()
+                            small_files = small_files_config.get("small_files", {})
+                            constants = small_files.get("constants", {})
+                            
+                            # Получаем константы
+                            max_content_length = constants.get("max_content_length", 10000)
+                            max_tokens = constants.get("max_tokens", 1000)
+                            temperature = constants.get("temperature", 0.7)
+                            truncated_suffix = constants.get("content_truncated_suffix", "\n\n[... документ обрезан ...]")
                             
                             llm_client = OpenRouterClient(
                                 model_primary=app_settings.OPENROUTER_MODEL_PRIMARY,
                                 model_fallback=app_settings.OPENROUTER_MODEL_FALLBACK
                             )
                             
-                            # Используем контент документа для ответа
-                            # Ограничиваем размер контента для промпта (первые 10000 символов)
-                            content_preview = document_content[:10000] if len(document_content) > 10000 else document_content
-                            if len(document_content) > 10000:
-                                content_preview += "\n\n[... документ обрезан ...]"
+                            # Ограничиваем размер контента для промпта
+                            content_preview = document_content[:max_content_length] if len(document_content) > max_content_length else document_content
+                            if len(document_content) > max_content_length:
+                                total_length = len(document_content)
+                                content_preview += truncated_suffix.format(length=max_content_length, total=total_length)
                             
-                            system_prompt = (
-                                f"Ты помощник, который отвечает на вопросы на основе содержимого документа.\n"
-                                f"Документ: {document_filename}\n\n"
-                                f"Содержимое документа:\n{content_preview}\n\n"
-                                f"Ответь на вопрос пользователя на основе этого документа."
-                            )
+                            # Определяем тип вопроса (общий или конкретный)
+                            question_lower = question.lower()
+                            is_general_question = any(word in question_lower for word in [
+                                "o czym", "czym jest", "co to", "co zawiera", "jaki jest", 
+                                "jaka jest", "jaki temat", "jaka tematyka", "o czym jest plik"
+                            ])
+                            
+                            # Выбираем промпт в зависимости от типа вопроса
+                            if is_general_question:
+                                # Общий вопрос - используем промпт с вложенными вопросами
+                                prompt_template = small_files.get("general_question_prompt", 
+                                    "Przeanalizuj dokument i odpowiedz na pytanie: {question}\n\nDokument: {filename}\n\nZawartość: {content}")
+                                user_prompt = prompt_template.format(
+                                    filename=document_filename,
+                                    content=content_preview,
+                                    question=question
+                                )
+                                system_prompt = small_files.get("system_prompt", 
+                                    "Jesteś pomocnym asystentem, który odpowiada na pytania na podstawie zawartości dokumentu.")
+                            else:
+                                # Конкретный вопрос
+                                prompt_template = small_files.get("specific_question_prompt",
+                                    "Odpowiedz na pytanie na podstawie dokumentu: {question}\n\nDokument: {filename}\n\nZawartość: {content}")
+                                user_prompt = prompt_template.format(
+                                    filename=document_filename,
+                                    content=content_preview,
+                                    question=question
+                                )
+                                system_prompt = small_files.get("system_prompt",
+                                    "Jesteś pomocnym asystentem, który odpowiada na pytania na podstawie zawartości dokumentu.")
+                            
+                            logger.info(f"[QUESTION HANDLER] Using small files prompt config: general={is_general_question}, content_length={len(content_preview)}")
                             
                             simple_answer = await llm_client.chat_completion(
                                 messages=[
                                     {"role": "system", "content": system_prompt},
-                                    {"role": "user", "content": question}
+                                    {"role": "user", "content": user_prompt}
                                 ],
-                                max_tokens=1000,
-                                temperature=0.7
+                                max_tokens=max_tokens,
+                                temperature=temperature
                             )
                             
-                            answer = simple_answer.strip() if simple_answer else "Извините, не удалось сгенерировать ответ на основе документа."
-                            logger.info(f"[QUESTION HANDLER] Answer generated using document content from DB for user {user_id}")
+                            answer = simple_answer.strip() if simple_answer else "Przepraszam, nie udało się wygenerować odpowiedzi na podstawie dokumentu."
+                            logger.info(f"[QUESTION HANDLER] Answer generated using document content from DB with config prompts for user {user_id}")
                         except Exception as doc_llm_error:
-                            logger.error(f"[QUESTION HANDLER] Failed to generate answer with document content: {doc_llm_error}")
-                            answer = "Извините, произошла ошибка при обработке вопроса. Попробуйте позже."
+                            logger.error(f"[QUESTION HANDLER] Failed to generate answer with document content: {doc_llm_error}", exc_info=True)
+                            answer = "Przepraszam, wystąpił błąd podczas przetwarzania pytania. Spróbuj ponownie później."
                     else:
                         # Нет документа в БД или контент пустой - используем простой LLM ответ
                         logger.warning(f"[QUESTION HANDLER] No document content available, using simple LLM answer for user {user_id}")

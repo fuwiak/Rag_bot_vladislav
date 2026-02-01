@@ -1,0 +1,126 @@
+# Конфигурация промптов для работы с маленькими файлами (< 1MB)
+# Для маленьких файлов используется прямой доступ к содержимому из БД через LLM
+# Язык по умолчанию: польский
+
+small_files:
+  # Основной язык для промптов
+  default_language: "pl"
+  
+  # Системный промпт для ассистента
+  system_prompt: |
+    Jesteś pomocnym asystentem, który odpowiada na pytania na podstawie zawartości dokumentu.
+    Twoim zadaniem jest dokładnie przeanalizować dokument i odpowiedzieć na pytania użytkownika w sposób ciekawy i dociekliwy.
+    
+    INSTRUKCJE:
+    - Czytaj dokument uważnie, strona po stronie
+    - Odpowiadaj na podstawie FAKTYCZNEJ zawartości dokumentu
+    - Jeśli informacji nie ma w dokumencie, powiedz to jasno
+    - Bądź precyzyjny i konkretny
+    - Używaj języka polskiego
+    - Jeśli dokument zawiera liczby, daty, nazwy - podaj je dokładnie
+  
+  # Промпт для анализа документа с любопытными вопросами
+  analysis_prompt: |
+    Przeanalizuj poniższy dokument i odpowiedz na pytanie użytkownika.
+    
+    DOKUMENT: {filename}
+    
+    ZAWARTOŚĆ DOKUMENTU:
+    {content}
+    
+    PYTANIE UŻYTKOWNIKA: {question}
+    
+    INSTRUKCJE:
+    1. Najpierw dokładnie przeczytaj cały dokument
+    2. Znajdź wszystkie informacje związane z pytaniem
+    3. Odpowiedz precyzyjnie na podstawie zawartości dokumentu
+    4. Jeśli pytanie jest ogólne (np. "o czym jest plik?"), zadaj sobie pomocnicze pytania:
+       - Jaki jest główny temat dokumentu?
+       - Jakie są kluczowe informacje?
+       - Kto jest autorem/odbiorcą?
+       - Jakie są ważne daty, liczby, nazwy?
+       - Jaki jest cel dokumentu?
+    5. Odpowiedz w sposób ciekawy i informacyjny
+  
+  # Вложенные промпты для любопытного анализа
+  nested_prompts:
+    # Промпт для определения темы документа
+    identify_topic: |
+      Na podstawie zawartości dokumentu określ:
+      - Główny temat dokumentu
+      - Kluczowe słowa i pojęcia
+      - Kontekst i cel dokumentu
+      
+      Zawartość: {content}
+    
+    # Промпт для извлечения ключевых фактов
+    extract_facts: |
+      Wyciągnij z dokumentu najważniejsze fakty:
+      - Daty i terminy
+      - Liczby i kwoty
+      - Nazwy osób, firm, miejsc
+      - Kluczowe wydarzenia lub działania
+      
+      Zawartość: {content}
+    
+    # Промпт для анализа структуры
+    analyze_structure: |
+      Przeanalizuj strukturę dokumentu:
+      - Jakie sekcje zawiera?
+      - Jaka jest kolejność informacji?
+      - Jakie są najważniejsze elementy?
+      
+      Zawartość: {content}
+  
+  # Промпт для общих вопросов о документе
+  general_question_prompt: |
+    Użytkownik pyta ogólnie o dokument. Przeanalizuj go dokładnie i odpowiedz w sposób ciekawy.
+    
+    DOKUMENT: {filename}
+    
+    ZAWARTOŚĆ:
+    {content}
+    
+    PYTANIE: {question}
+    
+    KROKI ANALIZY:
+    1. Określ główny temat dokumentu
+    2. Wyciągnij kluczowe informacje (daty, liczby, nazwy)
+    3. Zidentyfikuj strukturę i najważniejsze sekcje
+    4. Określ cel i kontekst dokumentu
+    5. Sformułuj ciekawą i informacyjną odpowiedź
+    
+    ODPOWIEDŹ:
+  
+  # Промпт для конкретных вопросов
+  specific_question_prompt: |
+    Użytkownik zadaje konkretne pytanie o dokument. Odpowiedz precyzyjnie na podstawie zawartości.
+    
+    DOKUMENT: {filename}
+    
+    ZAWARTOŚĆ:
+    {content}
+    
+    PYTANIE: {question}
+    
+    INSTRUKCJE:
+    - Znajdź dokładnie te fragmenty dokumentu, które odpowiadają na pytanie
+    - Jeśli informacja jest w dokumencie - podaj ją dokładnie
+    - Jeśli informacji nie ma - powiedz to jasno
+    - Używaj cytatów z dokumentu, jeśli to pomaga w odpowiedzi
+    
+    ODPOWIEDŹ:
+  
+  # Константы для работы с маленькими файлами
+  constants:
+    # Максимальный размер контента для промпта (символов)
+    max_content_length: 10000
+    
+    # Максимальное количество токенов в ответе
+    max_tokens: 1000
+    
+    # Температура для генерации (для более интересных ответов)
+    temperature: 0.7
+    
+    # Префикс для обрезанного контента
+    content_truncated_suffix: "\n\n[... dokument został obcięty, pokazano pierwsze {length} znaków z {total} ...]"
