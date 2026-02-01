@@ -139,10 +139,15 @@ class Settings(BaseSettings):
         # Require REDIS_HOST to be set in production (no localhost fallback)
         # Allow empty REDIS_HOST if pytest or alembic is running
         if not redis_host and not IS_TESTING and not IS_ALEMBIC:
-            raise ValueError(
-                "REDIS_HOST must be set via environment variable. "
-                "For Railway private networking, set REDIS_HOST=redis.railway.internal"
+            # Если REDIS_URL не установлен и REDIS_HOST тоже, возвращаем пустую строку
+            # Это позволит приложению запуститься, но Celery не будет работать
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "REDIS_HOST not set. Celery will not work. "
+                "Set REDIS_URL or REDIS_HOST=redis.railway.internal for Railway private networking"
             )
+            return ""  # Возвращаем пустую строку вместо ошибки
         
         if redis_password:
             # Format: redis://:password@host:port/db
@@ -178,10 +183,15 @@ class Settings(BaseSettings):
         # Require REDIS_HOST to be set in production (no localhost fallback)
         # Allow empty REDIS_HOST if pytest or alembic is running
         if not redis_host and not IS_TESTING and not IS_ALEMBIC:
-            raise ValueError(
-                "REDIS_HOST must be set via environment variable. "
-                "For Railway private networking, set REDIS_HOST=redis.railway.internal"
+            # Если REDIS_URL не установлен и REDIS_HOST тоже, возвращаем пустую строку
+            # Это позволит приложению запуститься, но Celery не будет работать
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "REDIS_HOST not set. Celery will not work. "
+                "Set REDIS_URL or REDIS_HOST=redis.railway.internal for Railway private networking"
             )
+            return ""  # Возвращаем пустую строку вместо ошибки
         
         if redis_password:
             # Format: redis://:password@host:port/db

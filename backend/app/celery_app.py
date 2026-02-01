@@ -35,5 +35,21 @@ celery_app.conf.update(
     broker_connection_max_retries=10,
 )
 
-logger.info(f"Celery app initialized with broker: {settings.CELERY_BROKER_URL}")
+# Логируем настройки подключения к Redis
+logger.info(f"[CELERY] Инициализация Celery приложения...")
+logger.info(f"[CELERY] Broker URL: {settings.CELERY_BROKER_URL if settings.CELERY_BROKER_URL else 'НЕ УСТАНОВЛЕН!'}")
+logger.info(f"[CELERY] Result Backend: {settings.CELERY_RESULT_BACKEND if settings.CELERY_RESULT_BACKEND else 'НЕ УСТАНОВЛЕН!'}")
+
+if not settings.CELERY_BROKER_URL or not settings.CELERY_RESULT_BACKEND:
+    logger.error("[CELERY] ❌ КРИТИЧЕСКАЯ ОШИБКА: Redis не настроен!")
+    logger.error("[CELERY] ❌ CELERY_BROKER_URL или CELERY_RESULT_BACKEND не установлены")
+    logger.error("[CELERY] ❌ Установите переменные окружения:")
+    logger.error("[CELERY] ❌   - REDIS_URL (Railway создает автоматически)")
+    logger.error("[CELERY] ❌   ИЛИ")
+    logger.error("[CELERY] ❌   - REDIS_HOST=redis.railway.internal")
+    logger.error("[CELERY] ❌   - REDIS_PORT=6379")
+    logger.error("[CELERY] ❌   - REDIS_PASSWORD=<пароль из Railway>")
+    logger.error("[CELERY] ❌   - REDIS_DB=0")
+else:
+    logger.info(f"[CELERY] ✅ Celery app initialized successfully")
 
