@@ -134,9 +134,9 @@ RUN find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && 
 
 # Создание entrypoint скрипта с применением миграций
 RUN echo '#!/bin/bash\n\
-set -e\n\
+set +e  # Не останавливаться при ошибках, чтобы приложение могло запуститься\n\
 echo "Waiting for database..."\n\
-python -c "import asyncio, sys; sys.path.insert(0, '\''/app'\''); from app.core.database import wait_for_db; asyncio.run(wait_for_db(max_retries=10, retry_interval=2))"\n\
+python -c "import asyncio, sys; sys.path.insert(0, '\''/app'\''); from app.core.database import wait_for_db; asyncio.run(wait_for_db(max_retries=10, retry_interval=2))" || echo "⚠️ Database wait failed, continuing anyway..."\n\
 echo "Applying Alembic migrations..."\n\
 cd /app\n\
 # Sprawdzamy czy są multiple heads\n\
@@ -145,17 +145,17 @@ if [ "$HEADS_COUNT" -gt 1 ]; then\n\
   echo "Multiple heads detected ($HEADS_COUNT), upgrading each separately..."\n\
   for head in $(alembic heads -q 2>/dev/null); do\n\
     echo "Upgrading to head: $head"\n\
-    alembic upgrade $head 2>&1 | tee -a /tmp/migration.log || true\n\
+    alembic upgrade $head 2>&1 | tee -a /tmp/migration.log || echo "⚠️ Migration to $head failed, continuing..."\n\
   done\n\
 else\n\
   # Применяем все head ревизии (если есть несколько веток)\n\
   alembic upgrade heads 2>&1 | tee /tmp/migration.log || {\n\
-    echo "Migration failed, checking current state..."\n\
+    echo "⚠️ Migration failed, checking current state..."\n\
     alembic current 2>&1 || true\n\
     echo "Retrying migration..."\n\
     sleep 3\n\
     alembic upgrade heads 2>&1 | tee -a /tmp/migration.log || {\n\
-    echo "Migration failed again, trying to apply manually..."\n\
+    echo "⚠️ Migration failed again, trying to apply manually..."\n\
     python -c "\n\
 import asyncio\n\
 import sys\n\
@@ -163,60 +163,63 @@ sys.path.insert(0, '\''/app'\'')\n\
 from sqlalchemy import text\n\
 from app.core.database import AsyncSessionLocal\n\
 async def apply_manual():\n\
-    async with AsyncSessionLocal() as db:\n\
-        try:\n\
-            # Проверяем и добавляем bot_is_active если нужно\n\
-            result = await db.execute(text(\"\"\"\n\
-                SELECT column_name FROM information_schema.columns \n\
-                WHERE table_name = '\''projects'\'' AND column_name = '\''bot_is_active'\''\n\
-            \"\"\"))\n\
-            if result.first() is None:\n\
-                await db.execute(text(\"\"\"\n\
-                    ALTER TABLE projects \n\
-                    ADD COLUMN bot_is_active VARCHAR(10) DEFAULT '\''false'\'' NOT NULL\n\
+    try:\n\
+        async with AsyncSessionLocal() as db:\n\
+            try:\n\
+                # Проверяем и добавляем bot_is_active если нужно\n\
+                result = await db.execute(text(\"\"\"\n\
+                    SELECT column_name FROM information_schema.columns \n\
+                    WHERE table_name = '\''projects'\'' AND column_name = '\''bot_is_active'\''\n\
                 \"\"\"))\n\
-                await db.execute(text(\"\"\"\n\
-                    UPDATE projects SET bot_is_active = '\''true'\'' WHERE bot_token IS NOT NULL\n\
+                if result.first() is None:\n\
+                    await db.execute(text(\"\"\"\n\
+                        ALTER TABLE projects \n\
+                        ADD COLUMN bot_is_active VARCHAR(10) DEFAULT '\''false'\'' NOT NULL\n\
+                    \"\"\"))\n\
+                    await db.execute(text(\"\"\"\n\
+                        UPDATE projects SET bot_is_active = '\''true'\'' WHERE bot_token IS NOT NULL\n\
+                    \"\"\"))\n\
+                    await db.commit()\n\
+                    print(\"✅ Column bot_is_active added\")\n\
+                else:\n\
+                    print(\"Column bot_is_active already exists\")\n\
+                \n\
+                # Проверяем и добавляем summary если нужно\n\
+                result = await db.execute(text(\"\"\"\n\
+                    SELECT column_name FROM information_schema.columns \n\
+                    WHERE table_name = '\''documents'\'' AND column_name = '\''summary'\''\n\
                 \"\"\"))\n\
-                await db.commit()\n\
-                print(\"✅ Column bot_is_active added\")\n\
-            else:\n\
-                print(\"Column bot_is_active already exists\")\n\
-            \n\
-            # Проверяем и добавляем summary если нужно\n\
-            result = await db.execute(text(\"\"\"\n\
-                SELECT column_name FROM information_schema.columns \n\
-                WHERE table_name = '\''documents'\'' AND column_name = '\''summary'\''\n\
-            \"\"\"))\n\
-            if result.first() is None:\n\
-                await db.execute(text(\"\"\"\n\
-                    ALTER TABLE documents \n\
-                    ADD COLUMN summary TEXT\n\
+                if result.first() is None:\n\
+                    await db.execute(text(\"\"\"\n\
+                        ALTER TABLE documents \n\
+                        ADD COLUMN summary TEXT\n\
+                    \"\"\"))\n\
+                    await db.commit()\n\
+                    print(\"✅ Column summary added\")\n\
+                else:\n\
+                    print(\"Column summary already exists\")\n\
+                \n\
+                # Проверяем и добавляем telegram_id если нужно\n\
+                result = await db.execute(text(\"\"\"\n\
+                    SELECT column_name FROM information_schema.columns \n\
+                    WHERE table_name = '\''users'\'' AND column_name = '\''telegram_id'\''\n\
                 \"\"\"))\n\
-                await db.commit()\n\
-                print(\"✅ Column summary added\")\n\
-            else:\n\
-                print(\"Column summary already exists\")\n\
-            \n\
-            # Проверяем и добавляем telegram_id если нужно\n\
-            result = await db.execute(text(\"\"\"\n\
-                SELECT column_name FROM information_schema.columns \n\
-                WHERE table_name = '\''users'\'' AND column_name = '\''telegram_id'\''\n\
-            \"\"\"))\n\
-            if result.first() is None:\n\
-                await db.execute(text(\"\"\"\n\
-                    ALTER TABLE users \n\
-                    ADD COLUMN telegram_id VARCHAR(50)\n\
-                \"\"\"))\n\
-                await db.commit()\n\
-                print(\"✅ Column telegram_id added\")\n\
-            else:\n\
-                print(\"Column telegram_id already exists\")\n\
-            \n\
-            print(\"✅ All manual migrations applied successfully!\")\n\
-        except Exception as e:\n\
-            print(f\"Manual migration error: {e}\")\n\
-            await db.rollback()\n\
+                if result.first() is None:\n\
+                    await db.execute(text(\"\"\"\n\
+                        ALTER TABLE users \n\
+                        ADD COLUMN telegram_id VARCHAR(50)\n\
+                    \"\"\"))\n\
+                    await db.commit()\n\
+                    print(\"✅ Column telegram_id added\")\n\
+                else:\n\
+                    print(\"Column telegram_id already exists\")\n\
+                \n\
+                print(\"✅ All manual migrations applied successfully!\")\n\
+            except Exception as e:\n\
+                print(f\"⚠️ Manual migration error: {e}\")\n\
+                await db.rollback()\n\
+    except Exception as e:\n\
+        print(f\"⚠️ Database connection error during manual migration: {e}\")\n\
 asyncio.run(apply_manual())\n\
     "\n\
     }\n\
