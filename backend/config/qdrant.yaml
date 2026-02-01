@@ -6,7 +6,7 @@ qdrant:
   url: "${QDRANT_URL:-https://qdrant-production-ad0b.up.railway.app}"  # Railway Qdrant URL
   api_key: "${QDRANT_API_KEY}"
   collection_name: "data"  # Коллекция для RAG данных (Q&A и документы)
-  target_dimension: 1536  # Размерность эмбеддингов text-embedding-3-small
+  target_dimension: 3072  # Размерность эмбеддингов (Vectors Config: Default, 3072, Cosine)
   default_limit: 5
   
   # Настройки поиска

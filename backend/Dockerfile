@@ -35,13 +35,41 @@ RUN pip install --no-cache-dir --user --no-warn-script-location -r requirements.
     # Удаление тестов из установленных пакетов (но не из dist-info)
     find /root/.local/lib -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
     find /root/.local/lib -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type d -name "testing" -exec rm -rf {} + 2>/dev/null || true && \
+    # Удаление примеров и демо
+    find /root/.local/lib -type d -name "examples" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type d -name "example" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type d -name "demos" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type d -name "demo" -exec rm -rf {} + 2>/dev/null || true && \
     # Удаление документации из пакетов (но не из dist-info)
+    find /root/.local/lib -type d -name "docs" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type d -name "doc" -exec rm -rf {} + 2>/dev/null || true && \
     find /root/.local/lib -type f -name "*.md" -delete 2>/dev/null || true && \
-    find /root/.local/lib -type f -name "*.txt" -path "*/doc/*" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "*.txt" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "*.rst" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "*.html" -delete 2>/dev/null || true && \
     find /root/.local/lib -type f -name "LICENSE*" -delete 2>/dev/null || true && \
     find /root/.local/lib -type f -name "CHANGELOG*" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "AUTHORS*" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "CONTRIBUTING*" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "*.ipynb" -delete 2>/dev/null || true && \
+    # Удаление неиспользуемых языковых моделей spacy (оставляем только ru_core_news_sm если нужен)
+    find /root/.local/lib -type d -path "*/spacy/lang/*" ! -path "*/spacy/lang/ru*" -exec rm -rf {} + 2>/dev/null || true && \
+    # Удаление CUDA файлов из torch (если не используется GPU на Railway)
+    # ВНИМАНИЕ: Удаляйте только если точно не используете GPU
+    find /root/.local/lib -type d -path "*/torch/lib/cuda*" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type f -path "*/torch/lib/*cuda*.so*" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -path "*/torch/lib/*cudnn*.so*" -delete 2>/dev/null || true && \
+    # Удаление примеров и тестов из transformers
+    find /root/.local/lib -type d -path "*/transformers/*" -name "examples" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type d -path "*/transformers/*" -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    # Удаление неиспользуемых компонентов из больших библиотек
+    find /root/.local/lib -type d -path "*/torch/share" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type d -path "*/torch/include" -exec rm -rf {} + 2>/dev/null || true && \
     # Удаление кэша моделей если они были скачаны
-    rm -rf /tmp/.cache /root/.cache 2>/dev/null || true
+    rm -rf /tmp/.cache /root/.cache 2>/dev/null || true && \
+    # Удаление pytest и тестовых зависимостей из production
+    pip uninstall -y pytest pytest-asyncio pytest-cov 2>/dev/null || true
 
 # Stage 2: Runtime
 FROM python:3.11-slim
@@ -57,6 +85,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Копирование установленных пакетов из builder
 COPY --from=builder /root/.local /root/.local
+
+# Дополнительная очистка после копирования пакетов
+RUN find /root/.local -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local -type f -name "*.pyc" -delete && \
+    find /root/.local -type f -name "*.pyo" -delete && \
+    find /root/.local/lib -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type d -name "examples" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type d -name "docs" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "*.md" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "*.txt" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "*.rst" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "*.html" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "*.ipynb" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "LICENSE*" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "CHANGELOG*" -delete 2>/dev/null || true && \
+    # Удаление неиспользуемых языковых моделей spacy
+    find /root/.local/lib -type d -path "*/spacy/lang/*" ! -path "*/spacy/lang/ru*" ! -path "*/spacy/lang/en*" -exec rm -rf {} + 2>/dev/null || true && \
+    # Удаление include и share из torch (не нужны в runtime)
+    find /root/.local/lib -type d -path "*/torch/share" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type d -path "*/torch/include" -exec rm -rf {} + 2>/dev/null || true && \
+    # Удаление примеров из transformers в runtime
+    find /root/.local/lib -type d -path "*/transformers/*" -name "examples" -exec rm -rf {} + 2>/dev/null || true
 
 # Очистка переменных окружения для моделей (модели будут загружаться при первом использовании)
 ENV TRANSFORMERS_OFFLINE=0
