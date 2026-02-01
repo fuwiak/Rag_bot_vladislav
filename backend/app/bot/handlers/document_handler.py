@@ -15,6 +15,7 @@ import tempfile
 import asyncio
 from pathlib import Path
 import uuid as uuid_module
+from datetime import datetime
 
 from app.core.database import AsyncSessionLocal
 from app.bot.handlers.auth_handler import AuthStates
@@ -263,21 +264,69 @@ async def handle_document(message: Message, state: FSMContext):
         
         async with AsyncSessionLocal() as db:
             # Создаем документ в БД
-            # fast_mode будет добавлен после применения миграции
+            # Проверяем наличие колонки fast_mode перед созданием документа
+            from sqlalchemy import inspect, text
+            try:
+                # Для async сессии нужно использовать другой способ проверки
+                result = await db.execute(text("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'documents' AND column_name = 'fast_mode'
+                """))
+                has_fast_mode = result.fetchone() is not None
+            except Exception:
+                # Если не удалось проверить (например, SQLite), предполагаем что колонка есть
+                has_fast_mode = True
+            
             document = Document(
                 project_id=project_id,
                 filename=file_name,
                 content="Обработка...",  # Временный placeholder
                 file_type=file_type
             )
-            # Устанавливаем fast_mode только если колонка существует (после миграции)
-            try:
+            
+            # Устанавливаем fast_mode только если колонка существует
+            if has_fast_mode:
                 document.fast_mode = False
-            except AttributeError:
-                pass  # Колонка еще не создана
-            db.add(document)
-            await db.commit()
-            await db.refresh(document)
+                db.add(document)
+                await db.commit()
+                await db.refresh(document)
+            else:
+                # Если колонки нет, используем raw SQL для вставки без fast_mode
+                logger.warning("[TELEGRAM UPLOAD] Колонка fast_mode не найдена, используем raw SQL")
+                document_id = uuid_module.uuid4()
+                await db.execute(text("""
+                    INSERT INTO documents (id, project_id, filename, content, file_type, summary, created_at)
+                    VALUES (:id, :project_id, :filename, :content, :file_type, :summary, :created_at)
+                """), {
+                    "id": str(document_id),
+                    "project_id": str(project_id),
+                    "filename": file_name,
+                    "content": "Обработка...",
+                    "file_type": file_type,
+                    "summary": None,
+                    "created_at": datetime.utcnow()
+                })
+                await db.commit()
+                # Получаем созданный документ через ORM
+                document = await db.get(Document, document_id)
+                if not document:
+                    # Если не получилось через ORM, создаем объект вручную
+                    result = await db.execute(
+                        text("SELECT id, project_id, filename, content, file_type, summary, created_at FROM documents WHERE id = :id"),
+                        {"id": str(document_id)}
+                    )
+                    row = result.fetchone()
+                    if row:
+                        document = Document(
+                            id=UUID(row[0]) if isinstance(row[0], str) else row[0],
+                            project_id=UUID(row[1]) if isinstance(row[1], str) else row[1],
+                            filename=row[2],
+                            content=row[3],
+                            file_type=row[4],
+                            summary=row[5],
+                            created_at=row[6] if row[6] else datetime.utcnow()
+                        )
             
             logger.info(f"[TELEGRAM UPLOAD] Document created in DB: {document.id}")
             
