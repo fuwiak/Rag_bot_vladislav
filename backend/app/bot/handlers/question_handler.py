@@ -727,6 +727,12 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                                 )
                                 
                                 answer = simple_answer.strip() if simple_answer else "Извините, не удалось сгенерировать ответ на основе документа."
+                                
+                                # Очищаем markdown форматирование (###, **, и т.д.) для Telegram
+                                from app.llm.response_formatter import ResponseFormatter
+                                formatter = ResponseFormatter()
+                                answer = formatter._clean_markdown(answer)
+                                
                                 logger.info(f"[QUESTION HANDLER] Answer generated using document content from DB with config prompts for user {user_id}")
                             finally:
                                 # Останавливаем typing task
