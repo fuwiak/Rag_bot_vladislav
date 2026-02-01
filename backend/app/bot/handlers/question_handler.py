@@ -346,6 +346,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
         )
     except Exception as e:
         logger.warning(f"[QUESTION HANDLER] Failed to start typing task: {e}")
+        typing_task = None
     
     answer = None
     use_fallback = False
@@ -527,31 +528,102 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                     qdrant_available = False
                 
                 if not qdrant_available:
-                    logger.warning(f"[QUESTION HANDLER] Qdrant недоступен, используем простой ответ без RAG для user {user_id}")
-                    # Используем простой LLM ответ без RAG
-                    try:
-                        from app.llm.openrouter_client import OpenRouterClient
-                        from app.core.config import settings as app_settings
-                        
-                        llm_client = OpenRouterClient(
-                            model_primary=app_settings.OPENROUTER_MODEL_PRIMARY,
-                            model_fallback=app_settings.OPENROUTER_MODEL_FALLBACK
-                        )
-                        
-                        simple_answer = await llm_client.chat_completion(
-                            messages=[
-                                {"role": "system", "content": "Ты дружелюбный помощник. Отвечай кратко и по делу."},
-                                {"role": "user", "content": question}
-                            ],
-                            max_tokens=500,
-                            temperature=0.7
-                        )
-                        
-                        answer = simple_answer.strip() if simple_answer else "Извините, не могу ответить на этот вопрос. Qdrant временно недоступен."
-                        logger.info(f"[QUESTION HANDLER] Simple LLM answer (no RAG) generated for user {user_id}")
-                    except Exception as simple_error:
-                        logger.error(f"[QUESTION HANDLER] Simple LLM also failed: {simple_error}")
-                        answer = "Извините, сервис временно недоступен. Попробуйте позже."
+                    logger.warning(f"[QUESTION HANDLER] Qdrant недоступен, проверяем наличие документов в БД для user {user_id}")
+                    
+                    # Получаем last_document_id из state для использования контента документа
+                    last_document_id_str = data.get("last_document_id")
+                    last_document_id = None
+                    if last_document_id_str:
+                        try:
+                            last_document_id = UUID(last_document_id_str)
+                            logger.info(f"[QUESTION HANDLER] Found last_document_id={last_document_id}, trying to use document content from DB")
+                        except ValueError:
+                            logger.warning(f"[QUESTION HANDLER] Invalid last_document_id format: {last_document_id_str}")
+                    
+                    # Если есть last_document_id, пытаемся использовать контент документа из БД
+                    document_content = None
+                    document_filename = None
+                    if last_document_id:
+                        try:
+                            from app.models.document import Document
+                            from sqlalchemy import select
+                            
+                            doc_result = await db.execute(select(Document).where(Document.id == last_document_id))
+                            document = doc_result.scalar_one_or_none()
+                            
+                            if document and document.content and document.content.strip() and document.content != "Обработка...":
+                                document_content = document.content
+                                document_filename = document.filename
+                                logger.info(f"[QUESTION HANDLER] Found document content in DB: {document_filename}, length: {len(document_content)}")
+                            else:
+                                logger.warning(f"[QUESTION HANDLER] Document {last_document_id} not found or content is empty")
+                        except Exception as doc_error:
+                            logger.warning(f"[QUESTION HANDLER] Failed to get document from DB: {doc_error}")
+                    
+                    # Если есть контент документа, используем его для ответа
+                    if document_content:
+                        try:
+                            from app.llm.openrouter_client import OpenRouterClient
+                            from app.core.config import settings as app_settings
+                            
+                            llm_client = OpenRouterClient(
+                                model_primary=app_settings.OPENROUTER_MODEL_PRIMARY,
+                                model_fallback=app_settings.OPENROUTER_MODEL_FALLBACK
+                            )
+                            
+                            # Используем контент документа для ответа
+                            # Ограничиваем размер контента для промпта (первые 10000 символов)
+                            content_preview = document_content[:10000] if len(document_content) > 10000 else document_content
+                            if len(document_content) > 10000:
+                                content_preview += "\n\n[... документ обрезан ...]"
+                            
+                            system_prompt = (
+                                f"Ты помощник, который отвечает на вопросы на основе содержимого документа.\n"
+                                f"Документ: {document_filename}\n\n"
+                                f"Содержимое документа:\n{content_preview}\n\n"
+                                f"Ответь на вопрос пользователя на основе этого документа."
+                            )
+                            
+                            simple_answer = await llm_client.chat_completion(
+                                messages=[
+                                    {"role": "system", "content": system_prompt},
+                                    {"role": "user", "content": question}
+                                ],
+                                max_tokens=1000,
+                                temperature=0.7
+                            )
+                            
+                            answer = simple_answer.strip() if simple_answer else "Извините, не удалось сгенерировать ответ на основе документа."
+                            logger.info(f"[QUESTION HANDLER] Answer generated using document content from DB for user {user_id}")
+                        except Exception as doc_llm_error:
+                            logger.error(f"[QUESTION HANDLER] Failed to generate answer with document content: {doc_llm_error}")
+                            answer = "Извините, произошла ошибка при обработке вопроса. Попробуйте позже."
+                    else:
+                        # Нет документа в БД или контент пустой - используем простой LLM ответ
+                        logger.warning(f"[QUESTION HANDLER] No document content available, using simple LLM answer for user {user_id}")
+                        try:
+                            from app.llm.openrouter_client import OpenRouterClient
+                            from app.core.config import settings as app_settings
+                            
+                            llm_client = OpenRouterClient(
+                                model_primary=app_settings.OPENROUTER_MODEL_PRIMARY,
+                                model_fallback=app_settings.OPENROUTER_MODEL_FALLBACK
+                            )
+                            
+                            simple_answer = await llm_client.chat_completion(
+                                messages=[
+                                    {"role": "system", "content": "Ты дружелюбный помощник. Отвечай кратко и по делу."},
+                                    {"role": "user", "content": question}
+                                ],
+                                max_tokens=500,
+                                temperature=0.7
+                            )
+                            
+                            answer = simple_answer.strip() if simple_answer else "Извините, не могу ответить на этот вопрос. Qdrant временно недоступен."
+                            logger.info(f"[QUESTION HANDLER] Simple LLM answer (no RAG, no document) generated for user {user_id}")
+                        except Exception as simple_error:
+                            logger.error(f"[QUESTION HANDLER] Simple LLM also failed: {simple_error}")
+                            answer = "Извините, сервис временно недоступен. Попробуйте позже."
                 else:
                     # Qdrant доступен - используем RAG
                     # Получаем last_document_id из state для приоритета
