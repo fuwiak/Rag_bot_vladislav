@@ -2,7 +2,8 @@
 Обработчики авторизации пользователей
 """
 from aiogram import Dispatcher, F
-from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import Message, ReplyKeyboardRemove
+from aiogram.enums import ChatAction
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -33,6 +34,15 @@ async def handle_password(message: Message, state: FSMContext, project_id: str =
     
     Если несколько проектов используют один bot_token, ищем проект по паролю среди всех проектов с этим токеном.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Показываем typing indicator
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
+    
     async with AsyncSessionLocal() as db:
         password = message.text
         
@@ -73,16 +83,9 @@ async def handle_password(message: Message, state: FSMContext, project_id: str =
         # Пароль правильный, запрашиваем телефон
         await state.set_state(AuthStates.waiting_phone)
         
-        # Кнопка для отправки контакта
-        keyboard = ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton(text="📱 Поделиться контактом", request_contact=True)]],
-            resize_keyboard=True,
-            one_time_keyboard=True
-        )
-        
         await message.answer(
-            "Пароль верный! Теперь поделитесь вашим номером телефона:",
-            reply_markup=keyboard
+            "Пароль верный! Теперь введите ваш номер телефона (например: +79001234567):",
+            reply_markup=ReplyKeyboardRemove()
         )
 
 
@@ -90,6 +93,12 @@ async def handle_contact(message: Message, state: FSMContext, project_id: str = 
     """Обработка получения контакта или ручного ввода телефона"""
     import logging
     logger = logging.getLogger(__name__)
+    
+    # Показываем typing indicator
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
     
     # Получаем project_id из состояния (был сохранен при вводе пароля)
     data = await state.get_data()
@@ -163,9 +172,6 @@ async def handle_contact(message: Message, state: FSMContext, project_id: str = 
         )
         project = result.scalar_one_or_none()
         
-        # Удаление клавиатуры
-        from aiogram.types import ReplyKeyboardRemove
-        
         welcome_authorized = "✅ <b>Авторизация успешна!</b>\n\n"
         
         if project:
@@ -200,6 +206,12 @@ async def handle_text_before_auth(message: Message, state: FSMContext):
     """
     import logging
     logger = logging.getLogger(__name__)
+    
+    # Показываем typing indicator
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
     
     current_state = await state.get_state()
     logger.info(f"[AUTH HANDLER] handle_text_before_auth called, state: {current_state}, text: {message.text[:50] if message.text else 'None'}")

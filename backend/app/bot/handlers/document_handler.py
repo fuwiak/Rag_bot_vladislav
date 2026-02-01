@@ -447,7 +447,7 @@ async def handle_document(message: Message, state: FSMContext):
                             pass
                         
                         status_text = (
-                            f"✅ Файл загружен и индексирован!\n\n"
+                            f"✅ <b>Файл успешно загружен и обработан!</b>\n\n"
                             f"📄 Название: {file_name}\n"
                             f"📊 Тип: {file_type.upper()}\n"
                             f"📏 Размер: {file_size / 1024 / 1024:.2f} MB\n"
@@ -460,30 +460,44 @@ async def handle_document(message: Message, state: FSMContext):
                             f"📚 Документ уже доступен для поиска!\n"
                             f"Используйте /documents для просмотра списка документов."
                         )
-                        await processing_msg.edit_text(status_text)
+                        await processing_msg.edit_text(status_text, parse_mode="HTML")
+                        
+                        # Сохраняем document_id в state для приоритета при поиске
+                        await state.update_data(last_document_id=str(document.id))
+                        logger.info(f"[TELEGRAM UPLOAD] Saved last_document_id={document.id} to state")
                     else:
                         error_msg = qdrant_result.get("error", "Unknown error")
                         logger.warning(f"[TELEGRAM UPLOAD] ⚠️ Qdrant indexing failed: {error_msg}")
                         
                         await processing_msg.edit_text(
-                            f"✅ Файл загружен!\n\n"
+                            f"✅ <b>Файл успешно загружен!</b>\n\n"
                             f"📄 Название: {file_name}\n"
                             f"📊 Тип: {file_type.upper()}\n"
                             f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
                             f"⏳ Обработка документа начата.\n"
                             f"⚠️ Индексация в RAG будет выполнена позже.\n"
-                            f"Используйте /documents для просмотра списка документов."
+                            f"Используйте /documents для просмотра списка документов.",
+                            parse_mode="HTML"
                         )
+                        
+                        # Сохраняем document_id в state для приоритета при поиске
+                        await state.update_data(last_document_id=str(document.id))
+                        logger.info(f"[TELEGRAM UPLOAD] Saved last_document_id={document.id} to state")
                 else:
                     logger.warning(f"[TELEGRAM UPLOAD] ⚠️ No text extracted from document for Qdrant")
                     await processing_msg.edit_text(
-                        f"✅ Файл загружен!\n\n"
+                        f"✅ <b>Файл успешно загружен!</b>\n\n"
                         f"📄 Название: {file_name}\n"
                         f"📊 Тип: {file_type.upper()}\n"
                         f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
                         f"⏳ Обработка документа начата. Это может занять некоторое время.\n"
-                        f"Используйте /documents для просмотра списка документов."
+                        f"Используйте /documents для просмотра списка документов.",
+                        parse_mode="HTML"
                     )
+                    
+                    # Сохраняем document_id в state для приоритета при поиске
+                    await state.update_data(last_document_id=str(document.id))
+                    logger.info(f"[TELEGRAM UPLOAD] Saved last_document_id={document.id} to state")
                     
             except Exception as qdrant_error:
                 logger.error(f"[TELEGRAM UPLOAD] ❌ Qdrant indexing error: {qdrant_error}")
@@ -492,13 +506,18 @@ async def handle_document(message: Message, state: FSMContext):
                 
                 # Всё равно показываем успешную загрузку (Celery обработает позже)
                 await processing_msg.edit_text(
-                    f"✅ Файл загружен!\n\n"
+                    f"✅ <b>Файл успешно загружен!</b>\n\n"
                     f"📄 Название: {file_name}\n"
                     f"📊 Тип: {file_type.upper()}\n"
                     f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
                     f"⏳ Обработка документа начата. Это может занять некоторое время.\n"
-                    f"Используйте /documents для просмотра списка документов."
+                    f"Используйте /documents для просмотра списка документов.",
+                    parse_mode="HTML"
                 )
+                
+                # Сохраняем document_id в state для приоритета при поиске
+                await state.update_data(last_document_id=str(document.id))
+                logger.info(f"[TELEGRAM UPLOAD] Saved last_document_id={document.id} to state")
     
     except Exception as e:
         logger.error(f"[TELEGRAM UPLOAD] Error uploading document: {e}", exc_info=True)

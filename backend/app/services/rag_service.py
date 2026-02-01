@@ -112,7 +112,8 @@ class RAGService:
         self,
         user_id: UUID,
         question: str,
-        top_k: int = 5
+        top_k: int = 5,
+        document_id: Optional[UUID] = None
     ) -> str:
         """
         Сгенерировать ответ на вопрос пользователя
@@ -121,6 +122,7 @@ class RAGService:
             user_id: ID пользователя
             question: Вопрос пользователя
             top_k: Количество релевантных чанков для поиска
+            document_id: ID документа для приоритета (опционально)
         
         Returns:
             Ответ на вопрос
@@ -233,7 +235,8 @@ class RAGService:
                         collection_name=collection_name,
                         project_id=project.id,
                         top_k=top_k,
-                        strategy=strategy
+                        strategy=strategy,
+                        document_id=document_id  # Приоритет последнего документа
                     )
                     
                     if found_chunks:
@@ -937,7 +940,8 @@ class RAGService:
         user_id: UUID,
         question: str,
         top_k: int = 5,
-        use_local_embeddings: bool = True
+        use_local_embeddings: bool = True,
+        document_id: Optional[UUID] = None
     ) -> str:
         """
         Простой режим RAG (jak prosty kod z Jupyter Notebook)
@@ -1142,13 +1146,34 @@ class RAGService:
             
             question_embedding = await embedding_service.create_embedding(question)
             
-            # Простой поиск в Qdrant (jak w prostym kodzie)
+            # Простой поиск в Qdrant
+            # Если указан document_id, увеличиваем лимит для фильтрации
+            search_limit = top_k * 2 if document_id else top_k
             similar_chunks = await self.vector_store.search_similar(
                 collection_name=collection_name,
                 query_vector=question_embedding,
-                limit=top_k,
-                score_threshold=0.0  # Берем wszystkie, nawet z niskim score
+                limit=search_limit,
+                score_threshold=0.0  # Берем все, даже с низким score
             )
+            
+            # Фильтруем по document_id если указан (приоритет последнего документа)
+            if document_id and similar_chunks:
+                document_id_str = str(document_id)
+                # Разделяем на чанки из последнего документа и остальные
+                priority_chunks = []
+                other_chunks = []
+                for chunk in similar_chunks:
+                    payload = chunk.get("payload", {})
+                    if payload.get("document_id") == document_id_str:
+                        priority_chunks.append(chunk)
+                    else:
+                        other_chunks.append(chunk)
+                
+                # Сначала идут чанки из последнего документа, затем остальные
+                similar_chunks = priority_chunks + other_chunks
+                similar_chunks = similar_chunks[:top_k]  # Ограничиваем до top_k
+                if priority_chunks:
+                    logger.info(f"[RAG SERVICE SIMPLE] Prioritized {len(priority_chunks)} chunks from last document {document_id}")
         
         # Формируем контекст z chunków jeśli są
         context_parts = []
@@ -1295,7 +1320,8 @@ class RAGService:
         self,
         user_id: UUID,
         question: str,
-        top_k: int = 3
+        top_k: int = 3,
+        document_id: Optional[UUID] = None
     ) -> str:
         """
         Быстрая генерация ответа с ограниченным размером (для случаев превышения таймаута)
@@ -1486,12 +1512,33 @@ class RAGService:
         
         # Поиск релевантных чанков (меньше чанков для скорости)
         collection_name = f"project_{project.id}"
+        # Если указан document_id, увеличиваем лимит для фильтрации
+        search_limit = top_k * 2 if document_id else top_k
         similar_chunks = await self.vector_store.search_similar(
             collection_name=collection_name,
             query_vector=question_embedding,
-            limit=top_k,
+            limit=search_limit,
             score_threshold=0.5
         )
+        
+        # Фильтруем по document_id если указан (приоритет последнего документа)
+        if document_id and similar_chunks:
+            document_id_str = str(document_id)
+            # Разделяем на чанки из последнего документа и остальные
+            priority_chunks = []
+            other_chunks = []
+            for chunk in similar_chunks:
+                payload = chunk.get("payload", {})
+                if payload.get("document_id") == document_id_str:
+                    priority_chunks.append(chunk)
+                else:
+                    other_chunks.append(chunk)
+            
+            # Сначала идут чанки из последнего документа, затем остальные
+            similar_chunks = priority_chunks + other_chunks
+            similar_chunks = similar_chunks[:top_k]  # Ограничиваем до top_k
+            if priority_chunks:
+                logger.info(f"[RAG SERVICE FAST] Prioritized {len(priority_chunks)} chunks from last document {document_id}")
         
         # Если релевантных чанков нет - генерируем сводку документов
         if not similar_chunks or len(similar_chunks) == 0:

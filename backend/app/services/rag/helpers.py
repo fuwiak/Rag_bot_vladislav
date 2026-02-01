@@ -31,8 +31,8 @@ class RAGHelpers:
         result = await self.db.execute(select(Project).where(Project.id == project_id))
         return result.scalar_one_or_none()
     
-    async def get_conversation_history(self, user_id: UUID, limit: int = 6) -> List[Dict[str, str]]:
-        """Получить историю диалога"""
+    async def get_conversation_history(self, user_id: UUID, limit: int = 10) -> List[Dict[str, str]]:
+        """Получить историю диалога (последние 10 сообщений по умолчанию)"""
         result = await self.db.execute(
             select(Message)
             .where(Message.user_id == user_id)

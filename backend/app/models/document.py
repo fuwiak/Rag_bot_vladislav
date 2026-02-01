@@ -1,7 +1,8 @@
 """
 Модели Document и DocumentChunk - документы и их чанки
 """
-from sqlalchemy import Column, String, Text, Integer, ForeignKey, JSON
+from sqlalchemy import Column, String, Text, Integer, ForeignKey, JSON, Boolean
+import sqlalchemy as sa
 from sqlalchemy.orm import relationship
 import uuid
 from datetime import datetime
@@ -20,6 +21,7 @@ class Document(Base):
     content = Column(Text, nullable=False)
     file_type = Column(String(10), nullable=False)  # txt, docx, pdf
     summary = Column(Text, nullable=True)  # Краткое содержание документа, созданное через LLM
+    fast_mode = Column(sa.Boolean, nullable=False, default=False)  # Быстрый режим для малых файлов (без RAG)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     # Связи

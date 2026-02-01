@@ -45,6 +45,12 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
     import logging
     logger = logging.getLogger(__name__)
     
+    # Показываем typing indicator
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
+    
     # Проверяем, авторизован ли пользователь
     current_state = await state.get_state()
     
@@ -201,6 +207,15 @@ async def cmd_start(message: Message, state: FSMContext, project_id: str = None)
 
 async def cmd_help(message: Message, state: FSMContext):
     """Обработка команды /help"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Показываем typing indicator
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
+    
     current_state = await state.get_state()
     is_authorized = current_state == AuthStates.authorized
     
@@ -254,6 +269,15 @@ async def cmd_help(message: Message, state: FSMContext):
 
 async def cmd_documents(message: Message, state: FSMContext, page: int = 0):
     """Обработка команды /documents - показать список документов проекта с пагинацией"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Показываем typing indicator
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
+    
     # Проверка авторизации
     current_state = await state.get_state()
     if current_state != AuthStates.authorized:
@@ -412,6 +436,12 @@ async def cmd_summary(message: Message, state: FSMContext):
     import logging
     logger = logging.getLogger(__name__)
     
+    # Показываем typing indicator
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
+    
     current_state = await state.get_state()
     if current_state != AuthStates.authorized:
         await message.answer("Пожалуйста, сначала авторизуйтесь через /start")
@@ -545,6 +575,12 @@ async def cmd_describe(message: Message, state: FSMContext):
     """
     import logging
     logger = logging.getLogger(__name__)
+    
+    # Показываем typing indicator
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
     
     current_state = await state.get_state()
     if current_state != AuthStates.authorized:
@@ -687,6 +723,12 @@ async def cmd_analyze(message: Message, state: FSMContext):
     import logging
     logger = logging.getLogger(__name__)
     
+    # Показываем typing indicator
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
+    
     current_state = await state.get_state()
     if current_state != AuthStates.authorized:
         await message.answer("Пожалуйста, сначала авторизуйтесь через /start")
@@ -776,6 +818,12 @@ async def cmd_upload(message: Message, state: FSMContext):
     import logging
     logger = logging.getLogger(__name__)
     
+    # Показываем typing indicator
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
+    
     # Проверка авторизации
     current_state = await state.get_state()
     if current_state != AuthStates.authorized:
@@ -812,6 +860,12 @@ async def cmd_process_folder(message: Message, state: FSMContext):
     """Обработка команды /process_folder - обработать все файлы из папки проекта"""
     import logging
     logger = logging.getLogger(__name__)
+    
+    # Показываем typing indicator
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
     
     # Проверка авторизации
     current_state = await state.get_state()
@@ -906,6 +960,12 @@ async def cmd_suggest_questions(message: Message, state: FSMContext):
     """Обработка команды /suggest_questions - предложить вопросы на основе документов"""
     import logging
     logger = logging.getLogger(__name__)
+    
+    # Показываем typing indicator
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+    except Exception as e:
+        logger.warning(f"Failed to send typing indicator: {e}")
     
     current_state = await state.get_state()
     if current_state != AuthStates.authorized:

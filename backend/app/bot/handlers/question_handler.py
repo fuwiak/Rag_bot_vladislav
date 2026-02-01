@@ -547,11 +547,21 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                         answer = "Извините, сервис временно недоступен. Попробуйте позже."
                 else:
                     # Qdrant доступен - используем RAG
+                    # Получаем last_document_id из state для приоритета
+                    last_document_id_str = data.get("last_document_id")
+                    last_document_id = None
+                    if last_document_id_str:
+                        try:
+                            last_document_id = UUID(last_document_id_str)
+                            logger.info(f"[QUESTION HANDLER] Using last_document_id={last_document_id} for priority search")
+                        except ValueError:
+                            logger.warning(f"[QUESTION HANDLER] Invalid last_document_id format: {last_document_id_str}")
+                    
                     try:
                         logger.info(f"[QUESTION HANDLER] Qdrant доступен, используем RAG для user {user_id}")
                         logger.info(f"[QUESTION HANDLER] Trying simple RAG mode first for user {user_id}")
                         answer = await asyncio.wait_for(
-                            rag_service.generate_answer_simple(user_id, question, top_k=5, use_local_embeddings=True),
+                            rag_service.generate_answer_simple(user_id, question, top_k=5, use_local_embeddings=True, document_id=last_document_id),
                             timeout=10.0  # Уменьшенный таймаут
                         )
                         logger.info(f"[QUESTION HANDLER] Simple RAG answer generated successfully for user {user_id}")
@@ -559,14 +569,14 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                         logger.warning(f"[QUESTION HANDLER] Simple RAG timeout for user {user_id}, trying full RAG")
                         try:
                             answer = await asyncio.wait_for(
-                                rag_service.generate_answer(user_id, question),
+                                rag_service.generate_answer(user_id, question, document_id=last_document_id),
                                 timeout=10.0
                             )
                             logger.info(f"[QUESTION HANDLER] Full RAG answer generated successfully for user {user_id}")
                         except asyncio.TimeoutError:
                             logger.warning(f"[QUESTION HANDLER] Full RAG timeout for user {user_id}, trying fast answer")
                             try:
-                                answer = await rag_service.generate_answer_fast(user_id, question)
+                                answer = await rag_service.generate_answer_fast(user_id, question, document_id=last_document_id)
                                 logger.info(f"[QUESTION HANDLER] Fast RAG answer generated for user {user_id}")
                             except Exception as fast_error:
                                 logger.warning(f"[QUESTION HANDLER] Fast RAG also failed for user {user_id}: {fast_error}, using LLM fallback")
@@ -574,7 +584,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                         except Exception as rag_error:
                             logger.error(f"[QUESTION HANDLER] Full RAG error for user {user_id}: {rag_error}, trying fast", exc_info=True)
                             try:
-                                answer = await rag_service.generate_answer_fast(user_id, question)
+                                answer = await rag_service.generate_answer_fast(user_id, question, document_id=last_document_id)
                                 logger.info(f"[QUESTION HANDLER] Fast RAG answer generated after full RAG error for user {user_id}")
                             except Exception as fast_error2:
                                 logger.error(f"[QUESTION HANDLER] Fast RAG also failed: {fast_error2}, using LLM fallback")
@@ -583,7 +593,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                         logger.warning(f"[QUESTION HANDLER] Simple RAG failed for user {user_id}: {simple_error}, trying full RAG")
                     try:
                         answer = await asyncio.wait_for(
-                            rag_service.generate_answer(user_id, question),
+                            rag_service.generate_answer(user_id, question, document_id=last_document_id),
                             timeout=10.0
                         )
                         logger.info(f"[QUESTION HANDLER] Full RAG answer generated after simple RAG error for user {user_id}")

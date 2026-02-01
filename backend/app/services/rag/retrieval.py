@@ -30,7 +30,8 @@ class RAGRetrieval:
         collection_name: str,
         project_id: UUID,
         top_k: int = 5,
-        strategy: Optional[Dict] = None
+        strategy: Optional[Dict] = None,
+        document_id: Optional[UUID] = None
     ) -> tuple:
         """
         Расширенный поиск чанков с использованием множественных техник:
@@ -253,9 +254,31 @@ class RAGRetrieval:
                 except Exception as e:
                     logger.warning(f"[RAG RETRIEVAL] Keyword search failed: {e}")
             
+            # Приоритет последнего документа если указан
+            if document_id:
+                document_id_str = str(document_id)
+                # Разделяем на чанки из последнего документа и остальные
+                priority_chunks = []
+                other_chunks = []
+                for chunk_data in all_found_chunks.values():
+                    # Проверяем document_id в payload если доступен
+                    payload = chunk_data.get("payload", {})
+                    if payload and payload.get("document_id") == document_id_str:
+                        # Повышаем score для чанков из последнего документа
+                        chunk_data["score"] = chunk_data.get("score", 0) * 1.2  # Увеличиваем на 20%
+                        priority_chunks.append(chunk_data)
+                    else:
+                        other_chunks.append(chunk_data)
+                
+                # Сначала идут чанки из последнего документа, затем остальные
+                all_found_chunks_list = priority_chunks + other_chunks
+                logger.info(f"[RAG RETRIEVAL] Prioritized {len(priority_chunks)} chunks from last document {document_id}")
+            else:
+                all_found_chunks_list = list(all_found_chunks.values())
+            
             # Сортируем и берем лучшие результаты для reranking
             chunk_texts_list = sorted(
-                all_found_chunks.values(),
+                all_found_chunks_list,
                 key=lambda x: x.get("score", 0),
                 reverse=True
             )[:top_k * 3]  # Берем больше для reranking
