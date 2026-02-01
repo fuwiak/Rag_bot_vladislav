@@ -473,7 +473,11 @@ async def upload_documents(
                     
                     await db.commit()
                     await db.refresh(document)
-                    logger.info(f"[Upload] ✅ Content saved synchronously - {len(text)} chars, document ready for RAG")
+                    logger.info(f"[Upload] ✅✅✅ ДОКУМЕНТ ГОТОВ ДЛЯ RAG ЗАПРОСОВ ✅✅✅")
+                    logger.info(f"[Upload] 📄 Document ID: {document.id}")
+                    logger.info(f"[Upload] 📄 Filename: {filename}")
+                    logger.info(f"[Upload] 📄 Content saved synchronously - {len(text)} символов")
+                    logger.info(f"[Upload] 📄 Document ready for RAG - можно сразу задавать вопросы!")
                     
                     # Usuwamy file_content z pamięci
                     del file_content

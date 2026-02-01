@@ -145,9 +145,10 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             
             # КРИТИЧНО: Сохраняем content НЕМЕДЛЕННО после парсинга, чтобы RAG мог его использовать
             # Максимальный размер контента: 2MB текста (примерно 2,000,000 символов)
+            logger.info(f"[Celery] 💾 Сохранение контента документа в БД для немедленного доступа RAG...")
             MAX_CONTENT_SIZE = 2_000_000
             if len(text) > MAX_CONTENT_SIZE:
-                logger.warning(f"[Celery] Document {document_id} content too large ({len(text)} chars), truncating to {MAX_CONTENT_SIZE}")
+                logger.warning(f"[Celery] ⚠️ Document {document_id} content слишком большой ({len(text)} символов), обрезаем до {MAX_CONTENT_SIZE}")
                 document.content = text[:MAX_CONTENT_SIZE] + f"\n\n[... документ обрезан, всего {len(text)} символов ...]"
             else:
                 document.content = text
@@ -156,16 +157,20 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             await db.commit()
             await db.refresh(document)
             
-            logger.info(f"[Celery] ✅ Document content saved IMMEDIATELY - ID: {document_id}, Filename: {filename}, "
-                       f"Text length: {len(text)} chars, Content saved: {len(document.content)} chars")
-            logger.info(f"[Celery] Document is now READY for RAG queries")
+            logger.info(f"[Celery] ✅✅✅ ДОКУМЕНТ ГОТОВ ДЛЯ RAG ЗАПРОСОВ ✅✅✅")
+            logger.info(f"[Celery] 📄 Document ID: {document_id}")
+            logger.info(f"[Celery] 📄 Filename: {filename}")
+            logger.info(f"[Celery] 📄 Text length: {len(text)} символов")
+            logger.info(f"[Celery] 📄 Content saved: {len(document.content)} символов")
+            logger.info(f"[Celery] 📄 Document is now READY for RAG queries - можно сразу задавать вопросы!")
             
             # Логируем превью контента для отладки
             if document.content:
                 preview = document.content[:500] if len(document.content) > 500 else document.content
-                logger.info(f"[Celery] Document content preview (first 500 chars): {preview}...")
+                logger.info(f"[Celery] 📄 Content preview (первые 500 символов): {preview}...")
             
             # Разбивка на чанки - используем продвинутый chunker с fallback-ами
+            logger.info(f"[Celery] 🔪 Начинаем разбивку документа на чанки: {filename}, размер текста: {len(text)} символов")
             from app.documents.advanced_chunker import AdvancedChunker
             advanced_chunker = AdvancedChunker(
                 default_chunk_size=800,
@@ -173,6 +178,9 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                 min_chunk_size=100,
                 max_chunk_size=2000
             )
+            
+            chunking_start_memory = process.memory_info().rss / 1024 / 1024
+            logger.info(f"[Celery] 🔪 Память перед chunking: {chunking_start_memory:.2f}MB")
             
             # Пробуем продвинутый chunking
             chunks = await advanced_chunker.chunk_document(
@@ -184,13 +192,20 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             
             # Fallback на простой chunker если продвинутый не сработал
             if not chunks or len(chunks) == 0:
-                logger.warning(f"[Celery] Advanced chunking failed, using simple chunker")
+                logger.warning(f"[Celery] ⚠️ Advanced chunking failed, using simple chunker")
                 chunks = chunker.chunk_text(text)
             if not chunks:
-                logger.warning(f"[Celery] Документ {document_id} не содержит текста")
+                logger.warning(f"[Celery] ❌ Документ {document_id} не содержит текста после chunking")
                 return
             
-            logger.info(f"[Celery] Document split into {len(chunks)} chunks")
+            chunking_end_memory = process.memory_info().rss / 1024 / 1024
+            total_chunks = len(chunks)
+            avg_chunk_size = sum(len(c) for c in chunks) / total_chunks if chunks else 0
+            logger.info(f"[Celery] ✅ Document split into {total_chunks} chunks:")
+            logger.info(f"[Celery]   - Средний размер чанка: {avg_chunk_size:.0f} символов")
+            logger.info(f"[Celery]   - Минимальный размер: {min(len(c) for c in chunks) if chunks else 0} символов")
+            logger.info(f"[Celery]   - Максимальный размер: {max(len(c) for c in chunks) if chunks else 0} символов")
+            logger.info(f"[Celery]   - Память после chunking: {chunking_end_memory:.2f}MB (delta: {chunking_end_memory - chunking_start_memory:.2f}MB)")
             
             # Создание эмбеддингов по одному для минимального использования памяти
             from app.services.embedding_service import EmbeddingService
@@ -206,15 +221,25 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             batch_chunks = []
             
             # Обрабатываем чанки по одному для минимального использования памяти
+            logger.info(f"[Celery] 🚀 Начинаем обработку {len(chunks)} чанков: создание эмбеддингов и сохранение в Qdrant")
+            embedding_start_memory = process.memory_info().rss / 1024 / 1024
+            logger.info(f"[Celery] 📊 Память перед созданием эмбеддингов: {embedding_start_memory:.2f}MB")
+            
+            successful_chunks = 0
+            failed_chunks = 0
+            
             for chunk_index, chunk_text in enumerate(chunks):
                 try:
                     chunk_memory_before = process.memory_info().rss / 1024 / 1024
                     
                     # Создаем эмбеддинг для одного чанка
                     try:
+                        logger.debug(f"[Celery] 🔄 Обработка чанка {chunk_index + 1}/{len(chunks)}: создание эмбеддинга ({len(chunk_text)} символов)")
                         embedding = await embedding_service.create_embedding(chunk_text)
+                        logger.debug(f"[Celery] ✅ Эмбеддинг создан для чанка {chunk_index + 1}, размерность: {len(embedding)}")
                     except Exception as e:
-                        logger.error(f"[Celery] Ошибка создания эмбеддинга для чанка {chunk_index}: {e}")
+                        logger.error(f"[Celery] ❌ Ошибка создания эмбеддинга для чанка {chunk_index + 1}: {e}")
+                        failed_chunks += 1
                         continue
                     
                     # Сохраняем чанк в БД (сохраняем полный текст чанка)
@@ -222,7 +247,7 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                     MAX_CHUNK_SIZE = 10_000
                     chunk_text_to_save = chunk_text[:MAX_CHUNK_SIZE] if len(chunk_text) > MAX_CHUNK_SIZE else chunk_text
                     if len(chunk_text) > MAX_CHUNK_SIZE:
-                        logger.warning(f"[Celery] Chunk {chunk_index} too large ({len(chunk_text)} chars), truncating to {MAX_CHUNK_SIZE}")
+                        logger.warning(f"[Celery] ⚠️ Chunk {chunk_index + 1} слишком большой ({len(chunk_text)} символов), обрезаем до {MAX_CHUNK_SIZE}")
                     
                     chunk = DocumentChunk(
                         document_id=document_id,
@@ -253,6 +278,7 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                         try:
                             # Batch upsert do Qdrant
                             collection_name = f"project_{project_id}"
+                            logger.info(f"[Celery] 💾 Сохранение батча из {len(batch_points)} чанков в Qdrant (коллекция: {collection_name})")
                             await vector_store.ensure_collection(collection_name, len(embedding))
                             vector_store.client.upsert(
                                 collection_name=collection_name,
@@ -264,9 +290,12 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                                 batch_chunk.qdrant_point_id = batch_point_id
                             await db.flush()
                             
-                            logger.info(f"[Celery] ✅ Batch upserted {len(batch_points)} chunks to Qdrant (up to chunk {chunk_index})")
+                            successful_chunks += len(batch_points)
+                            progress_pct = ((chunk_index + 1) / len(chunks)) * 100
+                            logger.info(f"[Celery] ✅ Батч из {len(batch_points)} чанков сохранен в Qdrant (прогресс: {chunk_index + 1}/{len(chunks)} = {progress_pct:.1f}%)")
                         except Exception as e:
-                            logger.error(f"[Celery] Ошибка batch upsert в Qdrant: {e}")
+                            logger.error(f"[Celery] ❌ Ошибка batch upsert в Qdrant: {e}", exc_info=True)
+                            failed_chunks += len(batch_points)
                             # Próbujemy zapisać pojedynczo jako fallback
                             for batch_chunk, batch_point_id in batch_chunks:
                                 try:
@@ -282,24 +311,35 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
                                         }
                                     )
                                     batch_chunk.qdrant_point_id = batch_point_id
-                                except:
-                                    pass
+                                    successful_chunks += 1
+                                    failed_chunks -= 1
+                                except Exception as fallback_error:
+                                    logger.error(f"[Celery] ❌ Fallback сохранение чанка {batch_chunk.chunk_index} тоже не удалось: {fallback_error}")
                         
                         # Czyszczenie batcha
                         batch_points = []
                         batch_chunks = []
                     
                     chunk_memory_after = process.memory_info().rss / 1024 / 1024
-                    if chunk_index % 10 == 0:
-                        logger.info(f"[Celery] Processed chunk {chunk_index}/{len(chunks)}, memory: {chunk_memory_after:.2f}MB")
+                    if (chunk_index + 1) % 10 == 0:
+                        progress_pct = ((chunk_index + 1) / len(chunks)) * 100
+                        logger.info(f"[Celery] 📊 Прогресс: {chunk_index + 1}/{len(chunks)} чанков ({progress_pct:.1f}%), память: {chunk_memory_after:.2f}MB, успешно: {successful_chunks}, ошибок: {failed_chunks}")
                     
                     # Освобождаем память каждые 10 чанков
-                    if chunk_index % 10 == 0:
+                    if (chunk_index + 1) % 10 == 0:
                         gc.collect()
                     
                 except Exception as e:
-                    logger.error(f"[Celery] Ошибка обработки чанка {chunk_index}: {e}", exc_info=True)
+                    logger.error(f"[Celery] ❌ Ошибка обработки чанка {chunk_index + 1}: {e}", exc_info=True)
+                    failed_chunks += 1
                     continue
+            
+            embedding_end_memory = process.memory_info().rss / 1024 / 1024
+            logger.info(f"[Celery] ✅ Обработка чанков завершена:")
+            logger.info(f"[Celery]   - Всего чанков: {len(chunks)}")
+            logger.info(f"[Celery]   - Успешно обработано: {successful_chunks}")
+            logger.info(f"[Celery]   - Ошибок: {failed_chunks}")
+            logger.info(f"[Celery]   - Память после обработки: {embedding_end_memory:.2f}MB (delta: {embedding_end_memory - embedding_start_memory:.2f}MB)")
             
             # Коммитим все чанки
             await db.commit()

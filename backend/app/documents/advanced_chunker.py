@@ -61,50 +61,66 @@ class AdvancedChunker:
         Returns:
             Список чанков
         """
+        logger.info(f"[CHUNKING] 🚀 Начало чанкинга документа: {filename or 'unknown'}, тип: {file_type}, размер текста: {len(text)} символов")
+        
         if not text or not text.strip():
-            logger.warning("Empty text provided to chunker")
+            logger.warning("[CHUNKING] ⚠️ Пустой текст предоставлен chunker'у")
             return []
         
         # Стратегия 1: Page-Level Chunking для PDF
         if file_type == "pdf" and file_content:
+            logger.info(f"[CHUNKING] 📄 Стратегия 1: Пробуем Page-Level Chunking для PDF (размер файла: {len(file_content) / 1024:.2f} KB)")
             chunks = await self._try_page_level_chunking(file_content, text)
             if chunks and len(chunks) > 0:
-                logger.info(f"✅ Page-Level Chunking успешно: {len(chunks)} чанков")
+                avg_chunk_size = sum(len(c) for c in chunks) / len(chunks)
+                logger.info(f"[CHUNKING] ✅ Page-Level Chunking успешно: {len(chunks)} чанков, средний размер: {avg_chunk_size:.0f} символов")
                 return chunks
-            logger.warning("Page-Level Chunking не удался, пробуем следующую стратегию")
+            logger.warning("[CHUNKING] ⚠️ Page-Level Chunking не удался, пробуем следующую стратегию")
         
         # Стратегия 2: Element-Based Chunking
+        logger.info(f"[CHUNKING] 📋 Стратегия 2: Пробуем Element-Based Chunking")
         chunks = await self._try_element_based_chunking(text, file_type)
         if chunks and len(chunks) > 0:
-            logger.info(f"✅ Element-Based Chunking успешно: {len(chunks)} чанков")
+            avg_chunk_size = sum(len(c) for c in chunks) / len(chunks)
+            logger.info(f"[CHUNKING] ✅ Element-Based Chunking успешно: {len(chunks)} чанков, средний размер: {avg_chunk_size:.0f} символов")
             return chunks
-        logger.warning("Element-Based Chunking не удался, пробуем следующую стратегию")
+        logger.warning("[CHUNKING] ⚠️ Element-Based Chunking не удался, пробуем следующую стратегию")
         
         # Стратегия 3: Recursive Chunking
+        logger.info(f"[CHUNKING] 🔄 Стратегия 3: Пробуем Recursive Chunking")
         chunks = await self._try_recursive_chunking(text)
         if chunks and len(chunks) > 0:
-            logger.info(f"✅ Recursive Chunking успешно: {len(chunks)} чанков")
+            avg_chunk_size = sum(len(c) for c in chunks) / len(chunks)
+            logger.info(f"[CHUNKING] ✅ Recursive Chunking успешно: {len(chunks)} чанков, средний размер: {avg_chunk_size:.0f} символов")
             return chunks
-        logger.warning("Recursive Chunking не удался, пробуем следующую стратегию")
+        logger.warning("[CHUNKING] ⚠️ Recursive Chunking не удался, пробуем следующую стратегию")
         
         # Стратегия 4: Semantic Chunking
+        logger.info(f"[CHUNKING] 🧠 Стратегия 4: Пробуем Semantic Chunking")
         chunks = await self._try_semantic_chunking(text)
         if chunks and len(chunks) > 0:
-            logger.info(f"✅ Semantic Chunking успешно: {len(chunks)} чанков")
+            avg_chunk_size = sum(len(c) for c in chunks) / len(chunks)
+            logger.info(f"[CHUNKING] ✅ Semantic Chunking успешно: {len(chunks)} чанков, средний размер: {avg_chunk_size:.0f} символов")
             return chunks
-        logger.warning("Semantic Chunking не удался, пробуем следующую стратегию")
+        logger.warning("[CHUNKING] ⚠️ Semantic Chunking не удался, пробуем следующую стратегию")
         
         # Стратегия 5: LLM-Based Chunking (только для больших документов)
         if len(text) > 10000:
+            logger.info(f"[CHUNKING] 🤖 Стратегия 5: Пробуем LLM-Based Chunking (большой документ: {len(text)} символов)")
             chunks = await self._try_llm_based_chunking(text)
             if chunks and len(chunks) > 0:
-                logger.info(f"✅ LLM-Based Chunking успешно: {len(chunks)} чанков")
+                avg_chunk_size = sum(len(c) for c in chunks) / len(chunks)
+                logger.info(f"[CHUNKING] ✅ LLM-Based Chunking успешно: {len(chunks)} чанков, средний размер: {avg_chunk_size:.0f} символов")
                 return chunks
-            logger.warning("LLM-Based Chunking не удался, пробуем fallback")
+            logger.warning("[CHUNKING] ⚠️ LLM-Based Chunking не удался, пробуем fallback")
         
         # Fallback: Простой chunking по предложениям
-        logger.info("Используем fallback: простой chunking по предложениям")
-        return self._fallback_simple_chunking(text)
+        logger.info(f"[CHUNKING] 🔧 Используем fallback: простой chunking по предложениям (chunk_size={self.default_chunk_size}, overlap={self.default_overlap})")
+        chunks = self._fallback_simple_chunking(text)
+        if chunks:
+            avg_chunk_size = sum(len(c) for c in chunks) / len(chunks)
+            logger.info(f"[CHUNKING] ✅ Fallback chunking завершен: {len(chunks)} чанков, средний размер: {avg_chunk_size:.0f} символов")
+        return chunks
     
     async def _try_page_level_chunking(
         self,
@@ -120,11 +136,15 @@ class AdvancedChunker:
             import PyPDF2
             import io
             
+            logger.info(f"[CHUNKING] 📄 Page-Level: Начинаем извлечение страниц из PDF")
             pdf_file = io.BytesIO(file_content)
             pdf_reader = PyPDF2.PdfReader(pdf_file)
             total_pages = len(pdf_reader.pages)
             
+            logger.info(f"[CHUNKING] 📄 Page-Level: Найдено {total_pages} страниц в PDF")
+            
             if total_pages == 0:
+                logger.warning("[CHUNKING] 📄 Page-Level: PDF не содержит страниц")
                 return []
             
             page_chunks = []
@@ -137,6 +157,8 @@ class AdvancedChunker:
                         page_text = self._clean_text(page_text)
                         if len(page_text) >= self.min_chunk_size:
                             page_chunks.append(f"[Страница {i+1}]\n{page_text}")
+                            if (i + 1) % 10 == 0:
+                                logger.info(f"[CHUNKING] 📄 Page-Level: Обработано {i + 1}/{total_pages} страниц, создано {len(page_chunks)} чанков")
                         elif page_text.strip():
                             # Маленькие страницы объединяем с предыдущей
                             if page_chunks:
@@ -144,15 +166,18 @@ class AdvancedChunker:
                             else:
                                 page_chunks.append(f"[Страница {i+1}]\n{page_text}")
                 except Exception as e:
-                    logger.warning(f"Ошибка извлечения страницы {i+1}: {e}")
+                    logger.warning(f"[CHUNKING] 📄 Page-Level: Ошибка извлечения страницы {i+1}: {e}")
                     continue
             
             if page_chunks:
-                logger.info(f"Page-Level: извлечено {len(page_chunks)} страниц из {total_pages}")
+                avg_size = sum(len(c) for c in page_chunks) / len(page_chunks)
+                logger.info(f"[CHUNKING] 📄 Page-Level: ✅ Успешно извлечено {len(page_chunks)} чанков из {total_pages} страниц, средний размер: {avg_size:.0f} символов")
                 return page_chunks
+            else:
+                logger.warning("[CHUNKING] 📄 Page-Level: Не удалось извлечь чанки из страниц")
             
         except Exception as e:
-            logger.warning(f"Page-Level Chunking failed: {e}")
+            logger.warning(f"[CHUNKING] 📄 Page-Level Chunking failed: {e}")
         
         return []
     
