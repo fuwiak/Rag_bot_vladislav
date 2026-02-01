@@ -7,39 +7,79 @@ WORKDIR /app
 
 # Добавление локальных пакетов в PATH (для builder stage)
 ENV PATH=/root/.local/bin:$PATH
+# Отключаем загрузку моделей при установке
+ENV TRANSFORMERS_OFFLINE=1
+ENV HF_HOME=/tmp/.cache/huggingface
 
 # Установка зависимостей для сборки
 # sentence-transformers требует компилятор и дополнительные библиотеки
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     build-essential \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Копирование файлов зависимостей
 # Build context всегда root проекта, поэтому указываем полный путь
 COPY backend/requirements.txt requirements.txt
 
-# Установка Python зависимостей (подавляем предупреждения о PATH)
-RUN pip install --no-cache-dir --user --no-warn-script-location -r requirements.txt
+# Установка Python зависимостей с оптимизацией
+RUN pip install --no-cache-dir --user --no-warn-script-location -r requirements.txt && \
+    # Очистка кэша pip
+    pip cache purge && \
+    # Удаление ненужных файлов из установленных пакетов
+    find /root/.local -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local -type f -name "*.pyc" -delete && \
+    find /root/.local -type f -name "*.pyo" -delete && \
+    # Удаление тестов из установленных пакетов (но не из dist-info)
+    find /root/.local/lib -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /root/.local/lib -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
+    # Удаление документации из пакетов (но не из dist-info)
+    find /root/.local/lib -type f -name "*.md" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "*.txt" -path "*/doc/*" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "LICENSE*" -delete 2>/dev/null || true && \
+    find /root/.local/lib -type f -name "CHANGELOG*" -delete 2>/dev/null || true && \
+    # Удаление кэша моделей если они были скачаны
+    rm -rf /tmp/.cache /root/.cache 2>/dev/null || true
 
 # Stage 2: Runtime
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Установка runtime зависимостей
-RUN apt-get update && apt-get install -y \
+# Установка только runtime зависимостей (минимальный набор)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && rm -rf /tmp/* /var/tmp/*
 
 # Копирование установленных пакетов из builder
 COPY --from=builder /root/.local /root/.local
 
+# Очистка переменных окружения для моделей (модели будут загружаться при первом использовании)
+ENV TRANSFORMERS_OFFLINE=0
+ENV HF_HOME=/tmp/.cache/huggingface
+
 # Копирование кода приложения
 # Build context - root проекта, копируем из backend/
 COPY backend/ .
+
+# Очистка ненужных файлов из кода приложения
+RUN find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find . -type f -name "*.pyc" -delete && \
+    find . -type f -name "*.pyo" -delete && \
+    find . -type f -name "*.pyd" -delete && \
+    # Удаление тестовых файлов если они попали
+    find . -type f -name "test_*.py" -delete && \
+    find . -type f -name "*_test.py" -delete && \
+    # Удаление документации
+    find . -type f -name "*.md" -delete && \
+    # Удаление временных файлов
+    find . -type f -name "*.tmp" -delete && \
+    find . -type f -name "*.bak" -delete && \
+    find . -type f -name "*~" -delete
 
 # Создание entrypoint скрипта с применением миграций
 RUN echo '#!/bin/bash\n\

@@ -52,6 +52,26 @@ docs/
 node_modules/
 *.tmp
 *.bak
+# Cache directories
+.cache/
+*.cache
+.huggingface/
+.transformers_cache/
+# Model files (будут загружаться динамически)
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+# Large data files
+*.csv
+*.json.gz
+*.parquet
+# Jupyter notebooks
+*.ipynb
+# Backup files
+*.backup
+*~
 
 
 
