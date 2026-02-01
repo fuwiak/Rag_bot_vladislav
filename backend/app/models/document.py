@@ -21,7 +21,7 @@ class Document(Base):
     content = Column(Text, nullable=False)
     file_type = Column(String(10), nullable=False)  # txt, docx, pdf
     summary = Column(Text, nullable=True)  # Краткое содержание документа, созданное через LLM
-    fast_mode = Column(sa.Boolean, nullable=False, default=False)  # Быстрый режим для малых файлов (без RAG)
+    fast_mode = Column(sa.Boolean, nullable=True, default=False)  # Быстрый режим для малых файлов (без RAG)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     
     # Связи

@@ -263,12 +263,18 @@ async def handle_document(message: Message, state: FSMContext):
         
         async with AsyncSessionLocal() as db:
             # Создаем документ в БД
+            # fast_mode будет добавлен после применения миграции
             document = Document(
                 project_id=project_id,
                 filename=file_name,
                 content="Обработка...",  # Временный placeholder
                 file_type=file_type
             )
+            # Устанавливаем fast_mode только если колонка существует (после миграции)
+            try:
+                document.fast_mode = False
+            except AttributeError:
+                pass  # Колонка еще не создана
             db.add(document)
             await db.commit()
             await db.refresh(document)
@@ -521,10 +527,24 @@ async def handle_document(message: Message, state: FSMContext):
     
     except Exception as e:
         logger.error(f"[TELEGRAM UPLOAD] Error uploading document: {e}", exc_info=True)
-        await processing_msg.edit_text(
-            f"❌ Ошибка при загрузке файла: {str(e)}\n"
-            f"Попробуйте позже или обратитесь к администратору."
-        )
+        error_msg = str(e)
+        # Экранируем HTML специальные символы
+        error_msg = error_msg.replace("<", "&lt;").replace(">", "&gt;")
+        try:
+            await processing_msg.edit_text(
+                f"❌ Ошибка при загрузке файла: {error_msg[:500]}\n"
+                f"Попробуйте позже или обратитесь к администратору."
+            )
+        except Exception as edit_error:
+            # Если не удалось отредактировать, отправляем новое сообщение
+            logger.warning(f"[TELEGRAM UPLOAD] Failed to edit message: {edit_error}")
+            try:
+                await message.answer(
+                    f"❌ Ошибка при загрузке файла.\n"
+                    f"Попробуйте позже или обратитесь к администратору."
+                )
+            except:
+                pass
 
 
 def register_document_handlers(dp: Dispatcher, project_id: str):
