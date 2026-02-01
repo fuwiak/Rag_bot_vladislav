@@ -1,6 +1,6 @@
 """add_token_tracking
 
-Revision ID: add_token_tracking
+Revision ID: 2026_01_13_0441_add_token_tracking
 Revises: 2025_12_24_add_telegram_id_to_users
 Create Date: 2026-01-13 04:41:00.000000
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = 'add_token_tracking'
+revision = '2026_01_13_0441_add_token_tracking'
 down_revision = '2025_12_24_telegram_id'
 branch_labels = None
 depends_on = None
