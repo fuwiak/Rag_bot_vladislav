@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = '2026_01_13_0441_add_token_tracking'
-down_revision = '2025_12_24_telegram_id'
+down_revision = '2025_12_24_summary'  # Изменено для объединения веток миграций
 branch_labels = None
 depends_on = None
 

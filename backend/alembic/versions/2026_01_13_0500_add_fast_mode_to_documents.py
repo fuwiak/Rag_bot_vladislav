@@ -29,7 +29,7 @@ def upgrade():
         columns = [col['name'] for col in inspector.get_columns('documents')]
         
         if 'fast_mode' not in columns:
-            op.add_column('documents', sa.Column('fast_mode', sa.Boolean(), nullable=False, server_default='false'))
+            op.add_column('documents', sa.Column('fast_mode', sa.Boolean(), nullable=True, server_default='false'))
         else:
             import logging
             logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ def upgrade():
         logger.warning(f"Could not check columns, adding fast_mode anyway: {e}")
         # Пробуем добавить поле напрямую
         try:
-            op.add_column('documents', sa.Column('fast_mode', sa.Boolean(), nullable=False, server_default='false'))
+            op.add_column('documents', sa.Column('fast_mode', sa.Boolean(), nullable=True, server_default='false'))
         except Exception as e2:
             logger.warning(f"Column might already exist: {e2}")
 
