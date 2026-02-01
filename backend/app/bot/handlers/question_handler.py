@@ -253,6 +253,13 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     logger.info(f"[QUESTION HANDLER] Message text: {message.text[:100] if message.text else 'None'}")
     logger.info(f"[QUESTION HANDLER] Message from user: {message.from_user.id}, username: {message.from_user.username}")
     
+    # СРАЗУ показываем typing indicator, чтобы пользователь видел, что бот обрабатывает вопрос
+    try:
+        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+        logger.debug(f"[QUESTION HANDLER] Early typing indicator sent")
+    except Exception as e:
+        logger.warning(f"[QUESTION HANDLER] Failed to send early typing indicator: {e}")
+    
     # Проверка авторизации
     current_state = await state.get_state()
     logger.info(f"[QUESTION HANDLER] Current state: {current_state}, AuthStates.authorized: {AuthStates.authorized}")
@@ -793,7 +800,19 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
     except Exception as e:
         import logging
         logger = logging.getLogger(__name__)
-        logger.error(f"[QUESTION HANDLER] ❌ Critical error processing question for user {user_id}: {e}", exc_info=True)
+        user_id_str = "unknown"
+        try:
+            data = await state.get_data()
+            user_id_str = data.get("user_id", "unknown")
+        except:
+            pass
+        logger.error(f"[QUESTION HANDLER] ❌ Critical error processing question for user {user_id_str}: {e}", exc_info=True)
+        
+        # Показываем typing indicator перед отправкой ошибки
+        try:
+            await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+        except:
+            pass
         
         # Останавливаем typing task при ошибке
         if 'typing_task' in locals() and typing_task and not typing_task.done():
@@ -806,7 +825,7 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
             except:
                 pass
         
-        if processing_msg:
+        if 'processing_msg' in locals() and processing_msg:
             try:
                 await processing_msg.delete()
             except:
