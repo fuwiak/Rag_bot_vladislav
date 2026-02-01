@@ -548,21 +548,58 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                             from app.models.document import Document
                             from sqlalchemy import select
                             
-                            doc_result = await db.execute(select(Document).where(Document.id == last_document_id))
-                            document = doc_result.scalar_one_or_none()
+                            # Показываем typing indicator во время проверки контента
+                            try:
+                                await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                            except:
+                                pass
                             
-                            if document and document.content and document.content.strip() and document.content != "Обработка...":
-                                document_content = document.content
-                                document_filename = document.filename
-                                logger.info(f"[QUESTION HANDLER] Found document content in DB: {document_filename}, length: {len(document_content)}")
-                            else:
-                                logger.warning(f"[QUESTION HANDLER] Document {last_document_id} not found or content is empty")
+                            # Ждем готовности контента (максимум 10 секунд для маленьких файлов)
+                            max_wait_time = 10.0
+                            wait_interval = 0.5
+                            waited_time = 0.0
+                            
+                            while waited_time < max_wait_time:
+                                doc_result = await db.execute(select(Document).where(Document.id == last_document_id))
+                                document = doc_result.scalar_one_or_none()
+                                
+                                if document and document.content and document.content.strip() and document.content != "Обработка...":
+                                    document_content = document.content
+                                    document_filename = document.filename
+                                    logger.info(f"[QUESTION HANDLER] Found document content in DB: {document_filename}, length: {len(document_content)}, waited: {waited_time:.1f}s")
+                                    break
+                                
+                                # Показываем typing indicator во время ожидания
+                                if waited_time > 0:
+                                    try:
+                                        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                                    except:
+                                        pass
+                                
+                                await asyncio.sleep(wait_interval)
+                                waited_time += wait_interval
+                            
+                            if not document_content:
+                                logger.warning(f"[QUESTION HANDLER] Document {last_document_id} content not ready after {waited_time:.1f}s, content may still be processing")
+                                # Пробуем еще раз получить документ
+                                doc_result = await db.execute(select(Document).where(Document.id == last_document_id))
+                                document = doc_result.scalar_one_or_none()
+                                if document and document.content and document.content.strip() and document.content != "Обработка...":
+                                    document_content = document.content
+                                    document_filename = document.filename
+                                    logger.info(f"[QUESTION HANDLER] Found document content after final check: {document_filename}, length: {len(document_content)}")
                         except Exception as doc_error:
                             logger.warning(f"[QUESTION HANDLER] Failed to get document from DB: {doc_error}")
                     
                     # Если есть контент документа, используем его для ответа с промптами из конфига
                     if document_content:
                         try:
+                            # Показываем typing indicator перед генерацией ответа
+                            try:
+                                await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                            except:
+                                pass
+                            
                             from app.llm.openrouter_client import OpenRouterClient
                             from app.core.config import settings as app_settings
                             from app.config.config_loader import load_small_files_prompts_config
@@ -582,6 +619,12 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                                 model_primary=app_settings.OPENROUTER_MODEL_PRIMARY,
                                 model_fallback=app_settings.OPENROUTER_MODEL_FALLBACK
                             )
+                            
+                            # Показываем typing indicator во время подготовки промпта
+                            try:
+                                await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                            except:
+                                pass
                             
                             # Ограничиваем размер контента для промпта
                             content_preview = document_content[:max_content_length] if len(document_content) > max_content_length else document_content
@@ -628,17 +671,44 @@ async def handle_question(message: Message, state: FSMContext, project_id: str =
                             
                             logger.info(f"[QUESTION HANDLER] Using small files prompt config: general={is_general_question}, content_length={len(content_preview)}")
                             
-                            simple_answer = await llm_client.chat_completion(
-                                messages=[
-                                    {"role": "system", "content": system_prompt},
-                                    {"role": "user", "content": user_prompt}
-                                ],
-                                max_tokens=max_tokens,
-                                temperature=temperature
-                            )
+                            # Показываем typing indicator перед отправкой запроса к LLM
+                            try:
+                                await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                            except:
+                                pass
                             
-                            answer = simple_answer.strip() if simple_answer else "Извините, не удалось сгенерировать ответ на основе документа."
-                            logger.info(f"[QUESTION HANDLER] Answer generated using document content from DB with config prompts for user {user_id}")
+                            # Запускаем фоновую задачу для периодической отправки typing indicator во время генерации
+                            typing_task_llm = None
+                            try:
+                                typing_task_llm = asyncio.create_task(
+                                    keep_typing_indicator(message.bot, message.chat.id, duration=30.0)
+                                )
+                            except Exception as e:
+                                logger.warning(f"[QUESTION HANDLER] Failed to start typing task for LLM: {e}")
+                            
+                            try:
+                                simple_answer = await llm_client.chat_completion(
+                                    messages=[
+                                        {"role": "system", "content": system_prompt},
+                                        {"role": "user", "content": user_prompt}
+                                    ],
+                                    max_tokens=max_tokens,
+                                    temperature=temperature
+                                )
+                                
+                                answer = simple_answer.strip() if simple_answer else "Извините, не удалось сгенерировать ответ на основе документа."
+                                logger.info(f"[QUESTION HANDLER] Answer generated using document content from DB with config prompts for user {user_id}")
+                            finally:
+                                # Останавливаем typing task
+                                if typing_task_llm and not typing_task_llm.done():
+                                    try:
+                                        typing_task_llm.cancel()
+                                        try:
+                                            await typing_task_llm
+                                        except asyncio.CancelledError:
+                                            pass
+                                    except:
+                                        pass
                         except Exception as doc_llm_error:
                             logger.error(f"[QUESTION HANDLER] Failed to generate answer with document content: {doc_llm_error}", exc_info=True)
                             answer = "Извините, произошла ошибка при обработке вопроса. Попробуйте позже."
