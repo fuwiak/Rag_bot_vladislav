@@ -12,14 +12,16 @@ from uuid import UUID
 import logging
 import os
 import tempfile
+import asyncio
 from pathlib import Path
 import uuid as uuid_module
 
 from app.core.database import AsyncSessionLocal
 from app.bot.handlers.auth_handler import AuthStates
 from app.models.document import Document
-from app.tasks.document_tasks import process_document_task, process_large_document_with_langgraph
+from app.tasks.document_tasks import process_document_task, process_large_document_with_langgraph, process_document_async
 from app.services.document_agent_adapter import DocumentAgentAdapter
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -283,15 +285,15 @@ async def handle_document(message: Message, state: FSMContext):
                 f.write(file_content)
             logger.info(f"[TELEGRAM UPLOAD] Original file saved: {original_file_path}")
             
-            # Сохраняем файл во временное место для Celery задачи
-            temp_path = temp_dir / f"celery_doc_{document.id}_{file_name}"
-            with open(temp_path, 'wb') as f:
-                f.write(file_content)
+            # Определяем размер файла для выбора стратегии обработки
+            # Для небольших файлов (< 1MB) используем синхронную обработку без Celery
+            SMALL_FILE_THRESHOLD = 1 * 1024 * 1024  # 1MB
+            LARGE_PDF_THRESHOLD = 5 * 1024 * 1024  # 5MB для больших PDF
             
-            # Определяем, большой ли это PDF для использования быстрой индексации
+            is_small_file = file_size < SMALL_FILE_THRESHOLD
             is_large_pdf = (
                 file_type == "pdf" and 
-                file_size > 5 * 1024 * 1024  # Больше 5MB
+                file_size > LARGE_PDF_THRESHOLD
             )
             
             # Быстрая проверка размера для PDF
@@ -310,28 +312,82 @@ async def handle_document(message: Message, state: FSMContext):
                     logger.warning(f"[TELEGRAM UPLOAD] Не удалось оценить размер PDF: {e}")
                     is_large_pdf = False
             
-            # Выбираем стратегию обработки
-            if is_large_pdf:
-                # Используем оптимизированную обработку для больших PDF
-                logger.info(f"[TELEGRAM UPLOAD] Используем быструю индексацию для большого PDF")
-                task_result = process_large_document_with_langgraph.delay(
-                    str(document.id),
-                    str(project_id),
-                    str(temp_path),
-                    file_name,
-                    file_type
-                )
-            else:
-                # Обычная обработка
-                task_result = process_document_task.delay(
-                    str(document.id),
-                    str(project_id),
-                    str(temp_path),
-                    file_name,
-                    file_type
-                )
+            # Проверяем доступность Celery
+            celery_available = bool(settings.CELERY_BROKER_URL and settings.CELERY_RESULT_BACKEND)
             
-            logger.info(f"[TELEGRAM UPLOAD] Celery task created: {task_result.id} for document {document.id}, is_large_pdf: {is_large_pdf}")
+            # Выбираем стратегию обработки
+            if is_small_file or not celery_available:
+                # Для небольших файлов или если Celery недоступен - синхронная обработка
+                if not celery_available:
+                    logger.warning(f"[TELEGRAM UPLOAD] Celery недоступен (Redis не настроен), используем синхронную обработку")
+                else:
+                    logger.info(f"[TELEGRAM UPLOAD] Небольшой файл ({file_size / 1024:.1f} KB), используем синхронную обработку")
+                
+                # Запускаем обработку синхронно в фоне (не блокируя ответ)
+                asyncio.create_task(
+                    process_document_async(
+                        document.id,
+                        project_id,
+                        file_content,
+                        file_name,
+                        file_type
+                    )
+                )
+                logger.info(f"[TELEGRAM UPLOAD] Синхронная обработка запущена для документа {document.id}")
+            else:
+                # Для больших файлов используем Celery
+                # Сохраняем файл во временное место для Celery задачи
+                temp_path = temp_dir / f"celery_doc_{document.id}_{file_name}"
+                with open(temp_path, 'wb') as f:
+                    f.write(file_content)
+                
+                if is_large_pdf:
+                    # Используем оптимизированную обработку для больших PDF
+                    logger.info(f"[TELEGRAM UPLOAD] Используем быструю индексацию для большого PDF через Celery")
+                    try:
+                        task_result = process_large_document_with_langgraph.delay(
+                            str(document.id),
+                            str(project_id),
+                            str(temp_path),
+                            file_name,
+                            file_type
+                        )
+                        logger.info(f"[TELEGRAM UPLOAD] Celery task created: {task_result.id} for document {document.id}, is_large_pdf: {is_large_pdf}")
+                    except Exception as celery_error:
+                        logger.error(f"[TELEGRAM UPLOAD] Ошибка создания Celery задачи: {celery_error}, используем синхронную обработку")
+                        # Fallback на синхронную обработку
+                        asyncio.create_task(
+                            process_document_async(
+                                document.id,
+                                project_id,
+                                file_content,
+                                file_name,
+                                file_type
+                            )
+                        )
+                else:
+                    # Обычная обработка через Celery
+                    try:
+                        task_result = process_document_task.delay(
+                            str(document.id),
+                            str(project_id),
+                            str(temp_path),
+                            file_name,
+                            file_type
+                        )
+                        logger.info(f"[TELEGRAM UPLOAD] Celery task created: {task_result.id} for document {document.id}")
+                    except Exception as celery_error:
+                        logger.error(f"[TELEGRAM UPLOAD] Ошибка создания Celery задачи: {celery_error}, используем синхронную обработку")
+                        # Fallback на синхронную обработку
+                        asyncio.create_task(
+                            process_document_async(
+                                document.id,
+                                project_id,
+                                file_content,
+                                file_name,
+                                file_type
+                            )
+                        )
             
             # Также индексируем документ в Qdrant для RAG
             try:
@@ -342,7 +398,23 @@ async def handle_document(message: Message, state: FSMContext):
                     pass
                 
                 # Извлекаем текст из файла для Qdrant
-                text_content = await extract_text_from_file(str(temp_path), file_type)
+                # Для небольших файлов используем file_content напрямую, для больших - temp_path
+                if is_small_file or not celery_available:
+                    # Создаем временный файл только для извлечения текста
+                    temp_extract_path = temp_dir / f"extract_{document.id}_{file_name}"
+                    with open(temp_extract_path, 'wb') as f:
+                        f.write(file_content)
+                    try:
+                        text_content = await extract_text_from_file(str(temp_extract_path), file_type)
+                    finally:
+                        # Удаляем временный файл после извлечения
+                        try:
+                            os.unlink(temp_extract_path)
+                        except:
+                            pass
+                else:
+                    # Для больших файлов используем temp_path (уже создан выше)
+                    text_content = await extract_text_from_file(str(temp_path), file_type)
                 
                 if text_content and text_content.strip():
                     # Получаем данные пользователя
