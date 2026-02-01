@@ -372,23 +372,78 @@ async def handle_document(message: Message, state: FSMContext):
             
             # Выбираем стратегию обработки
             if is_small_file or not celery_available:
-                # Для небольших файлов или если Celery недоступен - синхронная обработка
+                # Для небольших файлов или если Celery недоступен - извлекаем текст СРАЗУ и сохраняем в БД
                 if not celery_available:
-                    logger.warning(f"[TELEGRAM UPLOAD] Celery недоступен (Redis не настроен), используем синхронную обработку")
+                    logger.warning(f"[TELEGRAM UPLOAD] Celery недоступен (Redis не настроен), извлекаем текст сразу")
                 else:
-                    logger.info(f"[TELEGRAM UPLOAD] Небольшой файл ({file_size / 1024:.1f} KB), используем синхронную обработку")
+                    logger.info(f"[TELEGRAM UPLOAD] Небольшой файл ({file_size / 1024:.1f} KB), извлекаем текст сразу и сохраняем в БД")
                 
-                # Запускаем обработку синхронно в фоне (не блокируя ответ)
-                asyncio.create_task(
-                    process_document_async(
-                        document.id,
-                        project_id,
-                        file_content,
-                        file_name,
-                        file_type
+                # Для маленьких файлов извлекаем текст СРАЗУ и сохраняем в БД
+                try:
+                    # Показываем typing indicator во время извлечения текста
+                    try:
+                        await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                    except:
+                        pass
+                    
+                    # Создаем временный файл для извлечения текста
+                    temp_extract_path = temp_dir / f"extract_immediate_{document.id}_{file_name}"
+                    with open(temp_extract_path, 'wb') as f:
+                        f.write(file_content)
+                    
+                    try:
+                        # Извлекаем текст из файла
+                        logger.info(f"[TELEGRAM UPLOAD] Извлечение текста из файла {file_name}...")
+                        text_content = await extract_text_from_file(str(temp_extract_path), file_type)
+                        
+                        if text_content and text_content.strip():
+                            # Сохраняем контент в БД СРАЗУ
+                            MAX_CONTENT_SIZE = 2_000_000
+                            if len(text_content) > MAX_CONTENT_SIZE:
+                                logger.warning(f"[TELEGRAM UPLOAD] Текст слишком большой ({len(text_content)} символов), обрезаем до {MAX_CONTENT_SIZE}")
+                                document.content = text_content[:MAX_CONTENT_SIZE] + f"\n\n[... документ обрезан, всего {len(text_content)} символов ...]"
+                            else:
+                                document.content = text_content
+                            
+                            await db.commit()
+                            await db.refresh(document)
+                            
+                            saved_length = len(document.content) if document.content else 0
+                            logger.info(f"[TELEGRAM UPLOAD] ✅ Текст извлечен и сохранен в БД: {saved_length} символов для документа {document.id}")
+                        else:
+                            logger.warning(f"[TELEGRAM UPLOAD] ⚠️ Не удалось извлечь текст из файла {file_name}")
+                            document.content = "Ошибка извлечения текста"
+                            await db.commit()
+                    finally:
+                        # Удаляем временный файл
+                        try:
+                            os.unlink(temp_extract_path)
+                        except:
+                            pass
+                    
+                    # Запускаем фоновую обработку для дополнительных задач (чанки, метаданные и т.д.)
+                    asyncio.create_task(
+                        process_document_async(
+                            document.id,
+                            project_id,
+                            file_content,
+                            file_name,
+                            file_type
+                        )
                     )
-                )
-                logger.info(f"[TELEGRAM UPLOAD] Синхронная обработка запущена для документа {document.id}")
+                    logger.info(f"[TELEGRAM UPLOAD] Фоновая обработка запущена для документа {document.id} (контент уже в БД)")
+                except Exception as extract_error:
+                    logger.error(f"[TELEGRAM UPLOAD] Ошибка извлечения текста: {extract_error}", exc_info=True)
+                    # В случае ошибки запускаем обычную обработку
+                    asyncio.create_task(
+                        process_document_async(
+                            document.id,
+                            project_id,
+                            file_content,
+                            file_name,
+                            file_type
+                        )
+                    )
             else:
                 # Для больших файлов используем Celery
                 # Сохраняем файл во временное место для Celery задачи

@@ -163,18 +163,22 @@ async def process_document_async(document_id: UUID, project_id: UUID, file_conte
             
             # КРИТИЧНО: Сохраняем content НЕМЕДЛЕННО после парсинга, чтобы RAG мог его использовать
             # Максимальный размер контента: 2MB текста (примерно 2,000,000 символов)
-            logger.info(f"[Celery] 💾 Сохранение контента документа в БД для немедленного доступа RAG...")
-            MAX_CONTENT_SIZE = 2_000_000
-            if len(text) > MAX_CONTENT_SIZE:
-                logger.warning(f"[Celery] ⚠️ Document {document_id} content слишком большой ({len(text)} символов), обрезаем до {MAX_CONTENT_SIZE}")
-                document.content = text[:MAX_CONTENT_SIZE] + f"\n\n[... документ обрезан, всего {len(text)} символов ...]"
+            # Проверяем, не сохранен ли уже контент (для маленьких файлов контент может быть уже сохранен)
+            if document.content and document.content.strip() and document.content != "Обработка...":
+                logger.info(f"[Celery] 💾 Контент документа {document_id} уже сохранен в БД ({len(document.content)} символов), пропускаем сохранение")
             else:
-                document.content = text
-            
-            # КОММИТИМ СРАЗУ, чтобы content był dostępен для RAG
-            logger.info(f"[Celery] 💾 Коммит изменений в БД...")
-            await db.commit()
-            await db.refresh(document)
+                logger.info(f"[Celery] 💾 Сохранение контента документа в БД для немедленного доступа RAG...")
+                MAX_CONTENT_SIZE = 2_000_000
+                if len(text) > MAX_CONTENT_SIZE:
+                    logger.warning(f"[Celery] ⚠️ Document {document_id} content слишком большой ({len(text)} символов), обрезаем до {MAX_CONTENT_SIZE}")
+                    document.content = text[:MAX_CONTENT_SIZE] + f"\n\n[... документ обрезан, всего {len(text)} символов ...]"
+                else:
+                    document.content = text
+                
+                # КОММИТИМ СРАЗУ, чтобы content был доступен для RAG
+                logger.info(f"[Celery] 💾 Коммит изменений в БД...")
+                await db.commit()
+                await db.refresh(document)
             
             # КРИТИЧЕСКАЯ ПРОВЕРКА: убеждаемся что контент действительно сохранился
             saved_content = document.content
