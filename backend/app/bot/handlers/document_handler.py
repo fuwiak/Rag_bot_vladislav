@@ -27,6 +27,20 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+async def count_pdf_pages(file_content: bytes) -> int:
+    """Быстрый подсчет количества страниц в PDF файле"""
+    try:
+        from PyPDF2 import PdfReader
+        import io
+        
+        pdf_file = io.BytesIO(file_content)
+        reader = PdfReader(pdf_file)
+        return len(reader.pages)
+    except Exception as e:
+        logger.warning(f"Ошибка подсчета страниц PDF: {e}")
+        return 0
+
+
 async def extract_text_from_file(file_path: str, file_extension: str) -> str:
     """Извлечение текста из различных форматов файлов"""
     try:
@@ -344,14 +358,16 @@ async def handle_document(message: Message, state: FSMContext):
             # Для небольших файлов (< 1MB) используем синхронную обработку без Celery
             SMALL_FILE_THRESHOLD = 2 * 1024 * 1024  # 1MB
             LARGE_PDF_THRESHOLD = 5 * 1024 * 1024  # 5MB для больших PDF
-            VERY_SMALL_TEXT_THRESHOLD = 5 * 1024  # 5KB текста - для очень маленьких файлов пропускаем chunking
+            VERY_SMALL_PDF_PAGES = 5  # Для PDF: <= 5 страниц - очень маленький файл
+            VERY_SMALL_TEXT_THRESHOLD = 5 * 1024  # 5KB текста - для не-PDF файлов
             
             is_small_file = file_size < SMALL_FILE_THRESHOLD
             is_large_pdf = (
                 file_type == "pdf" and 
                 file_size > LARGE_PDF_THRESHOLD
             )
-            is_very_small_text = False  # Будет установлено после парсинга текста
+            is_very_small_text = False  # Будет установлено после проверки размера/страниц
+            pdf_pages_count = 0  # Количество страниц в PDF
             
             # Быстрая проверка размера для PDF
             if is_large_pdf:
@@ -427,30 +443,56 @@ async def handle_document(message: Message, state: FSMContext):
                             saved_length = len(document.content) if document.content else 0
                             logger.info(f"[TELEGRAM UPLOAD] ✅ Текст извлечен и сохранен в БД: {saved_length} символов для документа {document.id}")
                             
-                            # Проверяем размер текста для определения стратегии обработки
-                            # Для очень маленьких файлов (< 5KB текста) не делаем chunking и эмбеддинги
-                            # Используем прямо LLM с промптами из small_files_prompts.yaml
-                            text_length = len(text_content)
-                            
-                            if text_length < VERY_SMALL_TEXT_THRESHOLD:
-                                is_very_small_text = True
-                                logger.info(f"[TELEGRAM UPLOAD] ⚡ Очень маленький файл ({text_length} символов < {VERY_SMALL_TEXT_THRESHOLD}), пропускаем chunking и эмбеддинги")
-                                logger.info(f"[TELEGRAM UPLOAD] 📝 Документ будет использоваться напрямую через LLM с промптами (small_files_prompts.yaml)")
-                                # НЕ запускаем process_document_async для очень маленьких файлов
-                            else:
-                                is_very_small_text = False
-                                # Для файлов побольше запускаем фоновую обработку для chunking и эмбеддингов
-                                logger.info(f"[TELEGRAM UPLOAD] Файл среднего размера ({text_length} символов), запускаем фоновую обработку для chunking и эмбеддингов")
-                                asyncio.create_task(
-                                    process_document_async(
-                                        document.id,
-                                        project_id,
-                                        file_content,
-                                        file_name,
-                                        file_type
+                            # Проверяем размер для определения стратегии обработки
+                            # Для PDF: проверяем количество страниц (<= 5 страниц = очень маленький)
+                            # Для других файлов: проверяем размер текста (< 5KB)
+                            if file_type == "pdf":
+                                # Для PDF проверяем количество страниц
+                                pdf_pages_count = await count_pdf_pages(file_content)
+                                logger.info(f"[TELEGRAM UPLOAD] PDF содержит {pdf_pages_count} страниц")
+                                
+                                if pdf_pages_count <= VERY_SMALL_PDF_PAGES:
+                                    is_very_small_text = True
+                                    logger.info(f"[TELEGRAM UPLOAD] ⚡ Очень маленький PDF ({pdf_pages_count} страниц <= {VERY_SMALL_PDF_PAGES}), пропускаем chunking и эмбеддинги")
+                                    logger.info(f"[TELEGRAM UPLOAD] 📝 Документ будет использоваться напрямую через LLM с промптами (small_files_prompts.yaml)")
+                                    # НЕ запускаем process_document_async для очень маленьких файлов
+                                else:
+                                    is_very_small_text = False
+                                    # Для файлов побольше запускаем фоновую обработку для chunking и эмбеддингов
+                                    logger.info(f"[TELEGRAM UPLOAD] PDF среднего размера ({pdf_pages_count} страниц), запускаем фоновую обработку для chunking и эмбеддингов")
+                                    asyncio.create_task(
+                                        process_document_async(
+                                            document.id,
+                                            project_id,
+                                            file_content,
+                                            file_name,
+                                            file_type
+                                        )
                                     )
-                                )
-                                logger.info(f"[TELEGRAM UPLOAD] Фоновая обработка запущена для документа {document.id} (контент уже в БД)")
+                                    logger.info(f"[TELEGRAM UPLOAD] Фоновая обработка запущена для документа {document.id} (контент уже в БД)")
+                            else:
+                                # Для не-PDF файлов проверяем размер текста
+                                text_length = len(text_content)
+                                
+                                if text_length < VERY_SMALL_TEXT_THRESHOLD:
+                                    is_very_small_text = True
+                                    logger.info(f"[TELEGRAM UPLOAD] ⚡ Очень маленький файл ({text_length} символов < {VERY_SMALL_TEXT_THRESHOLD}), пропускаем chunking и эмбеддинги")
+                                    logger.info(f"[TELEGRAM UPLOAD] 📝 Документ будет использоваться напрямую через LLM с промптами (small_files_prompts.yaml)")
+                                    # НЕ запускаем process_document_async для очень маленьких файлов
+                                else:
+                                    is_very_small_text = False
+                                    # Для файлов побольше запускаем фоновую обработку для chunking и эмбеддингов
+                                    logger.info(f"[TELEGRAM UPLOAD] Файл среднего размера ({text_length} символов), запускаем фоновую обработку для chunking и эмбеддингов")
+                                    asyncio.create_task(
+                                        process_document_async(
+                                            document.id,
+                                            project_id,
+                                            file_content,
+                                            file_name,
+                                            file_type
+                                        )
+                                    )
+                                    logger.info(f"[TELEGRAM UPLOAD] Фоновая обработка запущена для документа {document.id} (контент уже в БД)")
                         else:
                             logger.warning(f"[TELEGRAM UPLOAD] ⚠️ Не удалось извлечь текст из файла {file_name}")
                             document.content = "Ошибка извлечения текста"
@@ -540,18 +582,35 @@ async def handle_document(message: Message, state: FSMContext):
                 except:
                     pass
                 
-                # Формируем сообщение в зависимости от размера текста
+                # Формируем сообщение в зависимости от размера текста/страниц
                 if is_very_small_text:
-                    status_text = (
-                        f"✅ <b>Файл успешно загружен!</b>\n\n"
-                        f"📄 Название: {file_name}\n"
-                        f"📊 Тип: {file_type.upper()}\n"
-                        f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
-                        f"⚡ <b>Очень маленький файл</b> - используется прямая обработка через LLM\n"
-                        f"💡 Chunking и эмбеддинги пропущены для ускорения\n"
-                        f"📚 Документ готов для вопросов!\n"
-                        f"Используйте /documents для просмотра списка документов."
-                    )
+                    # Для PDF проверяем количество страниц, если еще не проверено
+                    if file_type == "pdf" and pdf_pages_count == 0:
+                        pdf_pages_count = await count_pdf_pages(file_content)
+                    
+                    if file_type == "pdf" and pdf_pages_count > 0:
+                        status_text = (
+                            f"✅ <b>Файл успешно загружен!</b>\n\n"
+                            f"📄 Название: {file_name}\n"
+                            f"📊 Тип: {file_type.upper()}\n"
+                            f"📏 Размер: {file_size / 1024:.1f} KB\n"
+                            f"📑 Страниц: {pdf_pages_count}\n\n"
+                            f"⚡ <b>Очень маленький файл</b> (≤{VERY_SMALL_PDF_PAGES} страниц) - используется прямая обработка через LLM\n"
+                            f"💡 Chunking и эмбеддинги пропущены для ускорения\n"
+                            f"📚 Документ готов для вопросов!\n"
+                            f"Используйте /documents для просмотра списка документов."
+                        )
+                    else:
+                        status_text = (
+                            f"✅ <b>Файл успешно загружен!</b>\n\n"
+                            f"📄 Название: {file_name}\n"
+                            f"📊 Тип: {file_type.upper()}\n"
+                            f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
+                            f"⚡ <b>Очень маленький файл</b> - используется прямая обработка через LLM\n"
+                            f"💡 Chunking и эмбеддинги пропущены для ускорения\n"
+                            f"📚 Документ готов для вопросов!\n"
+                            f"Используйте /documents для просмотра списка документов."
+                        )
                 else:
                     status_text = (
                         f"✅ <b>Файл успешно загружен!</b>\n\n"
