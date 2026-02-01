@@ -444,93 +444,120 @@ async def handle_document(message: Message, state: FSMContext):
                             )
                         )
             
-            # Также индексируем документ в Qdrant для RAG
-            try:
-                # Показываем typing indicator во время обработки
+            # Для коротких файлов НЕ индексируем в Qdrant - используем только контент из БД
+            # RAG только для больших файлов и фоновой обработки
+            if is_small_file:
+                # Короткий файл - просто сохраняем, контент будет использован напрямую из БД
+                logger.info(f"[TELEGRAM UPLOAD] Короткий файл ({file_size / 1024:.1f} KB), пропускаем индексацию в Qdrant, используем контент из БД")
+                
+                # Показываем typing перед отправкой ответа
                 try:
                     await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
                 except:
                     pass
                 
-                # Извлекаем текст из файла для Qdrant
-                # Для небольших файлов используем file_content напрямую, для больших - temp_path
-                if is_small_file or not celery_available:
-                    # Создаем временный файл только для извлечения текста
-                    temp_extract_path = temp_dir / f"extract_{document.id}_{file_name}"
-                    with open(temp_extract_path, 'wb') as f:
-                        f.write(file_content)
-                    try:
-                        text_content = await extract_text_from_file(str(temp_extract_path), file_type)
-                    finally:
-                        # Удаляем временный файл после извлечения
-                        try:
-                            os.unlink(temp_extract_path)
-                        except:
-                            pass
-                else:
-                    # Для больших файлов используем temp_path (уже создан выше)
-                    text_content = await extract_text_from_file(str(temp_path), file_type)
+                status_text = (
+                    f"✅ <b>Файл успешно загружен!</b>\n\n"
+                    f"📄 Название: {file_name}\n"
+                    f"📊 Тип: {file_type.upper()}\n"
+                    f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
+                    f"💡 Для коротких файлов используется прямой доступ к содержимому.\n"
+                    f"📚 Документ готов для вопросов!\n"
+                    f"Используйте /documents для просмотра списка документов."
+                )
+                await processing_msg.edit_text(status_text, parse_mode="HTML")
                 
-                if text_content and text_content.strip():
-                    # Получаем данные пользователя
-                    telegram_user_id = str(message.from_user.id)
-                    telegram_username = message.from_user.username or "unknown"
-                    
-                    # Показываем typing indicator перед индексацией
+                # Сохраняем document_id в state для приоритета при поиске
+                await state.update_data(last_document_id=str(document.id))
+                logger.info(f"[TELEGRAM UPLOAD] Saved last_document_id={document.id} to state (small file, no Qdrant)")
+            else:
+                # Для больших файлов индексируем в Qdrant для RAG
+                try:
+                    # Показываем typing indicator во время обработки
                     try:
                         await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
                     except:
                         pass
                     
-                    # Индексируем в Qdrant
-                    qdrant_result = await index_document_to_qdrant(
-                        text_content=text_content,
-                        file_name=file_name,
-                        user_id=telegram_user_id,
-                        username=telegram_username,
-                        project_id=str(project_id)
-                    )
+                    # Извлекаем текст из файла для Qdrant
+                    # Для больших файлов используем temp_path
+                    text_content = await extract_text_from_file(str(temp_path), file_type)
                     
-                    if qdrant_result.get("success"):
-                        chunks_count = qdrant_result.get("chunks_count", 0)
-                        logger.info(f"[TELEGRAM UPLOAD] ✅ Document indexed in Qdrant: {chunks_count} chunks")
+                    if text_content and text_content.strip():
+                        # Получаем данные пользователя
+                        telegram_user_id = str(message.from_user.id)
+                        telegram_username = message.from_user.username or "unknown"
                         
-                        # Показываем typing перед отправкой ответа
+                        # Показываем typing indicator перед индексацией
                         try:
                             await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
                         except:
                             pass
                         
-                        status_text = (
-                            f"✅ <b>Файл успешно загружен и обработан!</b>\n\n"
-                            f"📄 Название: {file_name}\n"
-                            f"📊 Тип: {file_type.upper()}\n"
-                            f"📏 Размер: {file_size / 1024 / 1024:.2f} MB\n"
-                            f"🔍 Чанков в RAG: {chunks_count}\n"
+                        # Индексируем в Qdrant
+                        qdrant_result = await index_document_to_qdrant(
+                            text_content=text_content,
+                            file_name=file_name,
+                            user_id=telegram_user_id,
+                            username=telegram_username,
+                            project_id=str(project_id)
                         )
-                        if is_large_pdf:
-                            status_text += f"⚡ Используется быстрая индексация для большого PDF\n"
-                        status_text += (
-                            f"\n⏳ Полная обработка документа продолжается в фоне.\n"
-                            f"📚 Документ уже доступен для поиска!\n"
-                            f"Используйте /documents для просмотра списка документов."
-                        )
-                        await processing_msg.edit_text(status_text, parse_mode="HTML")
                         
-                        # Сохраняем document_id в state для приоритета при поиске
-                        await state.update_data(last_document_id=str(document.id))
-                        logger.info(f"[TELEGRAM UPLOAD] Saved last_document_id={document.id} to state")
+                        if qdrant_result.get("success"):
+                            chunks_count = qdrant_result.get("chunks_count", 0)
+                            logger.info(f"[TELEGRAM UPLOAD] ✅ Document indexed in Qdrant: {chunks_count} chunks")
+                            
+                            # Показываем typing перед отправкой ответа
+                            try:
+                                await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                            except:
+                                pass
+                            
+                            status_text = (
+                                f"✅ <b>Файл успешно загружен и обработан!</b>\n\n"
+                                f"📄 Название: {file_name}\n"
+                                f"📊 Тип: {file_type.upper()}\n"
+                                f"📏 Размер: {file_size / 1024 / 1024:.2f} MB\n"
+                                f"🔍 Чанков в RAG: {chunks_count}\n"
+                            )
+                            if is_large_pdf:
+                                status_text += f"⚡ Используется быстрая индексация для большого PDF\n"
+                            status_text += (
+                                f"\n⏳ Полная обработка документа продолжается в фоне.\n"
+                                f"📚 Документ уже доступен для поиска!\n"
+                                f"Используйте /documents для просмотра списка документов."
+                            )
+                            await processing_msg.edit_text(status_text, parse_mode="HTML")
+                            
+                            # Сохраняем document_id в state для приоритета при поиске
+                            await state.update_data(last_document_id=str(document.id))
+                            logger.info(f"[TELEGRAM UPLOAD] Saved last_document_id={document.id} to state")
+                        else:
+                            error_msg = qdrant_result.get("error", "Unknown error")
+                            logger.warning(f"[TELEGRAM UPLOAD] ⚠️ Qdrant indexing failed: {error_msg}")
+                            
+                            await processing_msg.edit_text(
+                                f"✅ <b>Файл успешно загружен!</b>\n\n"
+                                f"📄 Название: {file_name}\n"
+                                f"📊 Тип: {file_type.upper()}\n"
+                                f"📏 Размер: {file_size / 1024 / 1024:.2f} MB\n\n"
+                                f"⏳ Обработка документа начата.\n"
+                                f"⚠️ Индексация в RAG будет выполнена позже.\n"
+                                f"Используйте /documents для просмотра списка документов.",
+                                parse_mode="HTML"
+                            )
+                            
+                            # Сохраняем document_id в state для приоритета при поиске
+                            await state.update_data(last_document_id=str(document.id))
+                            logger.info(f"[TELEGRAM UPLOAD] Saved last_document_id={document.id} to state")
                     else:
-                        error_msg = qdrant_result.get("error", "Unknown error")
-                        logger.warning(f"[TELEGRAM UPLOAD] ⚠️ Qdrant indexing failed: {error_msg}")
-                        
+                        logger.warning(f"[TELEGRAM UPLOAD] ⚠️ No text extracted from document for Qdrant")
                         await processing_msg.edit_text(
                             f"✅ <b>Файл успешно загружен!</b>\n\n"
                             f"📄 Название: {file_name}\n"
                             f"📊 Тип: {file_type.upper()}\n"
-                            f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
-                            f"⏳ Обработка документа начата.\n"
-                            f"⚠️ Индексация в RAG будет выполнена позже.\n"
+                            f"📏 Размер: {file_size / 1024 / 1024:.2f} MB\n\n"
+                            f"⏳ Обработка документа начата. Это может занять некоторое время.\n"
                             f"Используйте /documents для просмотра списка документов.",
                             parse_mode="HTML"
                         )
@@ -538,13 +565,18 @@ async def handle_document(message: Message, state: FSMContext):
                         # Сохраняем document_id в state для приоритета при поиске
                         await state.update_data(last_document_id=str(document.id))
                         logger.info(f"[TELEGRAM UPLOAD] Saved last_document_id={document.id} to state")
-                else:
-                    logger.warning(f"[TELEGRAM UPLOAD] ⚠️ No text extracted from document for Qdrant")
+                        
+                except Exception as qdrant_error:
+                    logger.error(f"[TELEGRAM UPLOAD] ❌ Qdrant indexing error: {qdrant_error}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    
+                    # Всё равно показываем успешную загрузку (Celery обработает позже)
                     await processing_msg.edit_text(
                         f"✅ <b>Файл успешно загружен!</b>\n\n"
                         f"📄 Название: {file_name}\n"
                         f"📊 Тип: {file_type.upper()}\n"
-                        f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
+                        f"📏 Размер: {file_size / 1024 / 1024:.2f} MB\n\n"
                         f"⏳ Обработка документа начата. Это может занять некоторое время.\n"
                         f"Используйте /documents для просмотра списка документов.",
                         parse_mode="HTML"
@@ -553,26 +585,6 @@ async def handle_document(message: Message, state: FSMContext):
                     # Сохраняем document_id в state для приоритета при поиске
                     await state.update_data(last_document_id=str(document.id))
                     logger.info(f"[TELEGRAM UPLOAD] Saved last_document_id={document.id} to state")
-                    
-            except Exception as qdrant_error:
-                logger.error(f"[TELEGRAM UPLOAD] ❌ Qdrant indexing error: {qdrant_error}")
-                import traceback
-                logger.error(traceback.format_exc())
-                
-                # Всё равно показываем успешную загрузку (Celery обработает позже)
-                await processing_msg.edit_text(
-                    f"✅ <b>Файл успешно загружен!</b>\n\n"
-                    f"📄 Название: {file_name}\n"
-                    f"📊 Тип: {file_type.upper()}\n"
-                    f"📏 Размер: {file_size / 1024:.1f} KB\n\n"
-                    f"⏳ Обработка документа начата. Это может занять некоторое время.\n"
-                    f"Используйте /documents для просмотра списка документов.",
-                    parse_mode="HTML"
-                )
-                
-                # Сохраняем document_id в state для приоритета при поиске
-                await state.update_data(last_document_id=str(document.id))
-                logger.info(f"[TELEGRAM UPLOAD] Saved last_document_id={document.id} to state")
     
     except Exception as e:
         logger.error(f"[TELEGRAM UPLOAD] Error uploading document: {e}", exc_info=True)
